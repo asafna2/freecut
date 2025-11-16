@@ -42,6 +42,10 @@ export function useTimelineZoom(options: UseTimelineZoomOptions = {}) {
    */
   const pixelsToTime = useCallback(
     (pixels: number) => {
+      if (pixelsPerSecond <= 0) {
+        console.warn('pixelsPerSecond is zero or negative, returning 0');
+        return 0;
+      }
       return pixels / pixelsPerSecond;
     },
     [pixelsPerSecond]
@@ -70,20 +74,6 @@ export function useTimelineZoom(options: UseTimelineZoomOptions = {}) {
   );
 
   /**
-   * Zoom in
-   */
-  const zoomIn = useCallback(() => {
-    zoomInAction();
-  }, [zoomInAction]);
-
-  /**
-   * Zoom out
-   */
-  const zoomOut = useCallback(() => {
-    zoomOutAction();
-  }, [zoomOutAction]);
-
-  /**
    * Reset zoom to 1x
    */
   const resetZoom = useCallback(() => {
@@ -97,8 +87,8 @@ export function useTimelineZoom(options: UseTimelineZoomOptions = {}) {
     pixelsToTime,
     frameToPixels,
     pixelsToFrame,
-    zoomIn,
-    zoomOut,
+    zoomIn: zoomInAction, // Direct reference - store actions are stable
+    zoomOut: zoomOutAction, // Direct reference - store actions are stable
     resetZoom,
     setZoom: (level: number) => setZoomLevel(Math.max(minZoom, Math.min(maxZoom, level))),
   };

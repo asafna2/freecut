@@ -25,12 +25,14 @@ export const useZoomStore = create<ZoomState & ZoomActions>((set) => ({
   pixelsPerSecond: 100,
 
   setZoomLevel: (level) => set({ level, pixelsPerSecond: level * 100 }),
-  zoomIn: () => set((state) => ({
-    level: Math.min(state.level * 1.2, 10),
-    pixelsPerSecond: Math.min(state.level * 1.2, 10) * 100,
-  })),
-  zoomOut: () => set((state) => ({
-    level: Math.max(state.level / 1.2, 0.1),
-    pixelsPerSecond: Math.max(state.level / 1.2, 0.1) * 100,
-  })),
+  zoomIn: () =>
+    set((state) => {
+      const newLevel = Math.min(state.level * 1.2, 50); // Increased from 10 to 50 for finer detail
+      return { level: newLevel, pixelsPerSecond: newLevel * 100 };
+    }),
+  zoomOut: () =>
+    set((state) => {
+      const newLevel = Math.max(state.level / 1.2, 0.1);
+      return { level: newLevel, pixelsPerSecond: newLevel * 100 };
+    }),
 }));

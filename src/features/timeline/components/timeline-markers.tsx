@@ -1,52 +1,353 @@
-import { useTimelineZoom } from '../hooks/use-timeline-zoom';
+// React and external libraries
+import { useMemo, useCallback, useRef, useState, useEffect } from 'react';
+
+// Stores and selectors
 import { useTimelineStore } from '../stores/timeline-store';
+import { usePlaybackStore } from '@/features/preview/stores/playback-store';
+
+// Utilities and hooks
+import { useTimelineZoom } from '../hooks/use-timeline-zoom';
+import { formatTimecode, secondsToFrames } from '@/utils/time-utils';
 
 export interface TimelineMarkersProps {
   duration: number; // Total timeline duration in seconds
 }
 
+interface MarkerInterval {
+  type: 'frame' | 'second' | 'multi-second' | 'minute';
+  intervalInSeconds: number;
+  minorTicks: number; // Number of minor ticks between major markers
+}
+
+/**
+ * Calculate optimal marker interval based on zoom level
+ * Goal: Keep markers 120+ pixels apart for readability
+ * Dynamically adjusts to ensure timecode labels never overlap
+ */
+function calculateMarkerInterval(pixelsPerSecond: number): MarkerInterval {
+  // Minimum spacing between markers (in pixels) to prevent label overlap
+  const MIN_MARKER_SPACING_PX = 120;
+
+  // Calculate minimum interval in seconds needed for proper spacing
+  const minIntervalSeconds = MIN_MARKER_SPACING_PX / pixelsPerSecond;
+
+  // At very high zoom (>= 3000 pps): Show individual frames
+  // Only when each frame is at least 120px apart (3000 * 1/30 = 100px, close enough)
+  if (pixelsPerSecond >= 3000) {
+    return {
+      type: 'frame',
+      intervalInSeconds: 1 / 30, // Will use actual fps from store
+      minorTicks: 0,
+    };
+  }
+
+  // High zoom (1500-3000 pps): Show every 3 frames
+  if (pixelsPerSecond >= 1500) {
+    return {
+      type: 'frame',
+      intervalInSeconds: 3 / 30,
+      minorTicks: 3,
+    };
+  }
+
+  // Medium-high zoom (750-1500 pps): Show every 5 frames
+  if (pixelsPerSecond >= 750) {
+    return {
+      type: 'frame',
+      intervalInSeconds: 5 / 30,
+      minorTicks: 5,
+    };
+  }
+
+  // Medium-high zoom (300-750 pps): Show every 10 frames
+  if (pixelsPerSecond >= 300) {
+    return {
+      type: 'frame',
+      intervalInSeconds: 10 / 30,
+      minorTicks: 10,
+    };
+  }
+
+  // Medium zoom (120-300 pps): Show seconds
+  if (pixelsPerSecond >= 120) {
+    return {
+      type: 'second',
+      intervalInSeconds: 1,
+      minorTicks: 10,
+    };
+  }
+
+  // Medium-low zoom (30-120 pps): Show 2-second intervals
+  if (pixelsPerSecond >= 60) {
+    return {
+      type: 'multi-second',
+      intervalInSeconds: 2,
+      minorTicks: 4,
+    };
+  }
+
+  // Low zoom (15-60 pps): Show 5-second intervals
+  if (pixelsPerSecond >= 24) {
+    return {
+      type: 'multi-second',
+      intervalInSeconds: 5,
+      minorTicks: 5,
+    };
+  }
+
+  // Very low zoom (6-15 pps): Show 10-second intervals
+  if (pixelsPerSecond >= 12) {
+    return {
+      type: 'multi-second',
+      intervalInSeconds: 10,
+      minorTicks: 5,
+    };
+  }
+
+  // Very low zoom (2-6 pps): Show 30-second intervals
+  if (pixelsPerSecond >= 4) {
+    return {
+      type: 'multi-second',
+      intervalInSeconds: 30,
+      minorTicks: 6,
+    };
+  }
+
+  // Extremely low zoom (<2 pps): Show minute intervals
+  return {
+    type: 'minute',
+    intervalInSeconds: 60,
+    minorTicks: 6,
+  };
+}
+
 /**
  * Timeline Markers Component
  *
- * Renders the time ruler with:
- * - Second markers with labels
- * - Frame tick marks
- * - Responsive to zoom level
+ * Renders adaptive time ruler with:
+ * - Smart interval calculation based on zoom level
+ * - Timecode labels (HH:MM:SS:FF) with enhanced typography
+ * - Major and minor tick marks
+ * - Viewport-aware rendering (extends to full width)
+ * - Responsive to zoom changes
  */
 export function TimelineMarkers({ duration }: TimelineMarkersProps) {
-  const { timeToPixels } = useTimelineZoom();
+  const { timeToPixels, pixelsPerSecond, pixelsToFrame } = useTimelineZoom();
+  const fps = useTimelineStore((s) => s.fps);
+  const setCurrentFrame = usePlaybackStore((s) => s.setCurrentFrame);
+  const rulerRef = useRef<HTMLDivElement>(null);
+  const [viewportWidth, setViewportWidth] = useState(0);
+  const [scrollLeft, setScrollLeft] = useState(0);
+  const [isDragging, setIsDragging] = useState(false);
 
-  // Calculate number of seconds to show
-  const seconds = Math.ceil(duration) + 1;
+  // Use refs to avoid stale closures in drag handler
+  const pixelsToFrameRef = useRef(pixelsToFrame);
+  const setCurrentFrameRef = useRef(setCurrentFrame);
+
+  // Update refs when functions change
+  useEffect(() => {
+    pixelsToFrameRef.current = pixelsToFrame;
+    setCurrentFrameRef.current = setCurrentFrame;
+  }, [pixelsToFrame, setCurrentFrame]);
+
+  // Track viewport width and scroll position
+  useEffect(() => {
+    if (!rulerRef.current) return;
+
+    const container = rulerRef.current.parentElement; // Timeline container
+    if (!container) return;
+
+    const updateViewport = () => {
+      if (rulerRef.current) {
+        setViewportWidth(rulerRef.current.getBoundingClientRect().width);
+      }
+    };
+
+    const updateScroll = () => {
+      if (container) {
+        setScrollLeft(container.scrollLeft);
+      }
+    };
+
+    // Initial measurements
+    updateViewport();
+    updateScroll();
+
+    // Setup ResizeObserver for viewport changes
+    const resizeObserver = new ResizeObserver(updateViewport);
+    resizeObserver.observe(rulerRef.current);
+
+    // Track scroll position
+    container.addEventListener('scroll', updateScroll);
+
+    return () => {
+      resizeObserver.disconnect();
+      container.removeEventListener('scroll', updateScroll);
+    };
+  }, []);
+
+  // Calculate optimal marker interval based on zoom
+  const markerConfig = useMemo(
+    () => calculateMarkerInterval(pixelsPerSecond),
+    [pixelsPerSecond]
+  );
+
+  // Adjust interval for frame-based markers to use actual fps
+  const intervalInSeconds = markerConfig.type === 'frame'
+    ? 1 / fps
+    : markerConfig.intervalInSeconds;
+
+  // Calculate timeline content width and display width
+  const timelineContentWidth = timeToPixels(duration);
+  const displayWidth = Math.max(timelineContentWidth, viewportWidth);
+
+  // Calculate number of markers to fill the display width
+  const displayDuration = displayWidth / pixelsPerSecond;
+  const numMarkers = Math.ceil(displayDuration / intervalInSeconds) + 1;
+  const markerWidthPx = timeToPixels(intervalInSeconds);
+
+  // Viewport culling with overscan (2x viewport width on each side)
+  const overscan = viewportWidth * 2;
+  const visibleStart = scrollLeft - overscan;
+  const visibleEnd = scrollLeft + viewportWidth + overscan;
+
+  // Calculate which marker indices are visible
+  const startMarkerIndex = Math.max(0, Math.floor(visibleStart / markerWidthPx));
+  const endMarkerIndex = Math.min(numMarkers - 1, Math.ceil(visibleEnd / markerWidthPx));
+
+  // Handle scrubbing - mousedown to start
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+
+    if (!rulerRef.current) return;
+
+    const rect = rulerRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+
+    // Convert pixel position to frame number and update immediately
+    const frame = Math.max(0, pixelsToFrameRef.current(x));
+    setCurrentFrameRef.current(frame);
+
+    setIsDragging(true);
+  }, []);
+
+  // Handle drag movement
+  useEffect(() => {
+    if (!isDragging) return;
+
+    // Apply grabbing cursor globally to prevent flickering
+    const originalCursor = document.body.style.cursor;
+    document.body.style.cursor = 'grabbing';
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!rulerRef.current) return;
+
+      const rect = rulerRef.current.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+
+      // Convert pixel position to frame number using ref to avoid stale closure
+      const frame = Math.max(0, pixelsToFrameRef.current(x));
+      setCurrentFrameRef.current(frame);
+    };
+
+    const handleMouseUp = () => {
+      setIsDragging(false);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+      // Restore original cursor
+      document.body.style.cursor = originalCursor;
+    };
+  }, [isDragging]);
 
   return (
-    <div className="h-11 bg-secondary/20 border-b border-border relative">
-      {/* Time markers */}
-      <div className="absolute inset-0 flex">
-        {Array.from({ length: seconds }).map((_, i) => {
-          const width = timeToPixels(1); // Width of 1 second
+    <div
+      ref={rulerRef}
+      className="h-11 bg-gradient-to-b from-secondary/30 via-secondary/20 to-secondary/10 border-b border-border/80 relative transition-all duration-200 ease-out"
+      onMouseDown={handleMouseDown}
+      style={{
+        background: 'linear-gradient(to bottom, oklch(0.22 0 0 / 0.30), oklch(0.22 0 0 / 0.20), oklch(0.22 0 0 / 0.10))',
+        userSelect: 'none', // Prevent text selection during drag
+      }}
+    >
+      {/* Markers - only render visible markers with overscan */}
+      <div
+        className="absolute inset-0"
+        style={{
+          pointerEvents: isDragging ? 'none' : 'auto', // Disable pointer events on children during drag
+        }}
+      >
+        {Array.from({ length: endMarkerIndex - startMarkerIndex + 1 }).map((_, index) => {
+          const i = startMarkerIndex + index;
+          const timeInSeconds = i * intervalInSeconds;
+          const frameNumber = secondsToFrames(timeInSeconds, fps);
+          const leftPosition = timeToPixels(timeInSeconds);
 
           return (
             <div
               key={i}
-              className="flex-shrink-0 border-l border-border/50 relative"
-              style={{ width: `${width}px` }}
+              className="absolute top-0 bottom-0"
+              style={{ left: `${leftPosition}px` }}
             >
-              {/* Second label */}
-              <span className="absolute top-2 left-2 font-mono text-xs text-muted-foreground tabular-nums">
-                {i}s
+              {/* Major marker line */}
+              <div className="w-px h-full bg-border/70" />
+
+              {/* Timecode label with enhanced typography */}
+              <span
+                className="absolute top-1.5 left-1.5 font-mono text-[13px] text-muted-foreground tabular-nums whitespace-nowrap"
+                style={{
+                  textShadow: '0 1px 2px rgba(0,0,0,0.4)',
+                  fontVariantNumeric: 'tabular-nums',
+                  letterSpacing: '0.02em',
+                }}
+              >
+                {formatTimecode(frameNumber, fps)}
               </span>
 
-              {/* Frame ticks */}
-              <div className="absolute top-7 left-0 right-0 flex justify-between px-0.5">
-                {Array.from({ length: 10 }).map((_, j) => (
-                  <div key={j} className="w-px h-1.5 bg-border/40" />
-                ))}
-              </div>
+              {/* Minor tick marks */}
+              {markerConfig.minorTicks > 0 && (
+                <div className="absolute top-7 left-0 flex" style={{ width: `${markerWidthPx}px` }}>
+                  {Array.from({ length: markerConfig.minorTicks }).map((_, j) => {
+                    if (j === 0) return null; // Skip first tick (overlaps with major marker)
+
+                    const tickOffset = (markerWidthPx / markerConfig.minorTicks) * j;
+
+                    return (
+                      <div
+                        key={j}
+                        className="absolute w-px h-2"
+                        style={{
+                          left: `${tickOffset}px`,
+                          backgroundColor: 'oklch(0.25 0 0 / 0.3)',
+                        }}
+                      />
+                    );
+                  })}
+                </div>
+              )}
             </div>
           );
         })}
       </div>
+
+      {/* Subtle vignette effect at edges */}
+      <div
+        className="absolute inset-y-0 left-0 w-8 bg-gradient-to-r from-background/20 to-transparent pointer-events-none"
+        style={{
+          background: 'linear-gradient(to right, oklch(0.15 0 0 / 0.15), transparent)',
+        }}
+      />
+      <div
+        className="absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-background/20 to-transparent pointer-events-none"
+        style={{
+          background: 'linear-gradient(to left, oklch(0.15 0 0 / 0.15), transparent)',
+        }}
+      />
     </div>
   );
 }

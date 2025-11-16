@@ -1,7 +1,10 @@
+// Stores and selectors
+import { useTimelineStore } from '../stores/timeline-store';
+
+// Components
 import { TimelineMarkers } from './timeline-markers';
 import { TimelinePlayhead } from './timeline-playhead';
 import { TimelineTrack } from './timeline-track';
-import { useTimelineStore } from '../stores/timeline-store';
 
 export interface TimelineContentProps {
   duration: number; // Total timeline duration in seconds
@@ -22,15 +25,15 @@ export function TimelineContent({ duration }: TimelineContentProps) {
   const items = useTimelineStore((s) => s.items);
 
   return (
-    <div className="flex-1 overflow-x-auto overflow-y-hidden relative bg-background/30">
+    <div className="flex-1 overflow-x-auto overflow-y-hidden relative bg-background/30 timeline-container">
       {/* Time Ruler */}
-      <div className="relative">
+      <div className="relative timeline-ruler">
         <TimelineMarkers duration={duration} />
         <TimelinePlayhead inRuler />
       </div>
 
       {/* Track lanes */}
-      <div className="relative">
+      <div className="relative timeline-tracks">
         {tracks.map((track) => (
           <TimelineTrack key={track.id} track={track} items={items} />
         ))}

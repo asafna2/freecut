@@ -22,8 +22,6 @@ export const useTimelineStore = create<TimelineState & TimelineActions>()(
   // State
   tracks: [],
   items: [],
-  currentFrame: 0,
-  isPlaying: false,
   fps: 30,
   scrollPosition: 0,
   snapEnabled: true,
@@ -37,9 +35,6 @@ export const useTimelineStore = create<TimelineState & TimelineActions>()(
   removeItems: (ids) => set((state) => ({
     items: state.items.filter((i) => !ids.includes(i.id)),
   })),
-  setCurrentFrame: (frame) => set({ currentFrame: frame }),
-  play: () => set({ isPlaying: true }),
-  pause: () => set({ isPlaying: false }),
   toggleSnap: () => set((state) => ({ snapEnabled: !state.snapEnabled })),
   }))
 );

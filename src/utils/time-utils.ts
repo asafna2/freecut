@@ -1,14 +1,96 @@
+/**
+ * Time components decomposed from total seconds
+ */
+interface TimeComponents {
+  hours: number;
+  minutes: number;
+  seconds: number;
+}
+
+/**
+ * Decompose total seconds into hours, minutes, and seconds
+ * @param totalSeconds - Total time in seconds
+ * @returns Object with hours, minutes, and seconds
+ */
+function decomposeSeconds(totalSeconds: number): TimeComponents {
+  return {
+    hours: Math.floor(totalSeconds / 3600),
+    minutes: Math.floor((totalSeconds % 3600) / 60),
+    seconds: Math.floor(totalSeconds % 60),
+  };
+}
+
+/**
+ * Validate FPS parameter
+ * @param fps - Frames per second
+ * @throws Error if fps is not positive
+ */
+function validateFps(fps: number): void {
+  if (fps <= 0) {
+    throw new Error(`Invalid FPS: ${fps}. FPS must be a positive number.`);
+  }
+}
+
+/**
+ * Format a frame number as timecode (HH:MM:SS:FF)
+ * @param frame - Frame number
+ * @param fps - Frames per second
+ * @returns Formatted timecode string (e.g., "00:01:23:15")
+ */
+export function formatTimecode(frame: number, fps: number): string {
+  validateFps(fps);
+
+  const totalSeconds = frame / fps;
+  const { hours, minutes, seconds } = decomposeSeconds(totalSeconds);
+  const frames = Math.floor(frame % fps);
+
+  return `${pad(hours)}:${pad(minutes)}:${pad(seconds)}:${pad(frames)}`;
+}
+
+/**
+ * Format seconds as simple time (e.g., "5s", "1m 30s", "1h 5m")
+ * @param seconds - Time in seconds
+ * @returns Formatted time string
+ */
 export function formatTime(seconds: number): string {
-  // TODO: Implement time formatting
-  return '';
+  const { hours, minutes, seconds: secs } = decomposeSeconds(seconds);
+
+  if (hours > 0) {
+    return `${hours}h ${minutes}m`;
+  } else if (minutes > 0) {
+    return `${minutes}m ${secs}s`;
+  } else {
+    return `${secs}s`;
+  }
 }
 
+/**
+ * Convert seconds to frame number
+ * @param seconds - Time in seconds
+ * @param fps - Frames per second
+ * @returns Frame number
+ */
 export function secondsToFrames(seconds: number, fps: number): number {
-  // TODO: Implement conversion
-  return 0;
+  validateFps(fps);
+  return Math.round(seconds * fps);
 }
 
+/**
+ * Convert frame number to seconds
+ * @param frames - Frame number
+ * @param fps - Frames per second
+ * @returns Time in seconds
+ */
 export function framesToSeconds(frames: number, fps: number): number {
-  // TODO: Implement conversion
-  return 0;
+  validateFps(fps);
+  return frames / fps;
+}
+
+/**
+ * Helper function to zero-pad numbers
+ * @param num - Number to pad
+ * @returns Zero-padded string (e.g., 5 -> "05")
+ */
+function pad(num: number): string {
+  return num.toString().padStart(2, '0');
 }
