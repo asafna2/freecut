@@ -18,7 +18,8 @@
       "Bash(if [ -d \"E:\\video-editor-refactor\\src\" ])",
       "Bash(then echo \"src exists\")",
       "Bash(else echo \"src does not exist\")",
-      "Bash(fi)"
+      "Bash(fi)",
+      "Bash(taskkill //F //PID 2896)"
     ],
     "deny": [],
     "ask": []

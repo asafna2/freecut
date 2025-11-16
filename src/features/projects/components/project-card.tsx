@@ -1,12 +1,190 @@
+import { useState } from 'react';
+import { Link } from '@tanstack/react-router';
+import { MoreVertical, PlayCircle, Edit2, Copy, Trash2 } from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { Button } from '@/components/ui/button';
 import type { Project } from '@/types/project';
+import { formatRelativeTime } from '../utils/project-helpers';
+import { useDeleteProject, useDuplicateProject } from '../hooks/use-project-actions';
 
 export interface ProjectCardProps {
   project: Project;
-  onSelect?: () => void;
-  onDelete?: () => void;
+  onEdit?: (project: Project) => void;
 }
 
-export function ProjectCard(props: ProjectCardProps) {
-  // TODO: Implement project card component
-  return null;
+export function ProjectCard({ project, onEdit }: ProjectCardProps) {
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [isDuplicating, setIsDuplicating] = useState(false);
+  const deleteProject = useDeleteProject();
+  const duplicateProject = useDuplicateProject();
+
+  const handleDelete = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    setIsDeleting(true);
+    const result = await deleteProject(project.id);
+    setIsDeleting(false);
+
+    if (!result.success && result.error !== 'Deletion cancelled') {
+      alert(`Failed to delete project: ${result.error}`);
+    }
+  };
+
+  const handleDuplicate = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    setIsDuplicating(true);
+    const result = await duplicateProject(project.id);
+    setIsDuplicating(false);
+
+    if (!result.success) {
+      alert(`Failed to duplicate project: ${result.error}`);
+    }
+  };
+
+  const handleEdit = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    onEdit?.(project);
+  };
+
+  // Safe metadata access with defaults
+  const width = project?.metadata?.width || 1920;
+  const height = project?.metadata?.height || 1080;
+  const fps = project?.metadata?.fps || 30;
+
+  const resolution = `${width}×${height}`;
+  const aspectRatio = width / height;
+  const aspectRatioLabel =
+    Math.abs(aspectRatio - 16 / 9) < 0.01
+      ? '16:9'
+      : Math.abs(aspectRatio - 4 / 3) < 0.01
+        ? '4:3'
+        : Math.abs(aspectRatio - 1) < 0.01
+          ? '1:1'
+          : Math.abs(aspectRatio - 21 / 9) < 0.01
+            ? '21:9'
+            : `${width}:${height}`;
+
+  return (
+    <div className="group relative panel-bg border border-border rounded-lg overflow-hidden transition-all hover:border-primary/50 hover:shadow-lg hover:shadow-primary/5">
+      {/* Thumbnail */}
+      <Link
+        to="/projects/$projectId/editor"
+        params={{ projectId: project.id }}
+        className="block relative aspect-video bg-secondary/30 overflow-hidden"
+      >
+        {project.thumbnail ? (
+          <img
+            src={project.thumbnail}
+            alt={project.name}
+            className="w-full h-full object-cover"
+          />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-secondary/40 to-secondary/20">
+            <PlayCircle className="w-12 h-12 text-muted-foreground/40" />
+          </div>
+        )}
+
+        {/* Hover overlay */}
+        <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+          <div className="flex items-center gap-2 text-white">
+            <PlayCircle className="w-6 h-6" />
+            <span className="font-medium">Open in Editor</span>
+          </div>
+        </div>
+
+        {/* Resolution badge */}
+        <div className="absolute top-2 right-2 px-2 py-1 bg-black/80 backdrop-blur-sm rounded text-xs font-mono text-white">
+          {resolution}
+        </div>
+      </Link>
+
+      {/* Content */}
+      <div className="p-4">
+        <div className="flex items-start justify-between gap-2 mb-2">
+          <div className="flex-1 min-w-0">
+            <h3 className="font-medium text-foreground truncate group-hover:text-primary transition-colors">
+              {project.name}
+            </h3>
+            {project.description && (
+              <p className="text-sm text-muted-foreground line-clamp-2 mt-1">
+                {project.description}
+              </p>
+            )}
+          </div>
+
+          {/* Actions dropdown */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity"
+                onClick={(e) => e.preventDefault()}
+              >
+                <MoreVertical className="w-4 h-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-48">
+              <DropdownMenuItem asChild>
+                <Link
+                  to="/projects/$projectId/editor"
+                  params={{ projectId: project.id }}
+                  className="flex items-center gap-2 cursor-pointer"
+                >
+                  <PlayCircle className="w-4 h-4" />
+                  Open in Editor
+                </Link>
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={handleEdit} className="flex items-center gap-2">
+                <Edit2 className="w-4 h-4" />
+                Edit Settings
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={handleDuplicate}
+                disabled={isDuplicating}
+                className="flex items-center gap-2"
+              >
+                <Copy className="w-4 h-4" />
+                {isDuplicating ? 'Duplicating...' : 'Duplicate'}
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onClick={handleDelete}
+                disabled={isDeleting}
+                className="flex items-center gap-2 text-destructive focus:text-destructive"
+              >
+                <Trash2 className="w-4 h-4" />
+                {isDeleting ? 'Deleting...' : 'Delete'}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+
+        {/* Metadata */}
+        <div className="flex items-center gap-3 mt-3 text-xs text-muted-foreground">
+          <div className="flex items-center gap-1.5">
+            <span className="font-mono">{aspectRatioLabel}</span>
+          </div>
+          <div className="w-1 h-1 rounded-full bg-muted-foreground/40" />
+          <div className="flex items-center gap-1.5">
+            <span className="font-mono">{fps}fps</span>
+          </div>
+          <div className="w-1 h-1 rounded-full bg-muted-foreground/40" />
+          <div className="flex items-center gap-1.5">
+            <span>{formatRelativeTime(project.updatedAt)}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }

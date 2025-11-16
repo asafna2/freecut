@@ -1,5 +1,16 @@
 import { create } from 'zustand';
-import type { ProjectState, ProjectActions } from '../types';
+import { devtools } from 'zustand/middleware';
+import { temporal } from 'zundo';
+import type { Project } from '@/types/project';
+import type { ProjectFormData } from '../utils/validation';
+import {
+  getAllProjects,
+  getProject,
+  createProject as createProjectDB,
+  updateProject as updateProjectDB,
+  deleteProject as deleteProjectDB,
+} from '@/lib/storage/indexeddb';
+import { createProjectObject, duplicateProject } from '../utils/project-helpers';
 
 // IMPORTANT: Always use granular selectors to prevent unnecessary re-renders!
 //
@@ -10,29 +21,265 @@ import type { ProjectState, ProjectActions } from '../types';
 // ❌ WRONG: Don't destructure the entire store
 // const { projects, loadProjects } = useProjectStore();
 
-export const useProjectStore = create<ProjectState & ProjectActions>((set) => ({
-  // State
-  projects: [],
-  currentProject: null,
-  isLoading: false,
-  error: null,
+export interface ProjectState {
+  // Data
+  projects: Project[];
+  currentProject: Project | null;
 
-  // Actions
-  loadProjects: async () => {
-    // TODO: Implement load projects
-  },
-  loadProject: async (id) => {
-    // TODO: Implement load project
-  },
-  createProject: async (data) => {
-    // TODO: Implement create project
-    throw new Error('Not implemented');
-  },
-  updateProject: async (id, data) => {
-    // TODO: Implement update project
-  },
-  deleteProject: async (id) => {
-    // TODO: Implement delete project
-  },
-  setCurrentProject: (project) => set({ currentProject: project }),
-}));
+  // UI State
+  isLoading: boolean;
+  error: string | null;
+
+  // Search and filter state
+  searchQuery: string;
+  sortField: 'name' | 'createdAt' | 'updatedAt' | 'resolution';
+  sortDirection: 'asc' | 'desc';
+  filterResolution?: string;
+  filterFps?: number;
+}
+
+export interface ProjectActions {
+  // CRUD Operations
+  loadProjects: () => Promise<void>;
+  loadProject: (id: string) => Promise<Project | null>;
+  createProject: (data: ProjectFormData) => Promise<Project>;
+  updateProject: (id: string, data: Partial<ProjectFormData>) => Promise<Project>;
+  deleteProject: (id: string) => Promise<void>;
+  duplicateProject: (id: string) => Promise<Project>;
+
+  // State management
+  setCurrentProject: (project: Project | null) => void;
+  setSearchQuery: (query: string) => void;
+  setSortField: (field: ProjectState['sortField']) => void;
+  setSortDirection: (direction: ProjectState['sortDirection']) => void;
+  setFilterResolution: (resolution: string | undefined) => void;
+  setFilterFps: (fps: number | undefined) => void;
+  clearFilters: () => void;
+
+  // Utility
+  clearError: () => void;
+}
+
+export const useProjectStore = create<ProjectState & ProjectActions>()(
+  devtools(
+    temporal(
+      (set, get) => ({
+        // Initial state
+        projects: [],
+        currentProject: null,
+        isLoading: false,
+        error: null,
+        searchQuery: '',
+        sortField: 'updatedAt',
+        sortDirection: 'desc',
+        filterResolution: undefined,
+        filterFps: undefined,
+
+        // Load all projects from IndexedDB
+        loadProjects: async () => {
+          set({ isLoading: true, error: null });
+
+          try {
+            const projects = await getAllProjects();
+            set({ projects, isLoading: false });
+          } catch (error) {
+            const errorMessage =
+              error instanceof Error ? error.message : 'Failed to load projects';
+            set({ error: errorMessage, isLoading: false });
+            throw error;
+          }
+        },
+
+        // Load a single project by ID
+        loadProject: async (id: string) => {
+          set({ isLoading: true, error: null });
+
+          try {
+            const project = await getProject(id);
+
+            if (!project) {
+              set({ error: `Project not found: ${id}`, isLoading: false });
+              return null;
+            }
+
+            set({ currentProject: project, isLoading: false });
+            return project;
+          } catch (error) {
+            const errorMessage =
+              error instanceof Error ? error.message : 'Failed to load project';
+            set({ error: errorMessage, isLoading: false });
+            throw error;
+          }
+        },
+
+        // Create a new project with optimistic update
+        createProject: async (data: ProjectFormData) => {
+          set({ isLoading: true, error: null });
+
+          const newProject = createProjectObject(data);
+
+          // Optimistic update - add to state immediately
+          const previousProjects = get().projects;
+          set({ projects: [...previousProjects, newProject] });
+
+          try {
+            await createProjectDB(newProject);
+            set({ isLoading: false, currentProject: newProject });
+            return newProject;
+          } catch (error) {
+            // Rollback on error
+            set({ projects: previousProjects });
+
+            const errorMessage =
+              error instanceof Error ? error.message : 'Failed to create project';
+            set({ error: errorMessage, isLoading: false });
+            throw error;
+          }
+        },
+
+        // Update an existing project with optimistic update
+        updateProject: async (id: string, data: Partial<ProjectFormData>) => {
+          set({ isLoading: true, error: null });
+
+          const previousProjects = get().projects;
+          const projectIndex = previousProjects.findIndex((p) => p.id === id);
+
+          if (projectIndex === -1) {
+            set({ error: `Project not found: ${id}`, isLoading: false });
+            throw new Error(`Project not found: ${id}`);
+          }
+
+          // Optimistic update
+          const updatedProject: Project = {
+            ...previousProjects[projectIndex],
+            name: data.name ?? previousProjects[projectIndex].name,
+            description: data.description ?? previousProjects[projectIndex].description,
+            metadata: {
+              width: data.width ?? previousProjects[projectIndex].metadata.width,
+              height: data.height ?? previousProjects[projectIndex].metadata.height,
+              fps: data.fps ?? previousProjects[projectIndex].metadata.fps,
+            },
+            updatedAt: Date.now(),
+          };
+
+          const optimisticProjects = [...previousProjects];
+          optimisticProjects[projectIndex] = updatedProject;
+          set({ projects: optimisticProjects });
+
+          try {
+            const updated = await updateProjectDB(id, updatedProject);
+
+            // Update current project if it's the one being edited
+            if (get().currentProject?.id === id) {
+              set({ currentProject: updated });
+            }
+
+            set({ isLoading: false });
+            return updated;
+          } catch (error) {
+            // Rollback on error
+            set({ projects: previousProjects });
+
+            const errorMessage =
+              error instanceof Error ? error.message : 'Failed to update project';
+            set({ error: errorMessage, isLoading: false });
+            throw error;
+          }
+        },
+
+        // Delete a project with optimistic update
+        deleteProject: async (id: string) => {
+          set({ isLoading: true, error: null });
+
+          const previousProjects = get().projects;
+
+          // Optimistic update - remove from state immediately
+          const optimisticProjects = previousProjects.filter((p) => p.id !== id);
+          set({ projects: optimisticProjects });
+
+          // Clear current project if it's the one being deleted
+          if (get().currentProject?.id === id) {
+            set({ currentProject: null });
+          }
+
+          try {
+            await deleteProjectDB(id);
+            set({ isLoading: false });
+          } catch (error) {
+            // Rollback on error
+            set({ projects: previousProjects });
+
+            const errorMessage =
+              error instanceof Error ? error.message : 'Failed to delete project';
+            set({ error: errorMessage, isLoading: false });
+            throw error;
+          }
+        },
+
+        // Duplicate an existing project
+        duplicateProject: async (id: string) => {
+          set({ isLoading: true, error: null });
+
+          const originalProject = get().projects.find((p) => p.id === id);
+
+          if (!originalProject) {
+            set({ error: `Project not found: ${id}`, isLoading: false });
+            throw new Error(`Project not found: ${id}`);
+          }
+
+          const newProject = duplicateProject(originalProject);
+
+          // Optimistic update
+          const previousProjects = get().projects;
+          set({ projects: [...previousProjects, newProject] });
+
+          try {
+            await createProjectDB(newProject);
+            set({ isLoading: false });
+            return newProject;
+          } catch (error) {
+            // Rollback on error
+            set({ projects: previousProjects });
+
+            const errorMessage =
+              error instanceof Error ? error.message : 'Failed to duplicate project';
+            set({ error: errorMessage, isLoading: false });
+            throw error;
+          }
+        },
+
+        // State setters
+        setCurrentProject: (project) => set({ currentProject: project }),
+        setSearchQuery: (query) => set({ searchQuery: query }),
+        setSortField: (field) => set({ sortField: field }),
+        setSortDirection: (direction) => set({ sortDirection: direction }),
+        setFilterResolution: (resolution) => set({ filterResolution: resolution }),
+        setFilterFps: (fps) => set({ filterFps: fps }),
+        clearFilters: () =>
+          set({
+            searchQuery: '',
+            filterResolution: undefined,
+            filterFps: undefined,
+          }),
+        clearError: () => set({ error: null }),
+      }),
+      {
+        // Zundo options
+        limit: 50, // Keep 50 history states
+        partialize: (state) => {
+          // Only include projects in undo/redo history
+          // Exclude UI state like loading, error, filters
+          return {
+            projects: state.projects,
+            currentProject: state.currentProject,
+          };
+        },
+      }
+    ),
+    {
+      // Devtools options
+      name: 'ProjectStore',
+      enabled: process.env.NODE_ENV === 'development',
+    }
+  )
+);
