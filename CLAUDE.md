@@ -2,6 +2,9 @@
 
 Modern browser-based video editor with React 19, TypeScript 5.9, high-performance storage (OPFS + IndexedDB), and Remotion-powered composition.
 
+## Important Notes
+- Project or tree structure docs might not reflect the state written due to incremental updates. Always cross reference and check if unclear. 
+
 ## Tech Stack
 
 - **React 19.2** - Activity, Effect Events, concurrent rendering

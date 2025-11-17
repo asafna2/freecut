@@ -27,7 +27,7 @@ export function PropertiesSidebar() {
       >
         {/* Use Activity for React 19 performance optimization */}
         <Activity mode={rightSidebarOpen ? 'visible' : 'hidden'}>
-          <div className="h-full flex flex-col w-80 animate-slide-in-right">
+          <div className="h-full flex flex-col w-80">
             {/* Sidebar Header */}
             <div className="h-11 flex items-center justify-between px-4 border-b border-border flex-shrink-0">
               <h2 className="text-xs font-semibold tracking-wide uppercase text-muted-foreground flex items-center gap-2">
