@@ -4,11 +4,16 @@ import { useMemo, useRef, useEffect, useState } from 'react';
 import { useTimelineStore } from '../stores/timeline-store';
 import { useTimelineZoom } from '../hooks/use-timeline-zoom';
 import { usePlaybackStore } from '@/features/preview/stores/playback-store';
+import { useSelectionStore } from '@/features/editor/stores/selection-store';
+
+// Hooks
+import { useMarqueeSelection } from '@/hooks/use-marquee-selection';
 
 // Components
 import { TimelineMarkers } from './timeline-markers';
 import { TimelinePlayhead } from './timeline-playhead';
 import { TimelineTrack } from './timeline-track';
+import { MarqueeOverlay } from '@/components/marquee-overlay';
 
 export interface TimelineContentProps {
   duration: number; // Total timeline duration in seconds
@@ -35,9 +40,12 @@ export function TimelineContent({ duration }: TimelineContentProps) {
     maxZoom: 2, // Match slider range
   });
   const currentFrame = usePlaybackStore((s) => s.currentFrame);
+  const selectItems = useSelectionStore((s) => s.selectItems);
+  const clearSelection = useSelectionStore((s) => s.clearSelection);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(0);
+  const marqueeWasActiveRef = useRef(false);
 
   // Measure container width - run after render and on resize
   useEffect(() => {
@@ -71,6 +79,70 @@ export function TimelineContent({ duration }: TimelineContentProps) {
       }
     }
   }, [items, containerWidth]);
+
+  // Marquee selection - create items array for getBoundingRect lookups
+  const marqueeItems = useMemo(
+    () =>
+      items.map((item) => ({
+        id: item.id,
+        getBoundingRect: () => {
+          const element = document.querySelector(`[data-item-id="${item.id}"]`);
+          if (!element) {
+            return { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
+          }
+          const rect = element.getBoundingClientRect();
+          return {
+            left: rect.left,
+            top: rect.top,
+            right: rect.right,
+            bottom: rect.bottom,
+            width: rect.width,
+            height: rect.height,
+          };
+        },
+      })),
+    [items]
+  );
+
+  // Marquee selection hook
+  const { marqueeState } = useMarqueeSelection({
+    containerRef,
+    items: marqueeItems,
+    onSelectionChange: (ids) => {
+      selectItems(ids);
+    },
+    enabled: true,
+    threshold: 5,
+  });
+
+  // Track marquee state to prevent deselection after marquee release
+  useEffect(() => {
+    if (marqueeState.active) {
+      marqueeWasActiveRef.current = true;
+    } else if (marqueeWasActiveRef.current) {
+      // Reset after a short delay when marquee ends
+      const timeout = setTimeout(() => {
+        marqueeWasActiveRef.current = false;
+      }, 100);
+      return () => clearTimeout(timeout);
+    }
+  }, [marqueeState.active]);
+
+  // Click empty space to deselect
+  const handleContainerClick = (e: React.MouseEvent) => {
+    // Don't deselect if marquee selection just finished
+    if (marqueeWasActiveRef.current) {
+      return;
+    }
+
+    // Deselect if NOT clicking on a timeline item
+    const target = e.target as HTMLElement;
+    const clickedOnItem = target.closest('[data-item-id]');
+
+    if (!clickedOnItem) {
+      clearSelection();
+    }
+  };
 
   // Calculate the actual timeline duration and width based on content
   const { actualDuration, timelineWidth } = useMemo(() => {
@@ -138,7 +210,11 @@ export function TimelineContent({ duration }: TimelineContentProps) {
       ref={containerRef}
       className="flex-1 overflow-x-auto overflow-y-hidden relative bg-background/30 timeline-container"
       onWheel={handleWheel}
+      onClick={handleContainerClick}
     >
+      {/* Marquee selection overlay */}
+      <MarqueeOverlay marqueeState={marqueeState} />
+
       {/* Time Ruler */}
       <div className="relative timeline-ruler" style={{ width: `${timelineWidth}px` }}>
         <TimelineMarkers duration={actualDuration} width={timelineWidth} />

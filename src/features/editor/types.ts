@@ -22,10 +22,17 @@ export interface SelectionState {
   selectedItemIds: string[];
   selectedTrackId: string | null;
   selectionType: 'item' | 'track' | null;
+  // Drag state for visual feedback
+  dragState: {
+    isDragging: boolean;
+    draggedItemIds: string[];
+    offset: { x: number; y: number };
+  } | null;
 }
 
 export interface SelectionActions {
   selectItems: (ids: string[]) => void;
   selectTrack: (id: string | null) => void;
   clearSelection: () => void;
+  setDragState: (dragState: SelectionState['dragState']) => void;
 }

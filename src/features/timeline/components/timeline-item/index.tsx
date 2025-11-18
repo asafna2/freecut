@@ -1,8 +1,9 @@
+import { useRef, useEffect } from 'react';
 import type { TimelineItem } from '@/types/timeline';
 import { useTimelineZoom } from '../../hooks/use-timeline-zoom';
 import { useTimelineStore } from '../../stores/timeline-store';
 import { useSelectionStore } from '@/features/editor/stores/selection-store';
-import { useTimelineDrag } from '../../hooks/use-timeline-drag';
+import { useTimelineDrag, dragOffsetRef } from '../../hooks/use-timeline-drag';
 import { DRAG_OPACITY } from '../../constants';
 
 export interface TimelineItemProps {
@@ -31,11 +32,71 @@ export function TimelineItem({ item, timelineDuration = 30 }: TimelineItemProps)
   const { timeToPixels } = useTimelineZoom();
   const selectedItemIds = useSelectionStore((s) => s.selectedItemIds);
   const selectItems = useSelectionStore((s) => s.selectItems);
+  const dragState = useSelectionStore((s) => s.dragState);
 
   const isSelected = selectedItemIds.includes(item.id);
 
-  // Drag-and-drop functionality
+  // Drag-and-drop functionality (local state for anchor item)
   const { isDragging, dragOffset, handleDragStart } = useTimelineDrag(item, timelineDuration);
+
+  // Check if this item is part of a multi-drag (but not the anchor)
+  const isPartOfDrag = dragState?.isDragging && dragState.draggedItemIds.includes(item.id) && !isDragging;
+
+  // Ref for transform style (updated via RAF for smooth dragging without re-renders)
+  const transformRef = useRef<HTMLDivElement>(null);
+  const wasDraggingRef = useRef(false);
+
+  // Disable transition when anchor item drag ends to avoid animation
+  useEffect(() => {
+    if (wasDraggingRef.current && !isDragging && transformRef.current) {
+      // Drag just ended - disable transition temporarily
+      transformRef.current.style.transition = 'none';
+      requestAnimationFrame(() => {
+        if (transformRef.current) {
+          transformRef.current.style.transition = '';
+        }
+      });
+    }
+    wasDraggingRef.current = isDragging;
+  }, [isDragging]);
+
+  // Use RAF to update transform for items being dragged along (not the anchor)
+  useEffect(() => {
+    if (!isPartOfDrag || !transformRef.current) return;
+
+    let rafId: number;
+    const updateTransform = () => {
+      if (transformRef.current && isPartOfDrag) {
+        const offset = dragOffsetRef.current;
+        transformRef.current.style.transform = `translate(${offset.x}px, ${offset.y}px)`;
+        transformRef.current.style.opacity = String(DRAG_OPACITY);
+        transformRef.current.style.transition = 'none';
+        transformRef.current.style.pointerEvents = 'none';
+        rafId = requestAnimationFrame(updateTransform);
+      }
+    };
+
+    rafId = requestAnimationFrame(updateTransform);
+    return () => {
+      if (rafId) cancelAnimationFrame(rafId);
+      // Reset styles when drag ends
+      if (transformRef.current) {
+        transformRef.current.style.transition = 'none';
+        transformRef.current.style.transform = '';
+        transformRef.current.style.opacity = '';
+        transformRef.current.style.pointerEvents = '';
+        // Re-enable transitions after position updates (next frame)
+        requestAnimationFrame(() => {
+          if (transformRef.current) {
+            transformRef.current.style.transition = '';
+          }
+        });
+      }
+    };
+  }, [isPartOfDrag]);
+
+  // Determine if this item is being dragged (anchor or follower)
+  const isBeingDragged = isDragging || isPartOfDrag;
 
   // Get FPS for frame-to-time conversion
   const fps = useTimelineStore((s) => s.fps);
@@ -80,16 +141,19 @@ export function TimelineItem({ item, timelineDuration = 30 }: TimelineItemProps)
 
   return (
     <div
+      ref={transformRef}
+      data-item-id={item.id}
       className={`
         absolute top-2 h-12 rounded overflow-hidden transition-all
         ${getItemColor()}
         ${isSelected ? 'ring-2 ring-primary ring-offset-1 ring-offset-background' : ''}
-        ${isDragging ? 'cursor-grabbing' : 'cursor-grab'}
-        ${!isDragging && 'hover:brightness-110'}
+        ${isBeingDragged ? 'cursor-grabbing' : 'cursor-grab'}
+        ${!isBeingDragged && 'hover:brightness-110'}
       `}
       style={{
         left: `${left}px`,
         width: `${width}px`,
+        // Anchor item uses its own dragOffset, followers get updated via RAF
         transform: isDragging ? `translate(${dragOffset.x}px, ${dragOffset.y}px)` : undefined,
         opacity: isDragging ? DRAG_OPACITY : 1,
         transition: isDragging ? 'none' : 'all 0.2s',

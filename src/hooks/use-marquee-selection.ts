@@ -145,14 +145,16 @@ export function useMarqueeSelection({
   const updateSelection = useCallback(() => {
     if (!marqueeState.active || !containerRef.current) return;
 
-    const container = containerRef.current.getBoundingClientRect();
+    const container = containerRef.current;
+    const containerRect = container.getBoundingClientRect();
 
-    // Get marquee rectangle relative to viewport
+    // Convert marquee from content space to viewport space for comparison
+    // Marquee coordinates include scroll offset, so we subtract it and add container position
     const marqueeRect = getMarqueeRect(
-      marqueeState.startX + container.left,
-      marqueeState.startY + container.top,
-      marqueeState.currentX + container.left,
-      marqueeState.currentY + container.top
+      marqueeState.startX - container.scrollLeft + containerRect.left,
+      marqueeState.startY - container.scrollTop + containerRect.top,
+      marqueeState.currentX - container.scrollLeft + containerRect.left,
+      marqueeState.currentY - container.scrollTop + containerRect.top
     );
 
     // Find all items that intersect with marquee
@@ -200,7 +202,6 @@ export function useMarqueeSelection({
       }
 
       // Don't start marquee if clicking on an interactive element
-      // Note: Removed draggable check to allow drag-to-select on media cards
       const target = e.target as HTMLElement;
       if (
         target.tagName === 'BUTTON' ||
@@ -209,7 +210,13 @@ export function useMarqueeSelection({
         target.closest('button') ||
         target.closest('input') ||
         target.closest('a') ||
-        target.closest('[role="button"]')
+        target.closest('[role="button"]') ||
+        // Don't start marquee if clicking on a draggable timeline item
+        target.closest('[data-item-id]') ||
+        // Don't start marquee if clicking on a draggable media card
+        target.closest('[data-media-id]') ||
+        // Don't start marquee if clicking in the timeline ruler
+        target.closest('.timeline-ruler')
       ) {
         return;
       }
@@ -217,8 +224,9 @@ export function useMarqueeSelection({
       isDraggingRef.current = true;
       hasMovedRef.current = false;
 
-      const startX = e.clientX - rect.left;
-      const startY = e.clientY - rect.top;
+      // Account for scroll offset to get position in content space
+      const startX = e.clientX - rect.left + container.scrollLeft;
+      const startY = e.clientY - rect.top + container.scrollTop;
 
       setMarqueeState({
         active: false, // Don't activate until we move past threshold
@@ -244,8 +252,9 @@ export function useMarqueeSelection({
       const container = containerRef.current;
       const rect = container.getBoundingClientRect();
 
-      const currentX = e.clientX - rect.left;
-      const currentY = e.clientY - rect.top;
+      // Account for scroll offset to get position in content space
+      const currentX = e.clientX - rect.left + container.scrollLeft;
+      const currentY = e.clientY - rect.top + container.scrollTop;
 
       // Check if we've moved past threshold
       if (!hasMovedRef.current) {

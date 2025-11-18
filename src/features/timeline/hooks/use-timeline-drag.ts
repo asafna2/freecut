@@ -8,6 +8,9 @@ import { useSnapCalculator } from './use-snap-calculator';
 import { useCollisionDetector } from './use-collision-detector';
 import { DRAG_THRESHOLD_PIXELS } from '../constants';
 
+// Shared ref for drag offset (avoids re-renders from store updates)
+export const dragOffsetRef = { current: { x: 0, y: 0 } };
+
 /**
  * Timeline drag-and-drop hook - Phase 2 Enhanced
  *
@@ -38,6 +41,7 @@ export function useTimelineDrag(
   // Selection store
   const selectedItemIds = useSelectionStore((s) => s.selectedItemIds);
   const selectItems = useSelectionStore((s) => s.selectItems);
+  const setDragState = useSelectionStore((s) => s.setDragState);
 
   // Get zoom utilities
   const { pixelsToFrame } = useTimelineZoom();
@@ -167,6 +171,14 @@ export function useTimelineDrag(
           document.body.style.cursor = 'grabbing';
           document.body.style.userSelect = 'none';
 
+          // Broadcast drag state to all selected items
+          const draggedIds = dragStateRef.current?.draggedItems.map((item) => item.id) || [];
+          setDragState({
+            isDragging: true,
+            draggedItemIds: draggedIds,
+            offset: { x: 0, y: 0 },
+          });
+
           // Remove this listener - the main useEffect will handle it now
           window.removeEventListener('mousemove', checkDragThreshold);
           window.removeEventListener('mouseup', cancelDrag);
@@ -198,8 +210,11 @@ export function useTimelineDrag(
       const deltaX = e.clientX - dragStateRef.current.startMouseX;
       const deltaY = e.clientY - dragStateRef.current.startMouseY;
 
-      // Update drag offset for visual preview
+      // Update drag offset for visual preview (local state for anchor item)
       setDragOffset({ x: deltaX, y: deltaY });
+
+      // Update shared ref for other items to read (no re-renders)
+      dragOffsetRef.current = { x: deltaX, y: deltaY };
 
       dragStateRef.current.currentMouseX = e.clientX;
       dragStateRef.current.currentMouseY = e.clientY;
@@ -309,6 +324,8 @@ export function useTimelineDrag(
       // Clean up
       setIsDragging(false);
       setDragOffset({ x: 0, y: 0 });
+      setDragState(null); // Clear drag state
+      dragOffsetRef.current = { x: 0, y: 0 }; // Reset shared ref
       dragStateRef.current = null;
       document.body.style.cursor = '';
       document.body.style.userSelect = '';

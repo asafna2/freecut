@@ -15,6 +15,7 @@ export const useSelectionStore = create<SelectionState & SelectionActions>((set)
   selectedItemIds: [],
   selectedTrackId: null,
   selectionType: null,
+  dragState: null,
 
   // Actions
   selectItems: (ids) => set({
@@ -32,4 +33,5 @@ export const useSelectionStore = create<SelectionState & SelectionActions>((set)
     selectedTrackId: null,
     selectionType: null,
   }),
+  setDragState: (dragState) => set({ dragState }),
 }));

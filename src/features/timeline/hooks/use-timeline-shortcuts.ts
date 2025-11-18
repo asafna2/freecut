@@ -35,6 +35,7 @@ export function useTimelineShortcuts(callbacks: TimelineShortcutCallbacks = {}) 
   const isPlaying = usePlaybackStore((s) => s.isPlaying);
 
   const selectedItemIds = useSelectionStore((s) => s.selectedItemIds);
+  const clearSelection = useSelectionStore((s) => s.clearSelection);
   const removeItems = useTimelineStore((s) => s.removeItems);
 
   // Playback: Space - Play/Pause (global shortcut)
@@ -158,6 +159,17 @@ export function useTimelineShortcuts(callbacks: TimelineShortcutCallbacks = {}) 
     },
     HOTKEY_OPTIONS,
     [selectedItemIds, removeItems, callbacks]
+  );
+
+  // Selection: Escape - Deselect all items
+  useHotkeys(
+    HOTKEYS.DESELECT_ALL,
+    (event) => {
+      event.preventDefault();
+      clearSelection();
+    },
+    HOTKEY_OPTIONS,
+    [clearSelection]
   );
 
   // Editing: C - Split item at playhead
