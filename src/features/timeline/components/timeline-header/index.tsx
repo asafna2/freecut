@@ -11,9 +11,13 @@ import {
   ZoomOut,
   Grid3x3,
   Scissors,
+  CornerRightDown,
+  CornerRightUp,
+  X,
 } from 'lucide-react';
 import { useTimelineZoom } from '../../hooks/use-timeline-zoom';
 import { useTimelineStore } from '../../stores/timeline-store';
+import { usePlaybackStore } from '@/features/preview/stores/playback-store';
 import { useSelectionStore } from '@/features/editor/stores/selection-store';
 
 export interface TimelineHeaderProps {
@@ -35,6 +39,12 @@ export function TimelineHeader({ onZoomChange, onZoomIn, onZoomOut }: TimelineHe
   const { zoomLevel, zoomIn, zoomOut, setZoom } = useTimelineZoom();
   const snapEnabled = useTimelineStore((s) => s.snapEnabled);
   const toggleSnap = useTimelineStore((s) => s.toggleSnap);
+  const inPoint = useTimelineStore((s) => s.inPoint);
+  const outPoint = useTimelineStore((s) => s.outPoint);
+  const setInPoint = useTimelineStore((s) => s.setInPoint);
+  const setOutPoint = useTimelineStore((s) => s.setOutPoint);
+  const clearInOutPoints = useTimelineStore((s) => s.clearInOutPoints);
+  const currentFrame = usePlaybackStore((s) => s.currentFrame);
   const activeTool = useSelectionStore((s) => s.activeTool);
   const setActiveTool = useSelectionStore((s) => s.setActiveTool);
 
@@ -136,6 +146,52 @@ export function TimelineHeader({ onZoomChange, onZoomIn, onZoomOut }: TimelineHe
             {activeTool === 'razor' ? 'Razor Tool Active (C)' : 'Activate Razor Tool (C)'}
           </TooltipContent>
         </Tooltip>
+
+        {/* In/Out Point Buttons */}
+        <div className="flex items-center gap-1 border-l border-border pl-2 ml-1">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7"
+                onClick={() => setInPoint(currentFrame)}
+              >
+                <CornerRightDown className="w-3 h-3" style={{ color: 'oklch(0.65 0.18 142)' }} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Set In Point (I)</TooltipContent>
+          </Tooltip>
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7"
+                onClick={() => setOutPoint(currentFrame)}
+              >
+                <CornerRightUp className="w-3 h-3" style={{ color: 'oklch(0.61 0.22 29)' }} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Set Out Point (O)</TooltipContent>
+          </Tooltip>
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7"
+                onClick={clearInOutPoints}
+                disabled={inPoint === null && outPoint === null}
+              >
+                <X className="w-3 h-3" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Clear In/Out Points</TooltipContent>
+          </Tooltip>
+        </div>
 
         <Tooltip>
           <TooltipTrigger asChild>

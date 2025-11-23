@@ -5,6 +5,9 @@ import { useMemo, useCallback, useRef, useState, useEffect } from 'react';
 import { useTimelineStore } from '../stores/timeline-store';
 import { usePlaybackStore } from '@/features/preview/stores/playback-store';
 
+// Components
+import { TimelineInOutMarkers } from './timeline-in-out-markers';
+
 // Utilities and hooks
 import { useTimelineZoom } from '../hooks/use-timeline-zoom';
 import { formatTimecode, secondsToFrames } from '@/utils/time-utils';
@@ -171,6 +174,8 @@ function calculateMarkerInterval(pixelsPerSecond: number): MarkerInterval {
 export function TimelineMarkers({ duration, width }: TimelineMarkersProps) {
   const { timeToPixels, pixelsPerSecond, pixelsToFrame } = useTimelineZoom();
   const fps = useTimelineStore((s) => s.fps);
+  const inPoint = useTimelineStore((s) => s.inPoint);
+  const outPoint = useTimelineStore((s) => s.outPoint);
   const setCurrentFrame = usePlaybackStore((s) => s.setCurrentFrame);
   const pause = usePlaybackStore((s) => s.pause);
   const rulerRef = useRef<HTMLDivElement>(null);
@@ -399,6 +404,24 @@ export function TimelineMarkers({ duration, width }: TimelineMarkersProps) {
           background: 'linear-gradient(to left, oklch(0.15 0 0 / 0.15), transparent)',
         }}
       />
+
+      {/* Shaded region between in/out points */}
+      {inPoint !== null && outPoint !== null && (
+        <div
+          className="absolute top-0 bottom-0 pointer-events-none"
+          style={{
+            left: `${timeToPixels(inPoint / fps)}px`,
+            width: `${timeToPixels((outPoint - inPoint) / fps)}px`,
+            backgroundColor: 'oklch(0.5 0.1 220 / 0.15)',
+            borderLeft: '1px solid oklch(0.65 0.18 142 / 0.5)',
+            borderRight: '1px solid oklch(0.61 0.22 29 / 0.5)',
+            zIndex: 10,
+          }}
+        />
+      )}
+
+      {/* In/Out markers */}
+      <TimelineInOutMarkers />
     </div>
   );
 }

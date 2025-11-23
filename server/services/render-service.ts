@@ -122,7 +122,6 @@ export class RenderService {
         serveUrl: bundleLocation,
         codec: this.getCodec(settings.codec),
         outputLocation: outputPath,
-        hardwareAcceleration: 'if-possible',
         videoBitrate: this.getVideoBitrate(settings, composition.width, composition.height),
         audioBitrate: settings.audioBitrate || '192k',
         inputProps: {

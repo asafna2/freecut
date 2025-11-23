@@ -42,6 +42,8 @@ export function useRender(): UseRenderReturn {
   const tracks = useTimelineStore((state) => state.tracks);
   const items = useTimelineStore((state) => state.items);
   const fps = useTimelineStore((state) => state.fps);
+  const inPoint = useTimelineStore((state) => state.inPoint);
+  const outPoint = useTimelineStore((state) => state.outPoint);
 
   // Initialize Socket.IO connection
   useEffect(() => {
@@ -116,12 +118,15 @@ export function useRender(): UseRenderReturn {
 
         // Convert timeline to Remotion format with export settings
         // Use project FPS from timeline store
+        // Pass in/out points to export only the selected range
         const composition = convertTimelineToRemotion(
           tracks,
           items,
           fps,
           settings.resolution.width,
-          settings.resolution.height
+          settings.resolution.height,
+          inPoint,
+          outPoint
         );
 
         // Get all unique media IDs from timeline
@@ -180,7 +185,7 @@ export function useRender(): UseRenderReturn {
         setStatus('failed');
       }
     },
-    [tracks, items, fps]
+    [tracks, items, fps, inPoint, outPoint]
   );
 
   /**

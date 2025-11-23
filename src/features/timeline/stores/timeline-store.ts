@@ -29,6 +29,8 @@ export const useTimelineStore = create<TimelineState & TimelineActions>()(
   fps: 30,
   scrollPosition: 0,
   snapEnabled: true,
+  inPoint: null,
+  outPoint: null,
 
   // Actions
   setTracks: (tracks) => set({ tracks }),
@@ -200,6 +202,28 @@ export const useTimelineStore = create<TimelineState & TimelineActions>()(
     };
   }),
 
+  // In/Out point actions with validation
+  setInPoint: (frame) => set((state) => {
+    // If out-point exists and in-point would exceed it, move out-point to last frame
+    if (state.outPoint !== null && frame >= state.outPoint) {
+      // Calculate last frame from rightmost item
+      const maxEndFrame = state.items.length > 0
+        ? Math.max(...state.items.map(item => item.from + item.durationInFrames))
+        : state.fps * 10; // Default to 10 seconds if no items
+
+      return { inPoint: frame, outPoint: Math.max(maxEndFrame, frame + 1) };
+    }
+    return { inPoint: frame };
+  }),
+  setOutPoint: (frame) => set((state) => {
+    // If in-point exists and out-point would go before it, move in-point to frame 0
+    if (state.inPoint !== null && frame <= state.inPoint) {
+      return { inPoint: 0, outPoint: frame };
+    }
+    return { outPoint: frame };
+  }),
+  clearInOutPoints: () => set({ inPoint: null, outPoint: null }),
+
   // Save timeline to project in IndexedDB
   saveTimeline: async (projectId) => {
     const state = useTimelineStore.getState();
@@ -261,6 +285,9 @@ export const useTimelineStore = create<TimelineState & TimelineActions>()(
         // Save playback and view state
         currentFrame,
         zoomLevel,
+        // Save in/out points
+        ...(state.inPoint !== null && { inPoint: state.inPoint }),
+        ...(state.outPoint !== null && { outPoint: state.outPoint }),
       };
 
       // Update project with timeline data
@@ -289,6 +316,9 @@ export const useTimelineStore = create<TimelineState & TimelineActions>()(
             items: [], // Items are stored separately
           })),
           items: project.timeline.items as any, // Type assertion needed due to serialization
+          // Restore in/out points
+          inPoint: project.timeline.inPoint ?? null,
+          outPoint: project.timeline.outPoint ?? null,
         });
 
         // Restore playback and view state

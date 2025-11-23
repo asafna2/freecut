@@ -45,6 +45,9 @@ export interface ProjectTimeline {
   // Playback and view state
   currentFrame?: number;
   zoomLevel?: number;
+  // In/Out markers
+  inPoint?: number;
+  outPoint?: number;
 }
 
 export interface ProjectResolution {

@@ -4,6 +4,8 @@ import { TimelineContent } from './timeline-content';
 import { TrackHeader } from './track-header';
 import { useTimelineTracks } from '../hooks/use-timeline-tracks';
 import { useSelectionStore } from '@/features/editor/stores/selection-store';
+import { useTimelineStore } from '../stores/timeline-store';
+import { usePlaybackStore } from '@/features/preview/stores/playback-store';
 import { Button } from '@/components/ui/button';
 import { Plus, Minus } from 'lucide-react';
 import type { TimelineTrack } from '@/types/timeline';
@@ -98,6 +100,42 @@ export function Timeline({ duration }: TimelineProps) {
     rafId = requestAnimationFrame(updateDropIndicator);
     return () => {
       if (rafId) cancelAnimationFrame(rafId);
+    };
+  }, []);
+
+  // Keyboard shortcuts for in/out markers
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore if typing in an input, textarea, or contenteditable
+      const target = e.target as HTMLElement;
+      if (
+        target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.isContentEditable
+      ) {
+        return;
+      }
+
+      const key = e.key.toLowerCase();
+
+      // 'I' key - Set in-point at current playhead position
+      if (key === 'i' && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
+        e.preventDefault();
+        const currentFrame = usePlaybackStore.getState().currentFrame;
+        useTimelineStore.getState().setInPoint(currentFrame);
+      }
+
+      // 'O' key - Set out-point at current playhead position
+      if (key === 'o' && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
+        e.preventDefault();
+        const currentFrame = usePlaybackStore.getState().currentFrame;
+        useTimelineStore.getState().setOutPoint(currentFrame);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
     };
   }, []);
 

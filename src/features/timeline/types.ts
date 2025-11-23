@@ -6,6 +6,8 @@ export interface TimelineState {
   fps: number;
   scrollPosition: number;
   snapEnabled: boolean;
+  inPoint: number | null;
+  outPoint: number | null;
 }
 
 export interface TimelineActions {
@@ -19,6 +21,9 @@ export interface TimelineActions {
   trimItemStart: (id: string, trimAmount: number) => void;
   trimItemEnd: (id: string, trimAmount: number) => void;
   splitItem: (id: string, splitFrame: number) => void;
+  setInPoint: (frame: number) => void;
+  setOutPoint: (frame: number) => void;
+  clearInOutPoints: () => void;
   saveTimeline: (projectId: string) => Promise<void>;
   loadTimeline: (projectId: string) => Promise<void>;
   clearTimeline: () => void;
