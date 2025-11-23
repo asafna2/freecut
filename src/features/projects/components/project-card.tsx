@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from '@tanstack/react-router';
-import { MoreVertical, PlayCircle, Edit2, Copy, Trash2 } from 'lucide-react';
+import { MoreVertical, PlayCircle, Edit2, Copy, Trash2, AlertTriangle } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -8,6 +8,16 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import type { Project } from '@/types/project';
 import { formatRelativeTime } from '../utils/project-helpers';
@@ -21,18 +31,23 @@ export interface ProjectCardProps {
 export function ProjectCard({ project, onEdit }: ProjectCardProps) {
   const [isDeleting, setIsDeleting] = useState(false);
   const [isDuplicating, setIsDuplicating] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const deleteProject = useDeleteProject();
   const duplicateProject = useDuplicateProject();
 
-  const handleDelete = async (e: React.MouseEvent) => {
+  const handleDeleteClick = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    setShowDeleteDialog(true);
+  };
 
+  const handleConfirmDelete = async () => {
     setIsDeleting(true);
+    setShowDeleteDialog(false);
     const result = await deleteProject(project.id);
     setIsDeleting(false);
 
-    if (!result.success && result.error !== 'Deletion cancelled') {
+    if (!result.success) {
       alert(`Failed to delete project: ${result.error}`);
     }
   };
@@ -159,7 +174,7 @@ export function ProjectCard({ project, onEdit }: ProjectCardProps) {
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem
-                onClick={handleDelete}
+                onClick={handleDeleteClick}
                 disabled={isDeleting}
                 className="flex items-center gap-2 text-destructive focus:text-destructive"
               >
@@ -169,6 +184,31 @@ export function ProjectCard({ project, onEdit }: ProjectCardProps) {
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
+
+        {/* Delete Confirmation Dialog */}
+        <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle className="flex items-center gap-2">
+                <AlertTriangle className="h-5 w-5 text-destructive" />
+                Delete Project
+              </AlertDialogTitle>
+              <AlertDialogDescription>
+                Are you sure you want to delete <strong>{project.name}</strong>? This action cannot be
+                undone and will permanently remove the project and all its contents.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={handleConfirmDelete}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                Delete Project
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         {/* Metadata */}
         <div className="flex items-center gap-3 mt-3 text-xs text-muted-foreground">

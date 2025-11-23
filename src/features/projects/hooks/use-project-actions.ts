@@ -95,22 +95,13 @@ export const useUpdateProject = () => {
 };
 
 /**
- * Hook for deleting a project with confirmation
+ * Hook for deleting a project
  */
 export const useDeleteProject = () => {
   const deleteProject = useProjectStore((s) => s.deleteProject);
 
   return useCallback(
-    async (id: string, skipConfirmation = false) => {
-      if (!skipConfirmation) {
-        const confirmed = window.confirm(
-          'Are you sure you want to delete this project? This action cannot be undone.'
-        );
-        if (!confirmed) {
-          return { success: false, error: 'Deletion cancelled' };
-        }
-      }
-
+    async (id: string) => {
       try {
         await deleteProject(id);
         return { success: true, error: null };
