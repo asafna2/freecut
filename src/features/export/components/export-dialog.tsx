@@ -25,7 +25,6 @@ export function ExportDialog({ open, onClose }: ExportDialogProps) {
     codec: 'h264',
     quality: 'high',
     resolution: { width: 1920, height: 1080 },
-    fps: 30,
   });
 
   const {
@@ -133,24 +132,6 @@ export function ExportDialog({ open, onClose }: ExportDialogProps) {
                     <SelectItem value="1920x1080">1080p (1920x1080)</SelectItem>
                     <SelectItem value="2560x1440">1440p (2560x1440)</SelectItem>
                     <SelectItem value="3840x2160">4K (3840x2160)</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {/* FPS */}
-              <div className="space-y-2">
-                <Label htmlFor="fps">Frame Rate</Label>
-                <Select
-                  value={String(settings.fps)}
-                  onValueChange={(value) => setSettings({ ...settings, fps: Number(value) })}
-                >
-                  <SelectTrigger id="fps">
-                    <SelectValue placeholder="Select frame rate" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="24">24 fps</SelectItem>
-                    <SelectItem value="30">30 fps</SelectItem>
-                    <SelectItem value="60">60 fps</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

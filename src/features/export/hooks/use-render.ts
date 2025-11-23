@@ -115,10 +115,11 @@ export function useRender(): UseRenderReturn {
         setJobId(newJobId);
 
         // Convert timeline to Remotion format with export settings
+        // Use project FPS from timeline store
         const composition = convertTimelineToRemotion(
           tracks,
           items,
-          settings.fps,
+          fps,
           settings.resolution.width,
           settings.resolution.height
         );
