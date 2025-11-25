@@ -347,6 +347,8 @@ export const useTimelineStore = create<TimelineState & TimelineActions>()(
         set({
           tracks: [],
           items: [],
+          inPoint: null,
+          outPoint: null,
         });
 
         // Reset playback and view state for new projects

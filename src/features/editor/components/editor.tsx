@@ -60,6 +60,8 @@ export function Editor({ projectId, project }: EditorProps) {
       useTimelineStore.setState({
         tracks: tracksWithItems,
         items: project.timeline.items as any, // Type assertion needed for serialization
+        inPoint: project.timeline.inPoint ?? null,
+        outPoint: project.timeline.outPoint ?? null,
       });
 
       // Restore playback and view state
@@ -76,41 +78,46 @@ export function Editor({ projectId, project }: EditorProps) {
       }
     } else {
       // Initialize with default tracks for new projects
-      setTracks([
-        {
-          id: 'track-1',
-          name: 'Track 1',
-          height: 64,
-          locked: false,
-          visible: true,
-          muted: false,
-          solo: false,
-          order: 0,
-          items: [],
-        },
-        {
-          id: 'track-2',
-          name: 'Track 2',
-          height: 64,
-          locked: false,
-          visible: true,
-          muted: false,
-          solo: false,
-          order: 1,
-          items: [],
-        },
-        {
-          id: 'track-3',
-          name: 'Track 3',
-          height: 56,
-          locked: false,
-          visible: true,
-          muted: false,
-          solo: false,
-          order: 2,
-          items: [],
-        },
-      ]);
+      useTimelineStore.setState({
+        tracks: [
+          {
+            id: 'track-1',
+            name: 'Track 1',
+            height: 64,
+            locked: false,
+            visible: true,
+            muted: false,
+            solo: false,
+            order: 0,
+            items: [],
+          },
+          {
+            id: 'track-2',
+            name: 'Track 2',
+            height: 64,
+            locked: false,
+            visible: true,
+            muted: false,
+            solo: false,
+            order: 1,
+            items: [],
+          },
+          {
+            id: 'track-3',
+            name: 'Track 3',
+            height: 56,
+            locked: false,
+            visible: true,
+            muted: false,
+            solo: false,
+            order: 2,
+            items: [],
+          },
+        ],
+        items: [],
+        inPoint: null,
+        outPoint: null,
+      });
 
       // Reset playback and view state for new projects
       setCurrentFrame(0);
