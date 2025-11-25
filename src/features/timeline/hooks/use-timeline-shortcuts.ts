@@ -174,6 +174,17 @@ export function useTimelineShortcuts(callbacks: TimelineShortcutCallbacks = {}) 
     [clearSelection]
   );
 
+  // Tool: V - Selection Tool
+  useHotkeys(
+    HOTKEYS.SELECTION_TOOL,
+    (event) => {
+      event.preventDefault();
+      setActiveTool('select');
+    },
+    HOTKEY_OPTIONS,
+    [setActiveTool]
+  );
+
   // Tool: C - Toggle Razor Tool
   useHotkeys(
     HOTKEYS.RAZOR_TOOL,

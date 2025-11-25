@@ -9,12 +9,16 @@ import {
   Film,
   ZoomIn,
   ZoomOut,
-  Grid3x3,
+  Magnet,
   Scissors,
   CornerRightDown,
   CornerRightUp,
   X,
+  MousePointer2,
+  Undo2,
+  Redo2,
 } from 'lucide-react';
+import { Separator } from '@/components/ui/separator';
 import { useTimelineZoom } from '../../hooks/use-timeline-zoom';
 import { useTimelineStore } from '../../stores/timeline-store';
 import { usePlaybackStore } from '@/features/preview/stores/playback-store';
@@ -27,13 +31,13 @@ export interface TimelineHeaderProps {
 }
 
 /**
- * Timeline Header Component
+ * Timeline Toolbar Component
  *
- * Contains timeline controls:
- * - Title and icon
- * - Zoom in/out buttons with slider
- * - Snap to grid toggle
- * - Additional timeline tools
+ * Unified toolbar for timeline controls:
+ * - Select/Razor tools
+ * - Undo/Redo
+ * - In/Out points, Snap toggle
+ * - Zoom controls
  */
 export function TimelineHeader({ onZoomChange, onZoomIn, onZoomOut }: TimelineHeaderProps) {
   const { zoomLevel, zoomIn, zoomOut, setZoom } = useTimelineZoom();
@@ -48,107 +52,95 @@ export function TimelineHeader({ onZoomChange, onZoomIn, onZoomOut }: TimelineHe
   const activeTool = useSelectionStore((s) => s.activeTool);
   const setActiveTool = useSelectionStore((s) => s.setActiveTool);
 
+  const handleUndo = () => {
+    useTimelineStore.temporal.getState().undo();
+  };
+
+  const handleRedo = () => {
+    useTimelineStore.temporal.getState().redo();
+  };
+
   return (
     <div className="h-11 flex items-center justify-between px-4 border-b border-border">
-      <div className="flex items-center gap-4">
+      {/* Left: Title & Tools */}
+      <div className="flex items-center gap-3">
         <h2 className="text-xs font-semibold tracking-wide uppercase text-muted-foreground flex items-center gap-2">
           <Film className="w-3 h-3" />
           Timeline
         </h2>
 
-        {/* Zoom Controls */}
-        <div className="flex items-center gap-2">
+        {/* Select/Razor Tools */}
+        <div className="flex items-center gap-1 px-1.5 py-1 bg-secondary/50 rounded-md border border-border">
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-7 w-7"
-                onClick={() => {
-                  // Use provided handler with playhead centering if available, otherwise fallback
-                  if (onZoomOut) {
-                    onZoomOut();
-                  } else {
-                    zoomOut();
-                  }
-                }}
+                className={`h-7 w-7 ${
+                  activeTool === 'select' ? 'bg-primary text-primary-foreground hover:bg-primary/90' : ''
+                }`}
+                onClick={() => setActiveTool('select')}
               >
-                <ZoomOut className="w-3 h-3" />
+                <MousePointer2 className="w-3.5 h-3.5" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Zoom Out</TooltipContent>
+            <TooltipContent>Select Tool (V)</TooltipContent>
           </Tooltip>
-
-          <Slider
-            value={[zoomLevel]}
-            onValueChange={(values) => {
-              const newZoom = values[0] ?? 1;
-              // Use provided handler with playhead centering if available, otherwise fallback
-              if (onZoomChange) {
-                onZoomChange(newZoom);
-              } else {
-                setZoom(newZoom);
-              }
-            }}
-            min={0.01}
-            max={2}
-            step={0.01}
-            className="w-24"
-          />
 
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-7 w-7"
-                onClick={() => {
-                  // Use provided handler with playhead centering if available, otherwise fallback
-                  if (onZoomIn) {
-                    onZoomIn();
-                  } else {
-                    zoomIn();
-                  }
-                }}
+                className={`h-7 w-7 ${
+                  activeTool === 'razor' ? 'bg-primary text-primary-foreground hover:bg-primary/90' : ''
+                }`}
+                onClick={() => setActiveTool(activeTool === 'razor' ? 'select' : 'razor')}
               >
-                <ZoomIn className="w-3 h-3" />
+                <Scissors className="w-3.5 h-3.5" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Zoom In</TooltipContent>
+            <TooltipContent>Razor Tool (C)</TooltipContent>
           </Tooltip>
-
-          <span className="text-xs text-muted-foreground font-mono w-12 text-right">
-            {Math.round(zoomLevel * 100)}%
-          </span>
         </div>
-      </div>
 
-      {/* Timeline Tools */}
-      <div className="flex items-center gap-2">
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="sm"
-              className={`h-7 text-xs focus:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 active:scale-100 ${
-                activeTool === 'razor' ? 'bg-primary text-primary-foreground hover:bg-primary/90' : ''
-              }`}
-              onClick={(e) => {
-                e.currentTarget.blur();
-                setActiveTool(activeTool === 'razor' ? 'select' : 'razor');
-              }}
-            >
-              <Scissors className="w-3 h-3 mr-1.5" />
-              Razor
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>
-            {activeTool === 'razor' ? 'Razor Tool Active (C)' : 'Activate Razor Tool (C)'}
-          </TooltipContent>
-        </Tooltip>
+        <Separator orientation="vertical" className="h-6 mx-2" />
 
-        {/* In/Out Point Buttons */}
-        <div className="flex items-center gap-1 border-l border-border pl-2 ml-1">
+        {/* Undo/Redo */}
+        <div className="flex items-center gap-1">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7"
+                onClick={handleUndo}
+              >
+                <Undo2 className="w-3.5 h-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Undo (Ctrl+Z)</TooltipContent>
+          </Tooltip>
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7"
+                onClick={handleRedo}
+              >
+                <Redo2 className="w-3.5 h-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Redo (Ctrl+Shift+Z)</TooltipContent>
+          </Tooltip>
+        </div>
+
+        <Separator orientation="vertical" className="h-6 mx-2" />
+
+        {/* In/Out Points */}
+        <div className="flex items-center gap-1">
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -157,7 +149,7 @@ export function TimelineHeader({ onZoomChange, onZoomIn, onZoomOut }: TimelineHe
                 className="h-7 w-7"
                 onClick={() => setInPoint(currentFrame)}
               >
-                <CornerRightDown className="w-3 h-3" style={{ color: 'oklch(0.65 0.18 142)' }} />
+                <CornerRightDown className="w-3.5 h-3.5" style={{ color: 'oklch(0.65 0.18 142)' }} />
               </Button>
             </TooltipTrigger>
             <TooltipContent>Set In Point (I)</TooltipContent>
@@ -171,7 +163,7 @@ export function TimelineHeader({ onZoomChange, onZoomIn, onZoomOut }: TimelineHe
                 className="h-7 w-7"
                 onClick={() => setOutPoint(currentFrame)}
               >
-                <CornerRightUp className="w-3 h-3" style={{ color: 'oklch(0.61 0.22 29)' }} />
+                <CornerRightUp className="w-3.5 h-3.5" style={{ color: 'oklch(0.61 0.22 29)' }} />
               </Button>
             </TooltipTrigger>
             <TooltipContent>Set Out Point (O)</TooltipContent>
@@ -186,29 +178,96 @@ export function TimelineHeader({ onZoomChange, onZoomIn, onZoomOut }: TimelineHe
                 onClick={clearInOutPoints}
                 disabled={inPoint === null && outPoint === null}
               >
-                <X className="w-3 h-3" />
+                <X className="w-3.5 h-3.5" />
               </Button>
             </TooltipTrigger>
             <TooltipContent>Clear In/Out Points</TooltipContent>
           </Tooltip>
         </div>
 
+        <Separator orientation="vertical" className="h-6 mx-2" />
+
+        {/* Snap Toggle */}
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
-              variant={snapEnabled ? 'secondary' : 'ghost'}
-              size="sm"
-              className="h-7 text-xs"
+              variant="ghost"
+              size="icon"
+              className={`h-7 w-7 ${
+                snapEnabled ? 'bg-primary text-primary-foreground hover:bg-primary/90' : ''
+              }`}
               onClick={toggleSnap}
             >
-              <Grid3x3 className="w-3 h-3 mr-1.5" />
-              Snap
+              <Magnet className="w-3.5 h-3.5" />
             </Button>
           </TooltipTrigger>
           <TooltipContent>
             {snapEnabled ? 'Snap Enabled' : 'Snap Disabled'}
           </TooltipContent>
         </Tooltip>
+      </div>
+
+      {/* Right: Zoom Controls */}
+      <div className="flex items-center gap-2">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={() => {
+                if (onZoomOut) {
+                  onZoomOut();
+                } else {
+                  zoomOut();
+                }
+              }}
+            >
+              <ZoomOut className="w-3.5 h-3.5" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Zoom Out</TooltipContent>
+        </Tooltip>
+
+        <Slider
+          value={[zoomLevel]}
+          onValueChange={(values) => {
+            const newZoom = values[0] ?? 1;
+            if (onZoomChange) {
+              onZoomChange(newZoom);
+            } else {
+              setZoom(newZoom);
+            }
+          }}
+          min={0.01}
+          max={2}
+          step={0.01}
+          className="w-24"
+        />
+
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={() => {
+                if (onZoomIn) {
+                  onZoomIn();
+                } else {
+                  zoomIn();
+                }
+              }}
+            >
+              <ZoomIn className="w-3.5 h-3.5" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Zoom In</TooltipContent>
+        </Tooltip>
+
+        <span className="text-xs text-muted-foreground font-mono w-12 text-right">
+          {Math.round(zoomLevel * 100)}%
+        </span>
       </div>
     </div>
   );
