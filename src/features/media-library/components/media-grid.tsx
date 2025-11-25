@@ -1,10 +1,21 @@
 import { useState, useRef, useMemo, useEffect } from 'react';
-import { Loader2, Upload } from 'lucide-react';
+import { Loader2, Upload, AlertTriangle } from 'lucide-react';
 import { MediaCard } from './media-card';
 import { useMediaLibraryStore, useFilteredMediaItems } from '../stores/media-library-store';
+import { useTimelineStore } from '@/features/timeline/stores/timeline-store';
 import { validateMediaFile } from '../utils/validation';
 import { useMarqueeSelection, type MarqueeItem } from '@/hooks/use-marquee-selection';
 import { MarqueeOverlay } from '@/components/marquee-overlay';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 
 export interface MediaGridProps {
   onMediaSelect?: (mediaId: string) => void;
@@ -15,6 +26,8 @@ export interface MediaGridProps {
 
 export function MediaGrid({ onMediaSelect, onUpload, disabled = false, viewMode = 'grid' }: MediaGridProps) {
   const [isDragging, setIsDragging] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [mediaIdToDelete, setMediaIdToDelete] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const wasMarqueeDraggingRef = useRef(false);
@@ -26,6 +39,16 @@ export function MediaGrid({ onMediaSelect, onUpload, disabled = false, viewMode 
   const toggleMediaSelection = useMediaLibraryStore((s) => s.toggleMediaSelection);
   const selectMedia = useMediaLibraryStore((s) => s.selectMedia);
   const deleteMedia = useMediaLibraryStore((s) => s.deleteMedia);
+
+  // Timeline store for checking references
+  const timelineItems = useTimelineStore((s) => s.items);
+  const removeTimelineItems = useTimelineStore((s) => s.removeItems);
+
+  // Find timeline items that reference the media being deleted
+  const affectedTimelineItems = useMemo(() => {
+    if (!mediaIdToDelete) return [];
+    return timelineItems.filter((item) => item.mediaId === mediaIdToDelete);
+  }, [mediaIdToDelete, timelineItems]);
 
   // Create marquee items from filtered media
   const marqueeItems: MarqueeItem[] = useMemo(
@@ -86,13 +109,37 @@ export function MediaGrid({ onMediaSelect, onUpload, disabled = false, viewMode 
     onMediaSelect?.(mediaId);
   };
 
-  const handleCardDelete = async (mediaId: string) => {
+  // Show delete confirmation dialog (called from MediaCard)
+  const handleCardDelete = (mediaId: string) => {
+    setMediaIdToDelete(mediaId);
+    setShowDeleteDialog(true);
+  };
+
+  // Actually delete after confirmation
+  const handleConfirmDelete = async () => {
+    if (!mediaIdToDelete) return;
+
+    setShowDeleteDialog(false);
     try {
-      await deleteMedia(mediaId);
+      // First remove timeline items that reference this media
+      if (affectedTimelineItems.length > 0) {
+        const timelineItemIds = affectedTimelineItems.map((item) => item.id);
+        removeTimelineItems(timelineItemIds);
+      }
+
+      // Then delete the media from the library
+      await deleteMedia(mediaIdToDelete);
     } catch (error) {
       console.error('Failed to delete media:', error);
       // Error is already set in store
+    } finally {
+      setMediaIdToDelete(null);
     }
+  };
+
+  const handleCancelDelete = () => {
+    setShowDeleteDialog(false);
+    setMediaIdToDelete(null);
   };
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -314,6 +361,40 @@ export function MediaGrid({ onMediaSelect, onUpload, disabled = false, viewMode 
           ))}
         </div>
       )}
+
+      {/* Delete confirmation dialog with timeline warning */}
+      <AlertDialog open={showDeleteDialog} onOpenChange={(open) => !open && handleCancelDelete()}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete media file?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-3">
+                <p>
+                  Are you sure you want to delete "{filteredItems.find(m => m.id === mediaIdToDelete)?.fileName}"?
+                  This action cannot be undone.
+                </p>
+                {affectedTimelineItems.length > 0 && (
+                  <div className="flex items-start gap-2 p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-md">
+                    <AlertTriangle className="w-4 h-4 text-yellow-500 flex-shrink-0 mt-0.5" />
+                    <div className="text-sm text-yellow-600 dark:text-yellow-400">
+                      <p className="font-medium">Timeline clips will be removed</p>
+                      <p className="text-xs mt-1 text-yellow-600/80 dark:text-yellow-400/80">
+                        {affectedTimelineItems.length} clip{affectedTimelineItems.length > 1 ? 's' : ''} in the timeline use{affectedTimelineItems.length === 1 ? 's' : ''} this media and will also be deleted.
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={handleCancelDelete}>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirmDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              Delete{affectedTimelineItems.length > 0 ? ` & ${affectedTimelineItems.length} clip${affectedTimelineItems.length > 1 ? 's' : ''}` : ''}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

@@ -5,11 +5,20 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Separator } from '@/components/ui/separator';
 import {
   ArrowLeft,
   Download,
   Save,
+  Video,
+  FolderArchive,
+  ChevronDown,
 } from 'lucide-react';
 
 export interface ToolbarProps {
@@ -23,9 +32,10 @@ export interface ToolbarProps {
   };
   onSave?: () => void;
   onExport?: () => void;
+  onExportBundle?: () => void;
 }
 
-export function Toolbar({ project, onSave, onExport }: ToolbarProps) {
+export function Toolbar({ project, onSave, onExport, onExportBundle }: ToolbarProps) {
   return (
     <div className="panel-header h-14 border-b border-border flex items-center px-4 gap-3 flex-shrink-0">
       {/* Project Info */}
@@ -62,10 +72,25 @@ export function Toolbar({ project, onSave, onExport }: ToolbarProps) {
           Save
         </Button>
 
-        <Button size="sm" className="gap-2 glow-primary-sm" onClick={onExport}>
-          <Download className="w-4 h-4" />
-          Export
-        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button size="sm" className="gap-2 glow-primary-sm">
+              <Download className="w-4 h-4" />
+              Export
+              <ChevronDown className="w-3 h-3" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={onExport} className="gap-2">
+              <Video className="w-4 h-4" />
+              Export Video
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={onExportBundle} className="gap-2">
+              <FolderArchive className="w-4 h-4" />
+              Download Project (.vedproj)
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </div>
   );

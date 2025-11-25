@@ -1,6 +1,7 @@
 import type { MediaMetadata } from '@/types/storage';
 
 export interface MediaLibraryState {
+  currentProjectId: string | null; // v3: Project context for scoped operations
   mediaItems: MediaMetadata[];
   isLoading: boolean;
   uploadProgress: Record<string, number>; // Progress per file (fileId -> percent)
@@ -15,7 +16,10 @@ export interface MediaLibraryState {
 }
 
 export interface MediaLibraryActions {
-  // CRUD Operations
+  // v3: Project context
+  setCurrentProject: (projectId: string | null) => void;
+
+  // CRUD Operations (project-scoped in v3)
   loadMediaItems: () => Promise<void>;
   uploadMedia: (file: File) => Promise<MediaMetadata>;
   uploadMediaBatch: (files: File[]) => Promise<void>;

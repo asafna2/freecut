@@ -11,6 +11,8 @@ import {
   deleteProject as deleteProjectDB,
 } from '@/lib/storage/indexeddb';
 import { createProjectObject, duplicateProject } from '../utils/project-helpers';
+// v3: Import media service for cascade operations
+import { mediaLibraryService } from '@/features/media-library/services/media-library-service';
 
 // IMPORTANT: Always use granular selectors to prevent unnecessary re-renders!
 //
@@ -150,16 +152,22 @@ export const useProjectStore = create<ProjectState & ProjectActions>()(
           }
 
           // Optimistic update
+          const existingProject = previousProjects[projectIndex];
+          if (!existingProject) {
+            set({ error: `Project not found: ${id}`, isLoading: false });
+            throw new Error(`Project not found: ${id}`);
+          }
+
           const updatedProject: Project = {
-            ...previousProjects[projectIndex],
-            name: data.name ?? previousProjects[projectIndex].name,
-            description: data.description ?? previousProjects[projectIndex].description,
+            ...existingProject,
+            name: data.name ?? existingProject.name,
+            description: data.description ?? existingProject.description,
             metadata: {
-              width: data.width ?? previousProjects[projectIndex].metadata.width,
-              height: data.height ?? previousProjects[projectIndex].metadata.height,
-              fps: data.fps ?? previousProjects[projectIndex].metadata.fps,
+              width: data.width ?? existingProject.metadata.width,
+              height: data.height ?? existingProject.metadata.height,
+              fps: data.fps ?? existingProject.metadata.fps,
             },
-            updatedAt: Date.now(),
+            updatedAt: new Date().toISOString(),
           };
 
           const optimisticProjects = [...previousProjects];
@@ -188,6 +196,7 @@ export const useProjectStore = create<ProjectState & ProjectActions>()(
         },
 
         // Delete a project with optimistic update
+        // v3: Also deletes media associations (with reference counting)
         deleteProject: async (id: string) => {
           set({ isLoading: true, error: null });
 
@@ -203,6 +212,12 @@ export const useProjectStore = create<ProjectState & ProjectActions>()(
           }
 
           try {
+            // v3: Delete all media associations for this project first
+            // This handles reference counting - files are only deleted
+            // if no other projects reference them
+            await mediaLibraryService.deleteAllMediaFromProject(id);
+
+            // Then delete the project itself
             await deleteProjectDB(id);
             set({ isLoading: false });
           } catch (error) {

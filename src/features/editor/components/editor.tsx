@@ -16,6 +16,7 @@ import { useEditorHotkeys } from '@/hooks/use-editor-hotkeys';
 import { useTimelineStore } from '@/features/timeline/stores/timeline-store';
 import { usePlaybackStore } from '@/features/preview/stores/playback-store';
 import { useZoomStore } from '@/features/timeline/stores/zoom-store';
+import { useMediaLibraryStore } from '@/features/media-library/stores/media-library-store';
 import type { ProjectTimeline } from '@/types/project';
 
 export interface EditorProps {
@@ -45,9 +46,12 @@ export function Editor({ projectId, project }: EditorProps) {
 
   // Initialize timeline from project data (or create default tracks for new projects)
   useEffect(() => {
-    const { setTracks } = useTimelineStore.getState();
     const { setCurrentFrame } = usePlaybackStore.getState();
     const { setZoomLevel } = useZoomStore.getState();
+    const { setCurrentProject } = useMediaLibraryStore.getState();
+
+    // Set current project context for media library (v3: project-scoped media)
+    setCurrentProject(projectId);
 
     if (project.timeline) {
       // Load timeline from project data (router already loaded it)
@@ -123,6 +127,11 @@ export function Editor({ projectId, project }: EditorProps) {
       setCurrentFrame(0);
       setZoomLevel(1);
     }
+
+    // Cleanup: clear project context when leaving editor
+    return () => {
+      useMediaLibraryStore.getState().setCurrentProject(null);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, project.timeline]); // Re-initialize when projectId or timeline data changes
 
@@ -141,6 +150,30 @@ export function Editor({ projectId, project }: EditorProps) {
 
   const handleExport = () => {
     setExportDialogOpen(true);
+  };
+
+  const handleExportBundle = async () => {
+    try {
+      // Dynamically import to avoid loading bundle service until needed
+      const { exportProjectBundle, downloadBundle } = await import(
+        '@/features/project-bundle/services/bundle-export-service'
+      );
+
+      // Save timeline first to ensure latest changes are included
+      await handleSave();
+
+      console.log('Exporting project bundle...');
+      const result = await exportProjectBundle(projectId, (progress) => {
+        console.log(`Export progress: ${progress.percent}% - ${progress.stage}`);
+      });
+
+      // Trigger download
+      downloadBundle(result);
+      console.log(`Project bundle exported: ${result.filename} (${result.mediaCount} media files)`);
+    } catch (error) {
+      console.error('Failed to export project bundle:', error);
+      // TODO: Show error toast notification
+    }
   };
 
   // Enable keyboard shortcuts
@@ -170,6 +203,7 @@ export function Editor({ projectId, project }: EditorProps) {
           project={project}
           onSave={handleSave}
           onExport={handleExport}
+          onExportBundle={handleExportBundle}
         />
 
         {/* Resizable Layout: Main Content + Timeline */}

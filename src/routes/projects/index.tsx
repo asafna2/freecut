@@ -1,7 +1,7 @@
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { Button } from '@/components/ui/button';
-import { Plus } from 'lucide-react';
+import { Plus, Upload } from 'lucide-react';
 import { ProjectList } from '@/features/projects/components/project-list';
 import { ProjectForm } from '@/features/projects/components/project-form';
 import {
@@ -9,13 +9,16 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
 } from '@/components/ui/dialog';
+import { Progress } from '@/components/ui/progress';
 import { useProjectStore } from '@/features/projects/stores/project-store';
 import { useProjectActions } from '@/features/projects/hooks/use-project-actions';
 import { useProjectsLoading, useProjectsError } from '@/features/projects/hooks/use-project-selectors';
 import { cleanupBlobUrls } from '@/features/preview/utils/media-resolver';
 import type { Project } from '@/types/project';
 import type { ProjectFormData } from '@/features/projects/utils/validation';
+import type { ImportProgress } from '@/features/project-bundle/types/bundle';
 
 export const Route = createFileRoute('/projects/')({
   component: ProjectsIndex,
@@ -36,6 +39,12 @@ function ProjectsIndex() {
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Import state
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [importProgress, setImportProgress] = useState<ImportProgress | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+
   const isLoading = useProjectsLoading();
   const error = useProjectsError();
   const { loadProjects, updateProject } = useProjectActions();
@@ -44,6 +53,53 @@ function ProjectsIndex() {
   useEffect(() => {
     loadProjects();
   }, [loadProjects]);
+
+  // Handle import file selection
+  const handleImportClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    // Reset file input for next selection
+    event.target.value = '';
+
+    // Validate file extension
+    if (!file.name.endsWith('.vedproj')) {
+      setImportError('Please select a valid .vedproj file');
+      setImportDialogOpen(true);
+      return;
+    }
+
+    setImportError(null);
+    setImportProgress({ percent: 0, stage: 'validating' });
+    setImportDialogOpen(true);
+
+    try {
+      const { importProjectBundle } = await import(
+        '@/features/project-bundle/services/bundle-import-service'
+      );
+
+      const result = await importProjectBundle(file, {}, (progress) => {
+        setImportProgress(progress);
+      });
+
+      // Reload projects list
+      await loadProjects();
+
+      // Close dialog and navigate to the imported project
+      setImportDialogOpen(false);
+      setImportProgress(null);
+
+      navigate({ to: '/editor/$projectId', params: { projectId: result.project.id } });
+    } catch (err) {
+      console.error('Import failed:', err);
+      setImportError(err instanceof Error ? err.message : 'Import failed');
+      setImportProgress(null);
+    }
+  };
 
   const handleEditProject = (project: Project) => {
     setEditingProject(project);
@@ -78,12 +134,27 @@ function ProjectsIndex() {
                 Manage your video editing projects
               </p>
             </div>
-            <Link to="/projects/new">
-              <Button size="lg" className="gap-2">
-                <Plus className="w-4 h-4" />
-                New Project
+            <div className="flex items-center gap-3">
+              <Button variant="outline" size="lg" className="gap-2" onClick={handleImportClick}>
+                <Upload className="w-4 h-4" />
+                Import Project
               </Button>
-            </Link>
+              <Link to="/projects/new">
+                <Button size="lg" className="gap-2">
+                  <Plus className="w-4 h-4" />
+                  New Project
+                </Button>
+              </Link>
+            </div>
+
+            {/* Hidden file input for import */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".vedproj"
+              onChange={handleFileSelect}
+              className="hidden"
+            />
           </div>
         </div>
 
@@ -134,6 +205,53 @@ function ProjectsIndex() {
               project={editingProject}
             />
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Import Project Dialog */}
+      <Dialog open={importDialogOpen} onOpenChange={(open) => {
+        if (!open && !importProgress) {
+          setImportDialogOpen(false);
+          setImportError(null);
+        }
+      }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              {importError ? 'Import Failed' : 'Importing Project'}
+            </DialogTitle>
+            {!importError && importProgress && (
+              <DialogDescription>
+                {importProgress.stage === 'validating' && 'Validating bundle...'}
+                {importProgress.stage === 'importing' && `Importing media${importProgress.currentFile ? `: ${importProgress.currentFile}` : '...'}`}
+                {importProgress.stage === 'linking' && 'Creating project...'}
+                {importProgress.stage === 'complete' && 'Import complete!'}
+              </DialogDescription>
+            )}
+          </DialogHeader>
+
+          {importError ? (
+            <div className="space-y-4">
+              <p className="text-sm text-destructive">{importError}</p>
+              <Button
+                variant="outline"
+                className="w-full"
+                onClick={() => {
+                  setImportDialogOpen(false);
+                  setImportError(null);
+                }}
+              >
+                Close
+              </Button>
+            </div>
+          ) : importProgress ? (
+            <div className="space-y-4">
+              <Progress value={importProgress.percent} className="h-2" />
+              <p className="text-sm text-muted-foreground text-center">
+                {Math.round(importProgress.percent)}%
+              </p>
+            </div>
+          ) : null}
         </DialogContent>
       </Dialog>
     </>

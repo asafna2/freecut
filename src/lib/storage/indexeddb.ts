@@ -1,6 +1,11 @@
 import { openDB, DBSchema, IDBPDatabase } from 'idb';
 import type { Project } from '@/types/project';
-import type { MediaMetadata, ThumbnailData } from '@/types/storage';
+import type {
+  MediaMetadata,
+  ThumbnailData,
+  ContentRecord,
+  ProjectMediaAssociation,
+} from '@/types/storage';
 
 // Database schema
 interface VideoEditorDB extends DBSchema {
@@ -20,6 +25,7 @@ interface VideoEditorDB extends DBSchema {
       fileName: string;
       mimeType: string;
       createdAt: number;
+      contentHash: string; // NEW: for deduplication lookup
       tags: string;
     };
   };
@@ -30,10 +36,27 @@ interface VideoEditorDB extends DBSchema {
       mediaId: string;
     };
   };
+  // NEW: Content store for reference counting
+  content: {
+    key: string; // contentHash
+    value: ContentRecord;
+    indexes: {
+      referenceCount: number;
+    };
+  };
+  // NEW: Project-media associations for per-project isolation
+  projectMedia: {
+    key: [string, string]; // [projectId, mediaId] compound key
+    value: ProjectMediaAssociation;
+    indexes: {
+      projectId: string;
+      mediaId: string;
+    };
+  };
 }
 
 const DB_NAME = 'video-editor-db';
-const DB_VERSION = 2;
+const DB_VERSION = 3; // v3: Content-addressable storage with project-media associations
 
 let dbPromise: Promise<IDBPDatabase<VideoEditorDB>> | null = null;
 
@@ -43,7 +66,7 @@ let dbPromise: Promise<IDBPDatabase<VideoEditorDB>> | null = null;
 export async function getDB(): Promise<IDBPDatabase<VideoEditorDB>> {
   if (!dbPromise) {
     dbPromise = openDB<VideoEditorDB>(DB_NAME, DB_VERSION, {
-      upgrade(db, oldVersion) {
+      upgrade(db, oldVersion, _newVersion, transaction) {
         // Create projects object store (v1)
         if (!db.objectStoreNames.contains('projects')) {
           const projectStore = db.createObjectStore('projects', {
@@ -77,6 +100,42 @@ export async function getDB(): Promise<IDBPDatabase<VideoEditorDB>> {
 
           // Create index for finding thumbnails by media ID
           thumbnailStore.createIndex('mediaId', 'mediaId', { unique: false });
+        }
+
+        // v3: Content-addressable storage with project-media associations
+        if (oldVersion < 3) {
+          // Add contentHash index to media store (if media store exists)
+          if (db.objectStoreNames.contains('media')) {
+            const mediaStore = transaction.objectStore('media');
+            if (!mediaStore.indexNames.contains('contentHash')) {
+              mediaStore.createIndex('contentHash', 'contentHash', {
+                unique: false,
+              });
+            }
+          }
+
+          // Create content store for reference counting
+          if (!db.objectStoreNames.contains('content')) {
+            const contentStore = db.createObjectStore('content', {
+              keyPath: 'hash',
+            });
+            contentStore.createIndex('referenceCount', 'referenceCount', {
+              unique: false,
+            });
+          }
+
+          // Create projectMedia store for per-project media associations
+          if (!db.objectStoreNames.contains('projectMedia')) {
+            const projectMediaStore = db.createObjectStore('projectMedia', {
+              keyPath: ['projectId', 'mediaId'],
+            });
+            projectMediaStore.createIndex('projectId', 'projectId', {
+              unique: false,
+            });
+            projectMediaStore.createIndex('mediaId', 'mediaId', {
+              unique: false,
+            });
+          }
         }
       },
       blocked() {
@@ -205,7 +264,7 @@ export async function updateProject(
       ...existing,
       ...updates,
       id, // Ensure ID doesn't change
-      updatedAt: Date.now(), // Update timestamp
+      updatedAt: new Date().toISOString(), // Update timestamp
     };
 
     await db.put('projects', updated);
@@ -548,5 +607,270 @@ export async function deleteThumbnailsByMediaId(mediaId: string): Promise<void> 
   } catch (error) {
     console.error(`Failed to delete thumbnails for media ${mediaId}:`, error);
     throw new Error('Failed to delete thumbnails');
+  }
+}
+
+// ============================================
+// Content Store CRUD Operations (v3)
+// ============================================
+
+/**
+ * Get content record by hash
+ */
+export async function getContentByHash(
+  hash: string
+): Promise<ContentRecord | undefined> {
+  try {
+    const db = await getDB();
+    return await db.get('content', hash);
+  } catch (error) {
+    console.error(`Failed to get content ${hash}:`, error);
+    throw new Error(`Failed to load content: ${hash}`);
+  }
+}
+
+/**
+ * Create a new content record
+ */
+export async function createContent(record: ContentRecord): Promise<void> {
+  try {
+    const db = await getDB();
+    await db.add('content', record);
+  } catch (error) {
+    console.error('Failed to create content record:', error);
+    throw error;
+  }
+}
+
+/**
+ * Increment reference count for content
+ * Returns the new reference count
+ */
+export async function incrementContentRef(hash: string): Promise<number> {
+  try {
+    const db = await getDB();
+    const existing = await db.get('content', hash);
+
+    if (!existing) {
+      throw new Error(`Content not found: ${hash}`);
+    }
+
+    const updated: ContentRecord = {
+      ...existing,
+      referenceCount: existing.referenceCount + 1,
+    };
+
+    await db.put('content', updated);
+    return updated.referenceCount;
+  } catch (error) {
+    console.error(`Failed to increment content ref ${hash}:`, error);
+    throw error;
+  }
+}
+
+/**
+ * Decrement reference count for content
+ * Returns the new reference count
+ */
+export async function decrementContentRef(hash: string): Promise<number> {
+  try {
+    const db = await getDB();
+    const existing = await db.get('content', hash);
+
+    if (!existing) {
+      throw new Error(`Content not found: ${hash}`);
+    }
+
+    const updated: ContentRecord = {
+      ...existing,
+      referenceCount: Math.max(0, existing.referenceCount - 1),
+    };
+
+    await db.put('content', updated);
+    return updated.referenceCount;
+  } catch (error) {
+    console.error(`Failed to decrement content ref ${hash}:`, error);
+    throw error;
+  }
+}
+
+/**
+ * Delete a content record
+ */
+export async function deleteContent(hash: string): Promise<void> {
+  try {
+    const db = await getDB();
+    await db.delete('content', hash);
+  } catch (error) {
+    console.error(`Failed to delete content ${hash}:`, error);
+    throw new Error(`Failed to delete content: ${hash}`);
+  }
+}
+
+/**
+ * Find media by content hash
+ */
+export async function findMediaByContentHash(
+  hash: string
+): Promise<MediaMetadata | undefined> {
+  try {
+    const db = await getDB();
+    const tx = db.transaction('media', 'readonly');
+    const index = tx.store.index('contentHash');
+    const results = await index.getAll(hash);
+    return results[0]; // Return first match
+  } catch (error) {
+    console.error(`Failed to find media by hash ${hash}:`, error);
+    return undefined;
+  }
+}
+
+// ============================================
+// Project-Media Association CRUD Operations (v3)
+// ============================================
+
+/**
+ * Associate media with a project
+ */
+export async function associateMediaWithProject(
+  projectId: string,
+  mediaId: string
+): Promise<void> {
+  try {
+    const db = await getDB();
+    const association: ProjectMediaAssociation = {
+      projectId,
+      mediaId,
+      addedAt: Date.now(),
+    };
+    await db.put('projectMedia', association);
+  } catch (error) {
+    console.error(
+      `Failed to associate media ${mediaId} with project ${projectId}:`,
+      error
+    );
+    throw error;
+  }
+}
+
+/**
+ * Remove media association from a project
+ */
+export async function removeMediaFromProject(
+  projectId: string,
+  mediaId: string
+): Promise<void> {
+  try {
+    const db = await getDB();
+    await db.delete('projectMedia', [projectId, mediaId]);
+  } catch (error) {
+    console.error(
+      `Failed to remove media ${mediaId} from project ${projectId}:`,
+      error
+    );
+    throw error;
+  }
+}
+
+/**
+ * Get all media IDs associated with a project
+ */
+export async function getProjectMediaIds(projectId: string): Promise<string[]> {
+  try {
+    const db = await getDB();
+    const tx = db.transaction('projectMedia', 'readonly');
+    const index = tx.store.index('projectId');
+    const associations = await index.getAll(projectId);
+    return associations.map((a) => a.mediaId);
+  } catch (error) {
+    console.error(`Failed to get media for project ${projectId}:`, error);
+    throw new Error(`Failed to get project media: ${projectId}`);
+  }
+}
+
+/**
+ * Get all project IDs that use a specific media item
+ */
+export async function getProjectsUsingMedia(mediaId: string): Promise<string[]> {
+  try {
+    const db = await getDB();
+    const tx = db.transaction('projectMedia', 'readonly');
+    const index = tx.store.index('mediaId');
+    const associations = await index.getAll(mediaId);
+    return associations.map((a) => a.projectId);
+  } catch (error) {
+    console.error(`Failed to get projects using media ${mediaId}:`, error);
+    throw new Error(`Failed to get projects for media: ${mediaId}`);
+  }
+}
+
+/**
+ * Get all media metadata for a project
+ */
+export async function getMediaForProject(
+  projectId: string
+): Promise<MediaMetadata[]> {
+  try {
+    const mediaIds = await getProjectMediaIds(projectId);
+    const db = await getDB();
+
+    const media: MediaMetadata[] = [];
+    for (const id of mediaIds) {
+      const item = await db.get('media', id);
+      if (item) {
+        media.push(item);
+      }
+    }
+
+    return media;
+  } catch (error) {
+    console.error(`Failed to get media for project ${projectId}:`, error);
+    throw new Error(`Failed to load project media: ${projectId}`);
+  }
+}
+
+/**
+ * Remove all media associations for a project
+ */
+export async function removeAllMediaFromProject(
+  projectId: string
+): Promise<void> {
+  try {
+    const db = await getDB();
+    const tx = db.transaction('projectMedia', 'readwrite');
+    const index = tx.store.index('projectId');
+    const associations = await index.getAll(projectId);
+
+    for (const association of associations) {
+      await tx.store.delete([association.projectId, association.mediaId]);
+    }
+
+    await tx.done;
+  } catch (error) {
+    console.error(
+      `Failed to remove all media from project ${projectId}:`,
+      error
+    );
+    throw new Error(`Failed to clear project media: ${projectId}`);
+  }
+}
+
+/**
+ * Check if a media item is associated with a project
+ */
+export async function isMediaInProject(
+  projectId: string,
+  mediaId: string
+): Promise<boolean> {
+  try {
+    const db = await getDB();
+    const association = await db.get('projectMedia', [projectId, mediaId]);
+    return !!association;
+  } catch (error) {
+    console.error(
+      `Failed to check media ${mediaId} in project ${projectId}:`,
+      error
+    );
+    return false;
   }
 }

@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import { Search, Filter, SortAsc, Video, FileAudio, Image as ImageIcon, Trash2, Grid3x3, List } from 'lucide-react';
+import { useEffect, useRef, useState, useMemo } from 'react';
+import { Search, Filter, SortAsc, Video, FileAudio, Image as ImageIcon, Trash2, Grid3x3, List, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { MediaGrid } from './media-grid';
 import { useMediaLibraryStore, useStorageQuotaPercent } from '../stores/media-library-store';
+import { useTimelineStore } from '@/features/timeline/stores/timeline-store';
 import { formatBytes } from '../utils/validation';
 
 export interface MediaLibraryProps {
@@ -32,7 +33,12 @@ export function MediaLibrary({ onMediaSelect }: MediaLibraryProps) {
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [idsToDelete, setIdsToDelete] = useState<string[]>([]);
 
+  // Timeline store selectors
+  const timelineItems = useTimelineStore((s) => s.items);
+  const removeTimelineItems = useTimelineStore((s) => s.removeItems);
+
   // Store selectors
+  const currentProjectId = useMediaLibraryStore((s) => s.currentProjectId);
   const loadMediaItems = useMediaLibraryStore((s) => s.loadMediaItems);
   const uploadMediaBatch = useMediaLibraryStore((s) => s.uploadMediaBatch);
   const deleteMediaBatch = useMediaLibraryStore((s) => s.deleteMediaBatch);
@@ -52,11 +58,10 @@ export function MediaLibrary({ onMediaSelect }: MediaLibraryProps) {
   const storageQuota = useMediaLibraryStore((s) => s.storageQuota);
   const storagePercent = useStorageQuotaPercent();
 
-  // Load media items on mount
+  // Load media items when project changes
   useEffect(() => {
     loadMediaItems();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Run only once on mount - loadMediaItems is a stable Zustand action
+  }, [currentProjectId, loadMediaItems]); // Reload when project context changes
 
   // Clear selection when clicking outside the media library
   useEffect(() => {
@@ -87,6 +92,12 @@ export function MediaLibrary({ onMediaSelect }: MediaLibraryProps) {
     }
   };
 
+  // Find timeline items that reference the media being deleted (for batch delete from selection)
+  const affectedTimelineItems = useMemo(() => {
+    if (idsToDelete.length === 0) return [];
+    return timelineItems.filter((item) => item.mediaId && idsToDelete.includes(item.mediaId));
+  }, [idsToDelete, timelineItems]);
+
   const handleDeleteSelected = () => {
     if (selectedMediaIds.length === 0) return;
     // Capture the IDs BEFORE opening dialog (selection may be cleared by click outside)
@@ -95,11 +106,16 @@ export function MediaLibrary({ onMediaSelect }: MediaLibraryProps) {
   };
 
   const handleConfirmDelete = async () => {
-    console.log('Deleting items:', idsToDelete);
     setShowDeleteDialog(false);
     try {
+      // First remove timeline items that reference this media
+      if (affectedTimelineItems.length > 0) {
+        const timelineItemIds = affectedTimelineItems.map((item) => item.id);
+        removeTimelineItems(timelineItemIds);
+      }
+
+      // Then delete the media from the library
       await deleteMediaBatch(idsToDelete);
-      console.log('Delete completed successfully');
       setIdsToDelete([]); // Clear after successful delete
     } catch (error) {
       console.error('Delete failed:', error);
@@ -337,15 +353,30 @@ export function MediaLibrary({ onMediaSelect }: MediaLibraryProps) {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete selected items?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to delete {idsToDelete.length} selected item{idsToDelete.length > 1 ? 's' : ''}?
-              This action cannot be undone.
+            <AlertDialogDescription asChild>
+              <div className="space-y-3">
+                <p>
+                  Are you sure you want to delete {idsToDelete.length} selected item{idsToDelete.length > 1 ? 's' : ''}?
+                  This action cannot be undone.
+                </p>
+                {affectedTimelineItems.length > 0 && (
+                  <div className="flex items-start gap-2 p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-md">
+                    <AlertTriangle className="w-4 h-4 text-yellow-500 flex-shrink-0 mt-0.5" />
+                    <div className="text-sm text-yellow-600 dark:text-yellow-400">
+                      <p className="font-medium">Timeline clips will be removed</p>
+                      <p className="text-xs mt-1 text-yellow-600/80 dark:text-yellow-400/80">
+                        {affectedTimelineItems.length} clip{affectedTimelineItems.length > 1 ? 's' : ''} in the timeline use{affectedTimelineItems.length === 1 ? 's' : ''} this media and will also be deleted.
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={handleConfirmDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-              Delete {idsToDelete.length} item{idsToDelete.length > 1 ? 's' : ''}
+              Delete {idsToDelete.length} item{idsToDelete.length > 1 ? 's' : ''}{affectedTimelineItems.length > 0 ? ` & ${affectedTimelineItems.length} clip${affectedTimelineItems.length > 1 ? 's' : ''}` : ''}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

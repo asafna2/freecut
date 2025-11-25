@@ -4,23 +4,12 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import type { MediaMetadata } from '@/types/storage';
 import { mediaLibraryService } from '../services/media-library-service';
-import { getMediaType, formatDuration, formatBytes } from '../utils/validation';
+import { getMediaType, formatDuration } from '../utils/validation';
 
 export interface MediaCardProps {
   media: MediaMetadata;
@@ -32,8 +21,6 @@ export interface MediaCardProps {
 
 export function MediaCard({ media, selected = false, onSelect, onDelete, viewMode = 'grid' }: MediaCardProps) {
   const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null);
-  const [isDeleting, setIsDeleting] = useState(false);
-  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
 
   const mediaType = getMediaType(media.mimeType);
 
@@ -67,12 +54,6 @@ export function MediaCard({ media, selected = false, onSelect, onDelete, viewMod
   const handleDelete = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    setShowDeleteDialog(true);
-  };
-
-  const handleConfirmDelete = () => {
-    setIsDeleting(true);
-    setShowDeleteDialog(false);
     onDelete?.();
   };
 
@@ -119,7 +100,6 @@ export function MediaCard({ media, selected = false, onSelect, onDelete, viewMod
             ? 'border-primary ring-1 ring-primary/20'
             : 'border-border hover:border-primary/50'
           }
-          ${isDeleting ? 'opacity-50' : ''}
         `}
         draggable
         onDragStart={handleDragStart}
@@ -180,24 +160,6 @@ export function MediaCard({ media, selected = false, onSelect, onDelete, viewMod
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-
-        {/* Delete confirmation dialog */}
-        <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
-          <AlertDialogContent onClick={(e) => e.stopPropagation()}>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Delete media file?</AlertDialogTitle>
-              <AlertDialogDescription>
-                Are you sure you want to delete "{media.fileName}"? This action cannot be undone.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction onClick={handleConfirmDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-                Delete
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
       </div>
     );
   }
@@ -208,12 +170,11 @@ export function MediaCard({ media, selected = false, onSelect, onDelete, viewMod
       className={`
         group relative panel-bg border-2 rounded-lg overflow-hidden
         transition-all duration-300 cursor-pointer
-        aspect-square flex flex-col
+        aspect-square flex flex-col hover:scale-[1.02]
         ${selected
           ? 'border-primary ring-2 ring-primary/20 scale-[1.02]'
           : 'border-border hover:border-primary/50 hover:shadow-lg hover:shadow-primary/10'
         }
-        ${isDeleting ? 'opacity-50 scale-95' : 'hover:scale-[1.02]'}
       `}
       draggable
       onDragStart={handleDragStart}
@@ -293,24 +254,6 @@ export function MediaCard({ media, selected = false, onSelect, onDelete, viewMod
       {/* Film strip edge detail */}
       <div className="absolute left-0 top-0 bottom-0 w-[2px] bg-gradient-to-b from-border via-muted to-border opacity-50" />
       <div className="absolute right-0 top-0 bottom-0 w-[2px] bg-gradient-to-b from-border via-muted to-border opacity-50" />
-
-      {/* Delete confirmation dialog */}
-      <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
-        <AlertDialogContent onClick={(e) => e.stopPropagation()}>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete media file?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to delete "{media.fileName}"? This action cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleConfirmDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   );
 }

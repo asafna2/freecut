@@ -19,6 +19,7 @@ export const useMediaLibraryStore = create<
   devtools(
     (set, get) => ({
       // Initial state
+      currentProjectId: null, // v3: Project context
       mediaItems: [],
       isLoading: false,
       uploadProgress: {},
@@ -31,12 +32,25 @@ export const useMediaLibraryStore = create<
       storageUsed: 0,
       storageQuota: 0,
 
-      // Load all media items from IndexedDB
+      // v3: Set current project context
+      setCurrentProject: (projectId: string | null) => {
+        set({ currentProjectId: projectId, mediaItems: [], selectedMediaIds: [] });
+        // Auto-load media for the new project
+        if (projectId) {
+          get().loadMediaItems();
+        }
+      },
+
+      // Load media items for current project (v3: project-scoped)
       loadMediaItems: async () => {
+        const { currentProjectId } = get();
         set({ isLoading: true, error: null });
 
         try {
-          const mediaItems = await mediaLibraryService.getAllMedia();
+          // v3: Load project-scoped media if project is set, otherwise all media
+          const mediaItems = currentProjectId
+            ? await mediaLibraryService.getMediaForProject(currentProjectId)
+            : await mediaLibraryService.getAllMedia();
 
           // Also refresh storage quota
           const { used, quota } = await mediaLibraryService.getStorageUsage();
@@ -48,6 +62,7 @@ export const useMediaLibraryStore = create<
             isLoading: false,
           });
         } catch (error) {
+          console.error('[MediaLibraryStore] loadMediaItems error:', error);
           const errorMessage =
             error instanceof Error ? error.message : 'Failed to load media';
           set({ error: errorMessage, isLoading: false });
@@ -55,13 +70,15 @@ export const useMediaLibraryStore = create<
         }
       },
 
-      // Upload a single media file with optimistic update
+      // Upload a single media file (v3: project-scoped)
       uploadMedia: async (file: File) => {
+        const { currentProjectId } = get();
         const tempId = crypto.randomUUID();
 
         // Create temporary placeholder
         const tempItem: MediaMetadata = {
           id: tempId,
+          contentHash: '', // v3: Will be computed
           opfsPath: '',
           fileName: file.name,
           fileSize: file.size,
@@ -86,15 +103,22 @@ export const useMediaLibraryStore = create<
         }));
 
         try {
-          // Upload with progress tracking
-          const metadata = await mediaLibraryService.uploadMedia(
-            file,
-            (percent, stage) => {
-              set((state) => ({
-                uploadProgress: { ...state.uploadProgress, [tempId]: percent },
-              }));
-            }
-          );
+          // v3: Upload with project association
+          const metadata = currentProjectId
+            ? await mediaLibraryService.uploadMediaToProject(
+                file,
+                currentProjectId,
+                (percent) => {
+                  set((state) => ({
+                    uploadProgress: { ...state.uploadProgress, [tempId]: percent },
+                  }));
+                }
+              )
+            : await mediaLibraryService.uploadMedia(file, (percent) => {
+                set((state) => ({
+                  uploadProgress: { ...state.uploadProgress, [tempId]: percent },
+                }));
+              });
 
           // Replace temp with actual metadata
           set((state) => ({
@@ -127,18 +151,27 @@ export const useMediaLibraryStore = create<
         }
       },
 
-      // Upload multiple files in batch
+      // Upload multiple files in batch (v3: project-scoped)
       uploadMediaBatch: async (files: File[]) => {
+        const { currentProjectId } = get();
         set({ isLoading: true, error: null });
 
         try {
-          const results = await mediaLibraryService.uploadMediaBatch(
-            files,
-            (current, total, fileName) => {
-              // Could update progress UI here if needed
-              console.log(`Uploading ${current}/${total}: ${fileName}`);
-            }
-          );
+          // v3: Upload with project association
+          const results = currentProjectId
+            ? await mediaLibraryService.uploadMediaBatchToProject(
+                files,
+                currentProjectId,
+                (current, total, fileName) => {
+                  console.log(`Uploading ${current}/${total}: ${fileName}`);
+                }
+              )
+            : await mediaLibraryService.uploadMediaBatch(
+                files,
+                (current, total, fileName) => {
+                  console.log(`Uploading ${current}/${total}: ${fileName}`);
+                }
+              );
 
           // Add all successfully uploaded items
           set((state) => ({
@@ -156,8 +189,9 @@ export const useMediaLibraryStore = create<
         }
       },
 
-      // Delete a media item with optimistic update
+      // Delete a media item (v3: project-scoped with reference counting)
       deleteMedia: async (id: string) => {
+        const { currentProjectId } = get();
         set({ error: null });
 
         const previousItems = get().mediaItems;
@@ -171,7 +205,12 @@ export const useMediaLibraryStore = create<
         }));
 
         try {
-          await mediaLibraryService.deleteMedia(id);
+          // v3: Use project-scoped delete with reference counting
+          if (currentProjectId) {
+            await mediaLibraryService.deleteMediaFromProject(currentProjectId, id);
+          } else {
+            await mediaLibraryService.deleteMedia(id);
+          }
 
           // Refresh storage quota
           get().refreshStorageQuota();
@@ -185,8 +224,9 @@ export const useMediaLibraryStore = create<
         }
       },
 
-      // Delete multiple media items in batch
+      // Delete multiple media items in batch (v3: project-scoped)
       deleteMediaBatch: async (ids: string[]) => {
+        const { currentProjectId } = get();
         set({ error: null });
 
         const previousItems = get().mediaItems;
@@ -200,7 +240,12 @@ export const useMediaLibraryStore = create<
         }));
 
         try {
-          await mediaLibraryService.deleteMediaBatch(ids);
+          // v3: Use project-scoped delete with reference counting
+          if (currentProjectId) {
+            await mediaLibraryService.deleteMediaBatchFromProject(currentProjectId, ids);
+          } else {
+            await mediaLibraryService.deleteMediaBatch(ids);
+          }
 
           // Refresh storage quota
           get().refreshStorageQuota();
