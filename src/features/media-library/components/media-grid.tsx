@@ -307,7 +307,7 @@ export function MediaGrid({ onMediaSelect, onUpload, disabled = false, viewMode 
       )}
 
       {/* Content */}
-      {isLoading && filteredItems.length === 0 ? (
+      {isLoading ? (
         <div className="flex items-center justify-center py-24">
           <div className="flex flex-col items-center gap-4">
             <div className="relative">

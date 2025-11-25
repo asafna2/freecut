@@ -21,7 +21,7 @@ export const useMediaLibraryStore = create<
       // Initial state
       currentProjectId: null, // v3: Project context
       mediaItems: [],
-      isLoading: false,
+      isLoading: true, // Start loading until project context is set
       uploadProgress: {},
       error: null,
       selectedMediaIds: [],
@@ -34,23 +34,31 @@ export const useMediaLibraryStore = create<
 
       // v3: Set current project context
       setCurrentProject: (projectId: string | null) => {
-        set({ currentProjectId: projectId, mediaItems: [], selectedMediaIds: [] });
-        // Auto-load media for the new project
-        if (projectId) {
-          get().loadMediaItems();
-        }
+        // Clear items and set loading state immediately to prevent flash
+        set({
+          currentProjectId: projectId,
+          mediaItems: [],
+          selectedMediaIds: [],
+          isLoading: !!projectId, // Set loading if switching to a project
+        });
+        // Note: loadMediaItems is triggered by the component's useEffect
+        // Don't call it here to avoid double loading
       },
 
       // Load media items for current project (v3: project-scoped)
       loadMediaItems: async () => {
         const { currentProjectId } = get();
+
+        // Don't load if no project context - keep loading state until project is set
+        if (!currentProjectId) {
+          return;
+        }
+
         set({ isLoading: true, error: null });
 
         try {
-          // v3: Load project-scoped media if project is set, otherwise all media
-          const mediaItems = currentProjectId
-            ? await mediaLibraryService.getMediaForProject(currentProjectId)
-            : await mediaLibraryService.getAllMedia();
+          // v3: Load project-scoped media only
+          const mediaItems = await mediaLibraryService.getMediaForProject(currentProjectId);
 
           // Also refresh storage quota
           const { used, quota } = await mediaLibraryService.getStorageUsage();
