@@ -216,7 +216,9 @@ export function useMarqueeSelection({
         // Don't start marquee if clicking on a draggable media card
         target.closest('[data-media-id]') ||
         // Don't start marquee if clicking in the timeline ruler
-        target.closest('.timeline-ruler')
+        target.closest('.timeline-ruler') ||
+        // Don't start marquee if clicking on the playhead handle
+        target.closest('[data-playhead-handle]')
       ) {
         return;
       }

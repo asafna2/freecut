@@ -125,6 +125,7 @@ export function TimelinePlayhead({ inRuler = false }: TimelinePlayheadProps) {
       {!inRuler && (
         <div
           className="absolute top-0 bottom-0"
+          data-playhead-handle
           style={{
             left: '-6px', // Center the 14px wide area on the 2px line
             width: '14px',
