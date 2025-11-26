@@ -69,6 +69,7 @@ export function TimelineContent({ duration, scrollRef, onZoomHandlersReady }: Ti
   const [containerWidth, setContainerWidth] = useState(0);
   const [scrollLeft, setScrollLeft] = useState(0);
   const marqueeWasActiveRef = useRef(false);
+  const dragWasActiveRef = useRef(false);
 
   // Use refs to avoid callback recreation on every frame/zoom change
   const currentFrameRef = useRef(currentFrame);
@@ -203,10 +204,23 @@ export function TimelineContent({ duration, scrollRef, onZoomHandlersReady }: Ti
     }
   }, [marqueeState.active]);
 
+  // Track drag state to prevent deselection after drop
+  useEffect(() => {
+    if (dragState?.isDragging) {
+      dragWasActiveRef.current = true;
+    } else if (dragWasActiveRef.current) {
+      // Reset after a short delay when drag ends
+      const timeout = setTimeout(() => {
+        dragWasActiveRef.current = false;
+      }, 100);
+      return () => clearTimeout(timeout);
+    }
+  }, [dragState?.isDragging]);
+
   // Click empty space to deselect items (but preserve track selection)
   const handleContainerClick = (e: React.MouseEvent) => {
-    // Don't deselect if marquee selection just finished
-    if (marqueeWasActiveRef.current) {
+    // Don't deselect if marquee selection or drag just finished
+    if (marqueeWasActiveRef.current || dragWasActiveRef.current) {
       return;
     }
 

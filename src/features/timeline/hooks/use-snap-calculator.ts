@@ -18,11 +18,20 @@ import { BASE_SNAP_THRESHOLD_PIXELS } from '../constants';
  * Magnetic snapping takes priority when both are within threshold
  *
  * Phase 2 enhancement over basic grid snapping
+ *
+ * @param timelineDuration - Total timeline duration in seconds
+ * @param excludeItemIds - Item ID(s) to exclude from snap targets (for dragging items)
+ *                         Accepts a single ID string or an array of IDs for group selection
  */
 export function useSnapCalculator(
   timelineDuration: number,
-  draggingItemId: string | null
+  excludeItemIds: string | string[] | null
 ) {
+  // Normalize to array for consistent handling
+  const excludeIds = useMemo(() => {
+    if (!excludeItemIds) return [];
+    return Array.isArray(excludeItemIds) ? excludeItemIds : [excludeItemIds];
+  }, [excludeItemIds]);
   // Get state with granular selectors
   const items = useTimelineStore((s) => s.items);
   const fps = useTimelineStore((s) => s.fps);
@@ -57,9 +66,9 @@ export function useSnapCalculator(
     });
 
     // 2. Magnetic snap points (item edges)
-    // Exclude the dragging item itself
+    // Exclude all dragging items (single or group selection)
     items
-      .filter((item) => item.id !== draggingItemId)
+      .filter((item) => !excludeIds.includes(item.id))
       .forEach((item) => {
         // Item start
         targets.push({
@@ -82,7 +91,7 @@ export function useSnapCalculator(
     });
 
     return targets;
-  }, [items, draggingItemId, timelineDuration, fps, zoomLevel, currentFrame]);
+  }, [items, excludeIds, timelineDuration, fps, zoomLevel, currentFrame]);
 
   /**
    * Calculate snap for a given position

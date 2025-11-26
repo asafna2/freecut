@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import type { TimelineItem } from '@/types/timeline';
 import type { DragState, UseTimelineDragReturn, SnapTarget } from '../types/drag';
 import { useTimelineStore } from '../stores/timeline-store';
@@ -53,10 +53,19 @@ export function useTimelineDrag(
   const { pixelsToFrame } = useTimelineZoom();
 
   // Snap calculator - only use magnetic snap targets (item edges), not grid lines
-  // Always pass item.id to exclude self from snap targets
+  // Pass all selected item IDs to exclude from snap targets (for group selection)
+  const excludeFromSnap = useMemo(() => {
+    // If this item is in the selection, exclude all selected items
+    // Otherwise just exclude this item
+    if (selectedItemIds.includes(item.id)) {
+      return selectedItemIds;
+    }
+    return item.id;
+  }, [selectedItemIds, item.id]);
+
   const { magneticSnapTargets, snapThresholdFrames, snapEnabled } = useSnapCalculator(
     timelineDuration,
-    item.id
+    excludeFromSnap
   );
 
   // Get all items for collision detection
@@ -295,13 +304,38 @@ export function useTimelineDrag(
 
       // Calculate proposed position and snap for visual feedback
       const deltaFrames = pixelsToFrameRef.current(deltaX);
-      const proposedFrame = Math.max(0, dragStateRef.current.startFrame + deltaFrames);
+      const draggedItems = dragStateRef.current.draggedItems;
 
-      // Get the dragged item to get its duration
-      const draggedItem = itemsRef.current.find((i) => i.id === dragStateRef.current?.itemId);
-      const itemDuration = draggedItem?.durationInFrames || 0;
+      // For multi-item drag, calculate group bounding box for snap visualization
+      let snapStartFrame: number;
+      let snapDuration: number;
 
-      const snapResult = calculateMagneticSnap(proposedFrame, itemDuration);
+      if (draggedItems.length > 1) {
+        // Calculate group bounds
+        let groupStartFrame = Infinity;
+        let groupEndFrame = -Infinity;
+
+        for (const draggedItem of draggedItems) {
+          const sourceItem = itemsRef.current.find((i) => i.id === draggedItem.id);
+          if (!sourceItem) continue;
+
+          const proposedStart = draggedItem.initialFrame + deltaFrames;
+          const proposedEnd = proposedStart + sourceItem.durationInFrames;
+
+          if (proposedStart < groupStartFrame) groupStartFrame = proposedStart;
+          if (proposedEnd > groupEndFrame) groupEndFrame = proposedEnd;
+        }
+
+        snapStartFrame = Math.max(0, groupStartFrame);
+        snapDuration = groupEndFrame - groupStartFrame;
+      } else {
+        // Single item drag - use anchor item
+        snapStartFrame = Math.max(0, dragStateRef.current.startFrame + deltaFrames);
+        const draggedItem = itemsRef.current.find((i) => i.id === dragStateRef.current?.itemId);
+        snapDuration = draggedItem?.durationInFrames || 0;
+      }
+
+      const snapResult = calculateMagneticSnap(snapStartFrame, snapDuration);
 
       // Only update store when snap target actually changes to reduce re-renders
       const prevSnap = prevSnapTargetRef.current;
@@ -339,13 +373,41 @@ export function useTimelineDrag(
 
         // Multi-item drag or single?
         if (dragState.draggedItems.length > 1) {
+          // Multi-item drag: calculate group bounding box for snapping
+          // Snap should only happen at the edges of the entire selection, not individual items
+          let groupStartFrame = Infinity;
+          let groupEndFrame = -Infinity;
+
+          for (const draggedItem of dragState.draggedItems) {
+            const sourceItem = itemsRef.current.find((i) => i.id === draggedItem.id);
+            if (!sourceItem) continue;
+
+            const proposedStart = draggedItem.initialFrame + deltaFrames;
+            const proposedEnd = proposedStart + sourceItem.durationInFrames;
+
+            if (proposedStart < groupStartFrame) groupStartFrame = proposedStart;
+            if (proposedEnd > groupEndFrame) groupEndFrame = proposedEnd;
+          }
+
+          // Ensure valid bounds
+          groupStartFrame = Math.max(0, groupStartFrame);
+          const groupDuration = groupEndFrame - groupStartFrame;
+
+          // Calculate snap using the group's bounding box
+          let snapDelta = 0;
+          if (groupDuration > 0) {
+            const snapResult = calculateMagneticSnap(groupStartFrame, groupDuration);
+            snapDelta = snapResult.snappedFrame - groupStartFrame;
+          }
+
           // Multi-item drag: calculate new positions for all items
           const movedItems = dragState.draggedItems.map((draggedItem) => {
             const sourceItem = itemsRef.current.find((i) => i.id === draggedItem.id);
             if (!sourceItem) return null;
 
             // Calculate new frame (maintain relative offset from anchor)
-            let newFrom = Math.max(0, draggedItem.initialFrame + deltaFrames);
+            // Apply both the frame delta AND the snap adjustment to all items
+            const newFrom = Math.max(0, draggedItem.initialFrame + deltaFrames + snapDelta);
 
             // Calculate new track (maintain relative offset)
             const anchorTrackIndex = tracksRef.current.findIndex(
@@ -361,12 +423,6 @@ export function useTimelineDrag(
               Math.min(tracksRef.current.length - 1, newAnchorTrackIndex + trackOffset)
             );
             const itemNewTrackId = tracksRef.current[newItemTrackIndex]?.id || draggedItem.initialTrackId;
-
-            // Apply snapping (only to anchor item, others follow)
-            if (draggedItem.id === item.id) {
-              const snapResult = calculateMagneticSnap(newFrom, sourceItem.durationInFrames);
-              newFrom = snapResult.snappedFrame;
-            }
 
             return {
               id: draggedItem.id,
