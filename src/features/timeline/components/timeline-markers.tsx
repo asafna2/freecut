@@ -161,8 +161,9 @@ function drawTile(
       ctx.fillText(label, labelX, labelY);
     }
 
-    // Minor ticks
-    if (showMinorTicks && markerConfig.minorTicks > 0 && x >= 0) {
+    // Minor ticks - check if any tick might be visible (x + markerWidthPx > 0)
+    // The inner loop has its own bounds check for individual ticks
+    if (showMinorTicks && markerConfig.minorTicks > 0 && x + markerWidthPx > 0) {
       const tickSpacing = markerWidthPx / markerConfig.minorTicks;
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
       ctx.lineWidth = 1;
