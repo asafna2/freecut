@@ -27,6 +27,7 @@ export function TimelinePlayhead({ inRuler = false }: TimelinePlayheadProps) {
   const { frameToPixels, pixelsToFrame } = useTimelineZoom();
 
   const [isDragging, setIsDragging] = useState(false);
+  const [isExternalDrag, setIsExternalDrag] = useState(false);
   const activeTool = useSelectionStore((s) => s.activeTool);
   const playheadRef = useRef<HTMLDivElement>(null);
 
@@ -43,6 +44,22 @@ export function TimelinePlayhead({ inRuler = false }: TimelinePlayheadProps) {
     pixelsToFrameRef.current = pixelsToFrame;
     setCurrentFrameRef.current = setCurrentFrame;
   }, [pixelsToFrame, setCurrentFrame]);
+
+  // Track external drag operations to disable pointer events on hit areas
+  useEffect(() => {
+    const handleDragStart = () => setIsExternalDrag(true);
+    const handleDragEnd = () => setIsExternalDrag(false);
+
+    document.addEventListener('dragstart', handleDragStart);
+    document.addEventListener('dragend', handleDragEnd);
+    document.addEventListener('drop', handleDragEnd);
+
+    return () => {
+      document.removeEventListener('dragstart', handleDragStart);
+      document.removeEventListener('dragend', handleDragEnd);
+      document.removeEventListener('drop', handleDragEnd);
+    };
+  }, []);
 
   const leftPosition = frameToPixels(currentFrame);
 
@@ -130,7 +147,8 @@ export function TimelinePlayhead({ inRuler = false }: TimelinePlayheadProps) {
             left: '-6px', // Center the 14px wide area on the 2px line
             width: '14px',
             cursor: activeTool === 'razor' ? 'default' : isDragging ? 'grabbing' : 'grab',
-            pointerEvents: activeTool === 'razor' ? 'none' : 'auto', // Pass through clicks in razor mode
+            // Pass through pointer events in razor mode or during external drag operations
+            pointerEvents: activeTool === 'razor' || isExternalDrag ? 'none' : 'auto',
             backgroundColor: 'transparent',
           }}
           onMouseDown={handleMouseDown}
@@ -158,7 +176,8 @@ export function TimelinePlayhead({ inRuler = false }: TimelinePlayheadProps) {
               height: '20px',
               transform: 'translateX(-50%)',
               cursor: activeTool === 'razor' ? 'default' : isDragging ? 'grabbing' : 'grab',
-              pointerEvents: 'auto',
+              // Pass through pointer events during external drag operations
+              pointerEvents: isExternalDrag ? 'none' : 'auto',
               backgroundColor: 'transparent',
             }}
             onMouseDown={handleMouseDown}

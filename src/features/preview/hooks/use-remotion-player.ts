@@ -131,6 +131,38 @@ export function useRemotionPlayer(playerRef: RefObject<PlayerRef>) {
     };
   }, [setCurrentFrame, playerRef]);
 
+  /**
+   * Player → Timeline: Sync pause state from Player
+   * Handles cases where Player pauses itself (end of playback, buffering, errors)
+   */
+  useEffect(() => {
+    if (!playerRef.current) return;
+
+    const pause = usePlaybackStore.getState().pause;
+
+    const handlePlayerPause = () => {
+      // Only update store if we think we're playing
+      // This prevents feedback loop when WE trigger the pause
+      if (wasPlayingRef.current) {
+        wasPlayingRef.current = false;
+        pause();
+      }
+    };
+
+    const handlePlayerEnded = () => {
+      wasPlayingRef.current = false;
+      pause();
+    };
+
+    playerRef.current.addEventListener('pause', handlePlayerPause);
+    playerRef.current.addEventListener('ended', handlePlayerEnded);
+
+    return () => {
+      playerRef.current?.removeEventListener('pause', handlePlayerPause);
+      playerRef.current?.removeEventListener('ended', handlePlayerEnded);
+    };
+  }, [playerRef]);
+
   return {
     isPlaying,
     currentFrame,

@@ -6,11 +6,20 @@ import { useTimelineZoom } from '../hooks/use-timeline-zoom';
 import { useMediaLibraryStore } from '@/features/media-library/stores/media-library-store';
 import { mediaLibraryService } from '@/features/media-library/services/media-library-service';
 import { findNearestAvailableSpace } from '../utils/collision-utils';
+import { getMediaDragData } from '@/features/media-library/utils/drag-data-cache';
 
 export interface TimelineTrackProps {
   track: TimelineTrackType;
   items: TimelineItemType[];
   timelineWidth?: number;
+}
+
+// Type for ghost preview items during drag
+interface GhostPreviewItem {
+  left: number;
+  width: number;
+  label: string;
+  type: string;
 }
 
 /**
@@ -22,9 +31,10 @@ export interface TimelineTrackProps {
  * - Generic container that accepts any item types
  * - Drag-and-drop support for media from library
  */
+
 export const TimelineTrack = memo(function TimelineTrack({ track, items }: TimelineTrackProps) {
   const [isDragOver, setIsDragOver] = useState(false);
-  const [dropPreviewX, setDropPreviewX] = useState<number | null>(null);
+  const [ghostPreviews, setGhostPreviews] = useState<GhostPreviewItem[]>([]);
   const trackRef = useRef<HTMLDivElement>(null);
 
   // Store selectors
@@ -34,7 +44,7 @@ export const TimelineTrack = memo(function TimelineTrack({ track, items }: Timel
   const getMedia = useMediaLibraryStore((s) => s.mediaItems);
 
   // Zoom utilities for position calculation
-  const { pixelsToFrame } = useTimelineZoom();
+  const { pixelsToFrame, frameToPixels } = useTimelineZoom();
 
   // Filter items for this track
   const trackItems = items.filter((item) => item.trackId === track.id);
@@ -60,20 +70,78 @@ export const TimelineTrack = memo(function TimelineTrack({ track, items }: Timel
 
       // Calculate position in timeline space: mouse position relative to container + scroll offset
       const offsetX = (e.clientX - containerRect.left) + scrollLeft;
-      setDropPreviewX(offsetX);
+      const dropFrame = pixelsToFrame(offsetX);
+
+      // Use cached drag data for ghost preview (dataTransfer.getData() doesn't work during dragover)
+      const data = getMediaDragData();
+      if (!data) {
+        return;
+      }
+
+      const previews: GhostPreviewItem[] = [];
+      try {
+
+        if (data.type === 'media-items' && data.items) {
+          // Multi-item drop
+          let currentPosition = Math.max(0, dropFrame);
+          const tempItems: Array<{ from: number; durationInFrames: number; trackId: string }> = [];
+
+          for (const item of data.items) {
+            const durationInFrames = Math.round(item.duration * fps);
+            const itemDuration = durationInFrames > 0 ? durationInFrames : (item.mediaType === 'image' ? fps * 3 : fps);
+
+            // Find collision-free position - cast temp items to satisfy TypeScript
+            const itemsToCheck = [...allItems, ...tempItems as unknown as TimelineItemType[]];
+            const finalPosition = findNearestAvailableSpace(currentPosition, itemDuration, track.id, itemsToCheck);
+
+            if (finalPosition !== null) {
+              previews.push({
+                left: frameToPixels(finalPosition),
+                width: frameToPixels(itemDuration),
+                label: item.fileName,
+                type: item.mediaType,
+              });
+              tempItems.push({ from: finalPosition, durationInFrames: itemDuration, trackId: track.id });
+              currentPosition = finalPosition + itemDuration;
+            }
+          }
+        } else if (data.type === 'media-item' && data.mediaId && data.mediaType && data.fileName) {
+          // Single item drop
+          const media = getMedia.find((m) => m.id === data.mediaId);
+          if (media) {
+            const durationInFrames = Math.round(media.duration * fps);
+            const itemDuration = durationInFrames > 0 ? durationInFrames : (data.mediaType === 'image' ? fps * 3 : fps);
+            const proposedPosition = Math.max(0, dropFrame);
+            const finalPosition = findNearestAvailableSpace(proposedPosition, itemDuration, track.id, allItems);
+
+            if (finalPosition !== null) {
+              previews.push({
+                left: frameToPixels(finalPosition),
+                width: frameToPixels(itemDuration),
+                label: data.fileName,
+                type: data.mediaType,
+              });
+            }
+          }
+        }
+
+        setGhostPreviews(previews);
+      } catch {
+        // Ignore parsing errors during drag
+      }
     }
   };
 
   const handleDragLeave = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragOver(false);
-    setDropPreviewX(null);
+    setGhostPreviews([]);
   };
 
   const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragOver(false);
-    setDropPreviewX(null);
+    setGhostPreviews([]);
 
     // Don't allow drops on locked tracks
     if (track.locked) {
@@ -83,19 +151,6 @@ export const TimelineTrack = memo(function TimelineTrack({ track, items }: Timel
     // Parse drag data
     try {
       const data = JSON.parse(e.dataTransfer.getData('application/json'));
-
-      if (data.type !== 'media-item') {
-        return; // Not a media item drop
-      }
-
-      const { mediaId, mediaType, fileName } = data;
-
-      // Get media metadata from store
-      const media = getMedia.find((m) => m.id === mediaId);
-      if (!media) {
-        console.error('Media not found:', mediaId);
-        return;
-      }
 
       // Calculate drop position in frames
       if (!trackRef.current) return;
@@ -110,6 +165,127 @@ export const TimelineTrack = memo(function TimelineTrack({ track, items }: Timel
       // Calculate position in timeline space: mouse position relative to container + scroll offset
       const offsetX = (e.clientX - containerRect.left) + scrollLeft;
       const dropFrame = pixelsToFrame(offsetX);
+
+      // Handle multi-item drop (media-items)
+      if (data.type === 'media-items') {
+        const items = data.items as Array<{
+          mediaId: string;
+          mediaType: string;
+          fileName: string;
+          duration: number;
+        }>;
+
+        // Track current position for sequential placement
+        let currentPosition = Math.max(0, dropFrame);
+        // Keep track of items we're adding to include in collision detection
+        const addedItems: TimelineItemType[] = [];
+
+        for (const item of items) {
+          const { mediaId, mediaType, fileName, duration } = item;
+
+          // Get media metadata from store for additional info
+          const media = getMedia.find((m) => m.id === mediaId);
+          if (!media) {
+            console.error('Media not found:', mediaId);
+            continue;
+          }
+
+          // Calculate duration in frames
+          const durationInFrames = Math.round(duration * fps);
+          const itemDuration = durationInFrames > 0 ? durationInFrames : (mediaType === 'image' ? fps * 3 : fps);
+
+          // Find nearest available space considering both existing items and items we're adding
+          const itemsToCheck = [...allItems, ...addedItems];
+          const finalPosition = findNearestAvailableSpace(
+            currentPosition,
+            itemDuration,
+            track.id,
+            itemsToCheck
+          );
+
+          if (finalPosition === null) {
+            console.warn('Cannot drop item: no available space on track for', fileName);
+            continue;
+          }
+
+          // Get media blob URL for playback
+          const blobUrl = await mediaLibraryService.getMediaBlobUrl(mediaId);
+          if (!blobUrl) {
+            console.error('Failed to get media blob URL for', fileName);
+            continue;
+          }
+
+          // Get thumbnail URL if available
+          const thumbnailUrl = await mediaLibraryService.getThumbnailBlobUrl(mediaId);
+
+          // Create timeline item
+          const baseItem = {
+            id: crypto.randomUUID(),
+            trackId: track.id,
+            from: finalPosition,
+            durationInFrames: itemDuration,
+            label: fileName,
+            mediaId: mediaId,
+            originId: crypto.randomUUID(),
+            sourceStart: 0,
+            sourceEnd: itemDuration,
+            sourceDuration: itemDuration,
+            trimStart: 0,
+            trimEnd: 0,
+          };
+
+          let timelineItem: TimelineItemType;
+          if (mediaType === 'video') {
+            timelineItem = {
+              ...baseItem,
+              type: 'video',
+              src: blobUrl,
+              thumbnailUrl: thumbnailUrl || undefined,
+            } as VideoItem;
+          } else if (mediaType === 'audio') {
+            timelineItem = {
+              ...baseItem,
+              type: 'audio',
+              src: blobUrl,
+            } as AudioItem;
+          } else if (mediaType === 'image') {
+            timelineItem = {
+              ...baseItem,
+              type: 'image',
+              src: blobUrl,
+              thumbnailUrl: thumbnailUrl || undefined,
+            } as ImageItem;
+          } else {
+            console.warn('Unsupported media type:', mediaType);
+            continue;
+          }
+
+          // Track the item for collision detection with subsequent items
+          addedItems.push(timelineItem);
+
+          // Update current position for next item (place after this one)
+          currentPosition = finalPosition + itemDuration;
+
+          // Add the item to timeline
+          console.log('Adding item at frame:', timelineItem.from, 'which is', timelineItem.from / fps, 'seconds');
+          addItem(timelineItem);
+        }
+        return;
+      }
+
+      // Handle single item drop (media-item)
+      if (data.type !== 'media-item') {
+        return; // Not a media item drop
+      }
+
+      const { mediaId, mediaType, fileName } = data;
+
+      // Get media metadata from store
+      const media = getMedia.find((m) => m.id === mediaId);
+      if (!media) {
+        console.error('Media not found:', mediaId);
+        return;
+      }
 
       // Calculate duration in frames first (needed for collision detection)
       const durationInFrames = Math.round(media.duration * fps);
@@ -230,13 +406,25 @@ export const TimelineTrack = memo(function TimelineTrack({ track, items }: Timel
       {isDragOver && !track.locked && (
         <>
           <div className="absolute inset-0 border-2 border-dashed border-primary pointer-events-none rounded" />
-          {/* Drop preview line */}
-          {dropPreviewX !== null && (
+          {/* Ghost preview clips */}
+          {ghostPreviews.map((ghost, index) => (
             <div
-              className="absolute top-0 bottom-0 w-0.5 bg-primary pointer-events-none z-20"
-              style={{ left: `${dropPreviewX}px` }}
-            />
-          )}
+              key={index}
+              className={`absolute top-2 h-12 rounded border-2 border-dashed pointer-events-none z-20 flex items-center px-2 ${
+                ghost.type === 'video'
+                  ? 'border-timeline-video bg-timeline-video/20'
+                  : ghost.type === 'audio'
+                  ? 'border-timeline-audio bg-timeline-audio/20'
+                  : 'border-timeline-image bg-timeline-image/20'
+              }`}
+              style={{
+                left: `${ghost.left}px`,
+                width: `${ghost.width}px`,
+              }}
+            >
+              <span className="text-xs text-foreground/70 truncate">{ghost.label}</span>
+            </div>
+          ))}
         </>
       )}
 

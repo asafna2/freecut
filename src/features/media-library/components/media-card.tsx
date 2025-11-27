@@ -10,6 +10,8 @@ import { Button } from '@/components/ui/button';
 import type { MediaMetadata } from '@/types/storage';
 import { mediaLibraryService } from '../services/media-library-service';
 import { getMediaType, formatDuration } from '../utils/validation';
+import { useMediaLibraryStore } from '../stores/media-library-store';
+import { setMediaDragData, clearMediaDragData } from '../utils/drag-data-cache';
 
 export interface MediaCardProps {
   media: MediaMetadata;
@@ -21,6 +23,8 @@ export interface MediaCardProps {
 
 export function MediaCard({ media, selected = false, onSelect, onDelete, viewMode = 'grid' }: MediaCardProps) {
   const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null);
+  const selectedMediaIds = useMediaLibraryStore((s) => s.selectedMediaIds);
+  const mediaItems = useMediaLibraryStore((s) => s.mediaItems);
 
   const mediaType = getMediaType(media.mimeType);
 
@@ -60,15 +64,49 @@ export function MediaCard({ media, selected = false, onSelect, onDelete, viewMod
   const handleDragStart = (e: React.DragEvent) => {
     // Set drag data for timeline drop
     e.dataTransfer.effectAllowed = 'copy';
-    e.dataTransfer.setData(
-      'application/json',
-      JSON.stringify({
-        type: 'media-item',
+
+    // If this item is selected and there are multiple selected items, drag all of them
+    const isPartOfSelection = selectedMediaIds.includes(media.id);
+    const hasMultipleSelected = selectedMediaIds.length > 1;
+
+    if (isPartOfSelection && hasMultipleSelected) {
+      // Build array of all selected media items in their current order
+      const selectedItems = selectedMediaIds
+        .map(id => mediaItems.find(m => m.id === id))
+        .filter((m): m is MediaMetadata => m !== undefined)
+        .map(m => ({
+          mediaId: m.id,
+          mediaType: getMediaType(m.mimeType),
+          fileName: m.fileName,
+          duration: m.duration,
+        }));
+
+      const dragData = {
+        type: 'media-items' as const,
+        items: selectedItems,
+      };
+
+      e.dataTransfer.setData('application/json', JSON.stringify(dragData));
+      // Cache for dragover access
+      setMediaDragData(dragData);
+    } else {
+      // Single item drag
+      const dragData = {
+        type: 'media-item' as const,
         mediaId: media.id,
         mediaType: mediaType,
         fileName: media.fileName,
-      })
-    );
+        duration: media.duration,
+      };
+
+      e.dataTransfer.setData('application/json', JSON.stringify(dragData));
+      // Cache for dragover access
+      setMediaDragData(dragData);
+    }
+  };
+
+  const handleDragEnd = () => {
+    clearMediaDragData();
   };
 
   const handleClick = (e: React.MouseEvent) => {
@@ -103,6 +141,7 @@ export function MediaCard({ media, selected = false, onSelect, onDelete, viewMod
         `}
         draggable
         onDragStart={handleDragStart}
+        onDragEnd={handleDragEnd}
         onClick={handleClick}
       >
         {/* Thumbnail */}
@@ -178,6 +217,7 @@ export function MediaCard({ media, selected = false, onSelect, onDelete, viewMod
       `}
       draggable
       onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
       onClick={handleClick}
     >
       {/* Film strip perforations effect */}
