@@ -218,6 +218,9 @@ export const TimelineItem = memo(function TimelineItem({ item, timelineDuration 
   const sourceDuration = item.sourceDuration || (item.durationInFrames * currentSpeed);
   const currentSourceEnd = item.sourceEnd || sourceDuration;
 
+  // Images/GIFs can loop infinitely, so don't clamp their extension
+  const canLoopInfinitely = item.type === 'image';
+
   // Clamp visual feedback to prevent showing invalid states
   let trimVisualLeft = left;
   let trimVisualWidth = width;
@@ -225,8 +228,11 @@ export const TimelineItem = memo(function TimelineItem({ item, timelineDuration 
   if (isTrimming) {
     if (trimHandle === 'start') {
       // Start handle: adjust both position and width
-      // Convert source frames to timeline frames (source / speed = timeline)
-      const maxExtendTimelineFrames = currentSourceStart / currentSpeed;
+      // For looping media (images/GIFs), allow infinite extension (but not past frame 0)
+      // For non-looping media, clamp to source start
+      const maxExtendBySource = canLoopInfinitely ? Infinity : (currentSourceStart / currentSpeed);
+      const maxExtendByTimeline = item.from; // Can't go before frame 0
+      const maxExtendTimelineFrames = Math.min(maxExtendBySource, maxExtendByTimeline);
       const maxExtendPixels = timeToPixels(maxExtendTimelineFrames / fps);
 
       // Prevent trimming more than available (keep at least 1 timeline frame)
@@ -234,7 +240,7 @@ export const TimelineItem = memo(function TimelineItem({ item, timelineDuration 
 
       // Clamp delta considering both constraints
       const clampedDelta = Math.max(
-        -maxExtendPixels, // Don't extend past source start
+        -maxExtendPixels, // Don't extend past source start or frame 0
         Math.min(maxTrimPixels, trimDeltaPixels) // Don't trim too much
       );
 
@@ -242,17 +248,18 @@ export const TimelineItem = memo(function TimelineItem({ item, timelineDuration 
       trimVisualWidth = Math.round(width - clampedDelta);
     } else {
       // End handle: adjust width only
-      // Convert source frames to timeline frames (source / speed = timeline)
-      const maxExtendSourceFrames = sourceDuration - currentSourceEnd;
+      // For looping media (images/GIFs), allow infinite extension
+      // For non-looping media, clamp to source duration
+      const maxExtendSourceFrames = canLoopInfinitely ? Infinity : (sourceDuration - currentSourceEnd);
       const maxExtendTimelineFrames = maxExtendSourceFrames / currentSpeed;
-      const maxExtendPixels = timeToPixels(maxExtendTimelineFrames / fps);
+      const maxExtendPixels = canLoopInfinitely ? Infinity : timeToPixels(maxExtendTimelineFrames / fps);
 
       // Prevent trimming more than available (keep at least 1 timeline frame)
       const maxTrimPixels = width - minWidthPixels;
 
       // Clamp delta considering both constraints
       const clampedDelta = Math.max(
-        -maxExtendPixels, // Don't extend past source end
+        -maxExtendPixels, // Don't extend past source end (or infinite for images/GIFs)
         Math.min(maxTrimPixels, -trimDeltaPixels) // Don't trim too much (note: trimDelta is negative for extending)
       );
 

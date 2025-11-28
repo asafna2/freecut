@@ -39,10 +39,22 @@ export class RenderService {
     const entryPoint = path.join(__dirname, '..', '..', 'src', 'lib', 'remotion', 'root.tsx');
 
     try {
+      // Path to src directory for @ alias resolution
+      const srcDir = path.join(__dirname, '..', '..', 'src');
+
       this.bundleLocation = await bundle({
         entryPoint,
-        // Use a consistent output directory
-        webpackOverride: (config) => config,
+        // Add @ alias for path resolution (matches Vite's config)
+        webpackOverride: (config) => ({
+          ...config,
+          resolve: {
+            ...config.resolve,
+            alias: {
+              ...config.resolve?.alias,
+              '@': srcDir,
+            },
+          },
+        }),
       });
 
       console.log('[RenderService] Bundle created at:', this.bundleLocation);

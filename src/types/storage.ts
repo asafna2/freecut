@@ -78,3 +78,16 @@ export interface WaveformData {
   channels: number; // Number of audio channels
   createdAt: number;
 }
+
+// GIF frame data for pre-extracted animation frames
+export interface GifFrameData {
+  id: string; // Same as mediaId
+  mediaId: string;
+  frames: Blob[]; // PNG blobs for each frame (preserves transparency)
+  durations: number[]; // Per-frame delay in milliseconds
+  totalDuration: number; // Total animation duration in milliseconds
+  width: number; // Frame width in pixels
+  height: number; // Frame height in pixels
+  frameCount: number; // Total number of frames
+  createdAt: number;
+}

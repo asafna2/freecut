@@ -202,6 +202,22 @@ export class MediaLibraryService {
       onProgress?.(92, 'Adding to project...');
       await associateMediaWithProject(projectId, id);
 
+      // Pre-extract GIF frames in background for faster timeline scrubbing
+      // This is non-blocking - extraction continues after upload completes
+      if (file.type === 'image/gif') {
+        const blobUrl = URL.createObjectURL(file);
+        import('@/features/timeline/services/gif-frame-cache')
+          .then(({ gifFrameCache }) => {
+            return gifFrameCache.getGifFrames(id, blobUrl);
+          })
+          .catch((err) => {
+            console.warn('Failed to pre-extract GIF frames:', err);
+          })
+          .finally(() => {
+            URL.revokeObjectURL(blobUrl);
+          });
+      }
+
       // Complete (100%)
       onProgress?.(100, 'Upload complete');
 
@@ -478,6 +494,16 @@ export class MediaLibraryService {
         await deleteThumbnailsByMediaId(mediaId);
       } catch (error) {
         console.warn('Failed to delete thumbnails:', error);
+      }
+
+      // Delete GIF frame cache if applicable
+      try {
+        const { gifFrameCache } = await import(
+          '@/features/timeline/services/gif-frame-cache'
+        );
+        await gifFrameCache.clearMedia(mediaId);
+      } catch (error) {
+        console.warn('Failed to delete GIF frame cache:', error);
       }
 
       // If no more references to content, delete the actual file

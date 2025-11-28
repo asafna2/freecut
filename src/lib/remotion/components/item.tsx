@@ -1,9 +1,9 @@
 import React from 'react';
 import { AbsoluteFill, OffthreadVideo } from 'remotion';
-import { Gif } from '@remotion/gif';
 import type { TimelineItem } from '@/types/timeline';
 import { DebugOverlay } from './debug-overlay';
 import { PitchCorrectedAudio } from './pitch-corrected-audio';
+import { GifPlayer } from './gif-player';
 
 /**
  * Check if a URL points to a GIF file
@@ -192,15 +192,12 @@ export const Item: React.FC<ItemProps> = ({ item, muted = false }) => {
 
       return (
         <AbsoluteFill>
-          <Gif
+          <GifPlayer
+            mediaId={item.mediaId!}
             src={item.src}
             fit="cover"
-            style={{
-              width: '100%',
-              height: '100%',
-            }}
-            loopBehavior="loop"
             playbackRate={gifPlaybackRate}
+            loopBehavior="loop"
           />
         </AbsoluteFill>
       );

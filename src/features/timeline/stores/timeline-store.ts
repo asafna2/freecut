@@ -180,13 +180,22 @@ export const useTimelineStore = create<TimelineState & TimelineActions>()(
       // Account for speed: timeline frames * speed = source frames
       const speed = item.speed || 1;
 
+      // Images/GIFs can loop infinitely, so don't clamp to source start
+      const canLoopInfinitely = item.type === 'image';
+
       // Calculate new values with boundary checks
       let actualTrimAmount = trimAmount; // Timeline frames
 
-      // Prevent extending before source start
+      // Prevent extending before source start (only for non-looping media)
       // sourceStart + (trimAmount * speed) < 0
-      if (trimAmount < 0 && currentSourceStart + (trimAmount * speed) < 0) {
+      if (!canLoopInfinitely && trimAmount < 0 && currentSourceStart + (trimAmount * speed) < 0) {
         actualTrimAmount = Math.round(-currentSourceStart / speed);
+      }
+
+      // Prevent extending before timeline frame 0 (applies to all media types)
+      // newFrom = item.from + trimAmount, so trimAmount < 0 extends left
+      if (trimAmount < 0 && item.from + trimAmount < 0) {
+        actualTrimAmount = -item.from; // Clamp to frame 0
       }
 
       // Prevent trimming more than available duration (keep at least 1 timeline frame)
@@ -197,8 +206,13 @@ export const useTimelineStore = create<TimelineState & TimelineActions>()(
       // Convert to source frames for source properties
       const sourceTrimAmount = Math.round(actualTrimAmount * speed);
 
-      const newTrimStart = Math.max(0, currentTrimStart + sourceTrimAmount);
-      const newSourceStart = Math.max(0, currentSourceStart + sourceTrimAmount);
+      // For looping media, allow negative sourceStart (will be handled with modulo in playback)
+      const newTrimStart = canLoopInfinitely
+        ? currentTrimStart + sourceTrimAmount
+        : Math.max(0, currentTrimStart + sourceTrimAmount);
+      const newSourceStart = canLoopInfinitely
+        ? currentSourceStart + sourceTrimAmount
+        : Math.max(0, currentSourceStart + sourceTrimAmount);
       // Ensure frame values are integers (Remotion requirement)
       const newDuration = Math.max(1, Math.round(item.durationInFrames - actualTrimAmount));
       const newFrom = Math.round(item.from + actualTrimAmount);
@@ -235,12 +249,15 @@ export const useTimelineStore = create<TimelineState & TimelineActions>()(
       const sourceDuration = item.sourceDuration || (item.durationInFrames * speed);
       const currentSourceEnd = item.sourceEnd || sourceDuration;
 
+      // Images/GIFs can loop infinitely, so don't clamp their duration
+      const canLoopInfinitely = item.type === 'image';
+
       // Calculate new values with boundary checks
       let actualTrimAmount = trimAmount; // Timeline frames
 
-      // Prevent extending beyond source duration
+      // Prevent extending beyond source duration (only for non-looping media)
       // sourceEnd - (trimAmount * speed) > sourceDuration (extending = negative trim)
-      if (trimAmount < 0 && currentSourceEnd - (trimAmount * speed) > sourceDuration) {
+      if (!canLoopInfinitely && trimAmount < 0 && currentSourceEnd - (trimAmount * speed) > sourceDuration) {
         actualTrimAmount = Math.round(-(sourceDuration - currentSourceEnd) / speed);
       }
 
@@ -254,15 +271,23 @@ export const useTimelineStore = create<TimelineState & TimelineActions>()(
 
       const newTrimEnd = Math.max(0, currentTrimEnd + sourceTrimAmount);
       // Clamp sourceEnd to not exceed sourceDuration (prevents playback rewind issues)
-      const newSourceEnd = Math.min(sourceDuration, currentSourceEnd - sourceTrimAmount);
+      // For looping media (images/GIFs), don't clamp - they can extend infinitely
+      const newSourceEnd = canLoopInfinitely
+        ? currentSourceEnd - sourceTrimAmount
+        : Math.min(sourceDuration, currentSourceEnd - sourceTrimAmount);
 
-      // Calculate duration, but also ensure we don't exceed available source frames
-      const currentSourceStart = item.sourceStart || 0;
-      const availableSourceFrames = newSourceEnd - currentSourceStart;
-      const maxTimelineDuration = Math.floor(availableSourceFrames / speed);
-
-      // Ensure frame values are integers (Remotion requirement)
-      const newDuration = Math.max(1, Math.min(maxTimelineDuration, Math.round(item.durationInFrames - actualTrimAmount)));
+      // Calculate duration
+      // For looping media, just use the trimmed duration directly
+      // For non-looping media, ensure we don't exceed available source frames
+      let newDuration: number;
+      if (canLoopInfinitely) {
+        newDuration = Math.max(1, Math.round(item.durationInFrames - actualTrimAmount));
+      } else {
+        const currentSourceStart = item.sourceStart || 0;
+        const availableSourceFrames = newSourceEnd - currentSourceStart;
+        const maxTimelineDuration = Math.floor(availableSourceFrames / speed);
+        newDuration = Math.max(1, Math.min(maxTimelineDuration, Math.round(item.durationInFrames - actualTrimAmount)));
+      }
 
       return {
         ...item,
@@ -407,15 +432,27 @@ export const useTimelineStore = create<TimelineState & TimelineActions>()(
 
   // Rate stretch item: change duration and speed while preserving the CURRENT trimmed region
   // If clip shows [B-C] of source [A-D], rate stretch only affects [B-C], not the full source
+  // For images/GIFs: changes animation speed (they loop infinitely, so no source constraints)
   rateStretchItem: (id, newFrom, newDuration, newSpeed) => set((state) => ({
     items: state.items.map((item) => {
       if (item.id !== id) return item;
 
-      // Only apply to video/audio items
-      if (item.type !== 'video' && item.type !== 'audio') return item;
-
       // Clamp speed to valid range (0.1x to 10x)
       const clampedSpeed = Math.max(0.1, Math.min(10, newSpeed));
+
+      // For images/GIFs: simpler handling - just update speed and duration
+      // GIFs loop infinitely, so no source position tracking needed
+      if (item.type === 'image') {
+        return {
+          ...item,
+          from: Math.round(newFrom),
+          durationInFrames: Math.round(newDuration),
+          speed: clampedSpeed,
+        };
+      }
+
+      // Only apply source tracking to video/audio items
+      if (item.type !== 'video' && item.type !== 'audio') return item;
 
       // Get current source region being displayed
       const currentSpeed = item.speed || 1;

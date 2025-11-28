@@ -7,6 +7,7 @@ import type {
   ProjectMediaAssociation,
   FilmstripData,
   WaveformData,
+  GifFrameData,
 } from '@/types/storage';
 
 // Database schema
@@ -73,10 +74,19 @@ interface VideoEditorDB extends DBSchema {
       createdAt: number;
     };
   };
+  // v6: GIF frame data for pre-extracted animation frames
+  gifFrames: {
+    key: string; // mediaId
+    value: GifFrameData;
+    indexes: {
+      mediaId: string;
+      createdAt: number;
+    };
+  };
 }
 
 const DB_NAME = 'video-editor-db';
-const DB_VERSION = 5; // v5: Ensure filmstrip/waveform stores exist (fixes v4 upgrade issue)
+const DB_VERSION = 6; // v6: Add gifFrames store for pre-extracted GIF animation frames
 
 let dbPromise: Promise<IDBPDatabase<VideoEditorDB>> | null = null;
 
@@ -183,6 +193,19 @@ export async function getDB(): Promise<IDBPDatabase<VideoEditorDB>> {
             });
           }
         }
+
+        // v6: GIF frames store for pre-extracted animation frames
+        if (oldVersion < 6) {
+          if (!db.objectStoreNames.contains('gifFrames')) {
+            const gifFrameStore = db.createObjectStore('gifFrames', {
+              keyPath: 'id',
+            });
+            gifFrameStore.createIndex('mediaId', 'mediaId', { unique: false });
+            gifFrameStore.createIndex('createdAt', 'createdAt', {
+              unique: false,
+            });
+          }
+        }
       },
       blocked() {
         console.warn(
@@ -230,7 +253,7 @@ export async function reconnectDB(): Promise<IDBPDatabase<VideoEditorDB>> {
 export async function hasRequiredStores(): Promise<boolean> {
   try {
     const db = await getDB();
-    const requiredStores = ['projects', 'media', 'thumbnails', 'content', 'projectMedia', 'filmstrips', 'waveforms'] as const;
+    const requiredStores = ['projects', 'media', 'thumbnails', 'content', 'projectMedia', 'filmstrips', 'waveforms', 'gifFrames'] as const;
     return requiredStores.every(store => db.objectStoreNames.contains(store));
   } catch {
     return false;
@@ -1175,5 +1198,92 @@ export async function deleteWaveform(id: string): Promise<void> {
   } catch (error) {
     console.error(`Failed to delete waveform ${id}:`, error);
     throw new Error(`Failed to delete waveform: ${id}`);
+  }
+}
+
+// ============================================
+// GIF Frames CRUD Operations (v6)
+// ============================================
+
+/**
+ * Save GIF frame data to IndexedDB
+ */
+export async function saveGifFrames(gifFrameData: GifFrameData): Promise<void> {
+  try {
+    let db = await getDB();
+    // Check if store exists (database might need upgrade)
+    if (!db.objectStoreNames.contains('gifFrames')) {
+      console.warn('gifFrames store not found, attempting reconnection...');
+      db = await reconnectDB();
+    }
+    await db.put('gifFrames', gifFrameData);
+  } catch (error) {
+    console.error('Failed to save GIF frames:', error);
+    throw new Error('Failed to save GIF frames');
+  }
+}
+
+/**
+ * Get GIF frames by ID (mediaId)
+ */
+export async function getGifFrames(
+  id: string
+): Promise<GifFrameData | undefined> {
+  try {
+    const db = await getDB();
+    // Check if store exists (database might need upgrade)
+    if (!db.objectStoreNames.contains('gifFrames')) {
+      console.warn('gifFrames store not found, attempting reconnection...');
+      const newDb = await reconnectDB();
+      if (!newDb.objectStoreNames.contains('gifFrames')) {
+        throw new Error('gifFrames store not found after reconnection');
+      }
+      return await newDb.get('gifFrames', id);
+    }
+    return await db.get('gifFrames', id);
+  } catch (error) {
+    console.error(`Failed to get GIF frames ${id}:`, error);
+    return undefined;
+  }
+}
+
+/**
+ * Delete GIF frames by ID (mediaId)
+ */
+export async function deleteGifFrames(id: string): Promise<void> {
+  try {
+    let db = await getDB();
+    // Check if store exists (database might need upgrade)
+    if (!db.objectStoreNames.contains('gifFrames')) {
+      db = await reconnectDB();
+      if (!db.objectStoreNames.contains('gifFrames')) {
+        return; // Store doesn't exist, nothing to delete
+      }
+    }
+    await db.delete('gifFrames', id);
+  } catch (error) {
+    console.error(`Failed to delete GIF frames ${id}:`, error);
+    throw new Error(`Failed to delete GIF frames: ${id}`);
+  }
+}
+
+/**
+ * Clear all GIF frame data from IndexedDB
+ * Used for debugging and cache invalidation
+ */
+export async function clearAllGifFrames(): Promise<void> {
+  try {
+    let db = await getDB();
+    if (!db.objectStoreNames.contains('gifFrames')) {
+      db = await reconnectDB();
+      if (!db.objectStoreNames.contains('gifFrames')) {
+        return; // Store doesn't exist
+      }
+    }
+    await db.clear('gifFrames');
+    console.log('[IndexedDB] Cleared all GIF frames');
+  } catch (error) {
+    console.error('Failed to clear GIF frames:', error);
+    throw new Error('Failed to clear GIF frames');
   }
 }
