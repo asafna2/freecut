@@ -1,4 +1,4 @@
-import { useMemo, useCallback, useRef, useEffect } from 'react';
+import { useMemo, useCallback, useRef, useEffect, useState } from 'react';
 import { useSelectionStore } from '@/features/editor/stores/selection-store';
 import { useTimelineStore } from '@/features/timeline/stores/timeline-store';
 import { usePlaybackStore } from '@/features/preview/stores/playback-store';
@@ -10,8 +10,9 @@ import { SnapGuides } from './snap-guides';
 import { screenToCanvas, transformToScreenBounds } from '../utils/coordinate-transform';
 import { useMarqueeSelection, isMarqueeJustFinished, type Rect } from '@/hooks/use-marquee-selection';
 import { resolveTransform, getSourceDimensions } from '@/lib/remotion/utils/transform-resolver';
-import type { CoordinateParams, Transform } from '../types/gizmo';
+import type { CoordinateParams, Transform, Point } from '../types/gizmo';
 import type { TransformProperties } from '@/types/transform';
+import type { TimelineItem } from '@/types/timeline';
 
 interface GizmoOverlayProps {
   containerRect: DOMRect | null;
@@ -38,6 +39,13 @@ export function GizmoOverlay({
   overlayPadding = 100,
 }: GizmoOverlayProps) {
   const overlayRef = useRef<HTMLDivElement>(null);
+
+  // Context menu state for selecting from overlapping items
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    items: TimelineItem[];
+  } | null>(null);
 
   // Selection state
   const selectedItemIds = useSelectionStore((s) => s.selectedItemIds);
@@ -68,16 +76,31 @@ export function GizmoOverlay({
     setCanvasSize(projectSize.width, projectSize.height);
   }, [projectSize.width, projectSize.height, setCanvasSize]);
 
-  // Get visual items visible at current frame (excluding audio)
+  // Get visual items visible at current frame (excluding audio and items on hidden tracks)
+  // Sorted by track order: items on top tracks (lower order) come LAST for proper stacking/click priority
   const visibleItems = useMemo(() => {
-    return items.filter((item) => {
-      // Only visual items (not audio)
-      if (item.type === 'audio') return false;
-      // Check if item is visible at current frame
-      const itemEnd = item.from + item.durationInFrames;
-      return currentFrame >= item.from && currentFrame < itemEnd;
-    });
-  }, [items, currentFrame]);
+    // Create maps for track visibility and order
+    const trackVisibility = new Map<string, boolean>();
+    const trackOrder = new Map<string, number>();
+    for (const track of tracks) {
+      trackVisibility.set(track.id, track.visible);
+      trackOrder.set(track.id, track.order);
+    }
+
+    return items
+      .filter((item) => {
+        // Only visual items (not audio)
+        if (item.type === 'audio') return false;
+        // Check if item's track is visible
+        if (!trackVisibility.get(item.trackId)) return false;
+        // Check if item is visible at current frame
+        const itemEnd = item.from + item.durationInFrames;
+        return currentFrame >= item.from && currentFrame < itemEnd;
+      })
+      // Sort by track order descending: higher order (bottom tracks) first, lower order (top tracks) last
+      // This ensures top track items render last (on top) and get click priority
+      .sort((a, b) => (trackOrder.get(b.trackId) ?? 0) - (trackOrder.get(a.trackId) ?? 0));
+  }, [items, tracks, currentFrame]);
 
   // Get selected items
   const selectedItems = useMemo(() => {
@@ -259,6 +282,91 @@ export function GizmoOverlay({
     [selectItems, selectedItemIds]
   );
 
+  // Helper to find all items at a canvas point (for context menu)
+  const findAllItemsAtPoint = useCallback(
+    (canvasPoint: Point): TimelineItem[] => {
+      const canvasCenterX = projectSize.width / 2;
+      const canvasCenterY = projectSize.height / 2;
+      const result: TimelineItem[] = [];
+
+      for (const item of visibleItems) {
+        const sourceDims = getSourceDimensions(item);
+        const resolved = resolveTransform(item, { ...projectSize, fps: 30 }, sourceDims);
+
+        // Convert transform position to absolute canvas coordinates
+        const itemCenterX = canvasCenterX + resolved.x;
+        const itemCenterY = canvasCenterY + resolved.y;
+
+        // AABB check
+        const left = itemCenterX - resolved.width / 2;
+        const right = itemCenterX + resolved.width / 2;
+        const top = itemCenterY - resolved.height / 2;
+        const bottom = itemCenterY + resolved.height / 2;
+
+        if (
+          canvasPoint.x >= left &&
+          canvasPoint.x <= right &&
+          canvasPoint.y >= top &&
+          canvasPoint.y <= bottom
+        ) {
+          result.push(item);
+        }
+      }
+
+      return result;
+    },
+    [visibleItems, projectSize]
+  );
+
+  // Handle right-click to show context menu for overlapping items
+  const handleContextMenu = useCallback(
+    (e: React.MouseEvent) => {
+      if (!coordParams) return;
+
+      e.preventDefault();
+      e.stopPropagation();
+
+      const canvasPoint = screenToCanvas(e.clientX, e.clientY, coordParams);
+      const itemsAtPoint = findAllItemsAtPoint(canvasPoint);
+
+      // Only show menu if there are multiple overlapping items
+      if (itemsAtPoint.length > 1) {
+        setContextMenu({
+          x: e.clientX,
+          y: e.clientY,
+          items: itemsAtPoint,
+        });
+      } else if (itemsAtPoint.length === 1) {
+        // Single item: just select it
+        selectItems([itemsAtPoint[0].id]);
+      }
+    },
+    [coordParams, findAllItemsAtPoint, selectItems]
+  );
+
+  // Handle selecting an item from context menu
+  const handleContextMenuSelect = useCallback(
+    (itemId: string) => {
+      selectItems([itemId]);
+      setContextMenu(null);
+    },
+    [selectItems]
+  );
+
+  // Close context menu when clicking elsewhere
+  useEffect(() => {
+    if (!contextMenu) return;
+
+    const handleClickOutside = () => setContextMenu(null);
+    window.addEventListener('click', handleClickOutside);
+    window.addEventListener('contextmenu', handleClickOutside);
+
+    return () => {
+      window.removeEventListener('click', handleClickOutside);
+      window.removeEventListener('contextmenu', handleClickOutside);
+    };
+  }, [contextMenu]);
+
   // Check if transform actually changed (within tolerance)
   const transformChanged = useCallback((a: Transform, b: Transform): boolean => {
     const tolerance = 0.01;
@@ -354,6 +462,7 @@ export function GizmoOverlay({
           pointerEvents: 'auto',
         }}
         onClick={handleBackgroundClick}
+        onContextMenu={handleContextMenu}
       >
         {/* Clickable areas for UNSELECTED visible items */}
         {/* Selected items are handled by their respective gizmos (TransformGizmo or GroupGizmo) */}
@@ -388,6 +497,39 @@ export function GizmoOverlay({
         {/* Snap guides shown during drag */}
         <SnapGuides snapLines={snapLines} coordParams={coordParams} />
       </div>
+
+      {/* Context menu for selecting from overlapping items */}
+      {contextMenu && (
+        <div
+          className="fixed z-50 bg-popover border border-border rounded-md shadow-lg py-1 min-w-[160px]"
+          style={{
+            left: contextMenu.x,
+            top: contextMenu.y,
+            pointerEvents: 'auto',
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="px-2 py-1.5 text-xs text-muted-foreground border-b border-border mb-1">
+            Select Layer
+          </div>
+          {contextMenu.items.map((item, index) => {
+            const track = tracks.find((t) => t.id === item.trackId);
+            const trackName = track?.name ?? `Track ${index + 1}`;
+            const itemName = item.name || `${item.type} clip`;
+
+            return (
+              <button
+                key={item.id}
+                className="w-full px-3 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground flex items-center gap-2"
+                onClick={() => handleContextMenuSelect(item.id)}
+              >
+                <span className="text-muted-foreground text-xs">{trackName}:</span>
+                <span className="truncate">{itemName}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
