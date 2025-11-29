@@ -101,37 +101,39 @@ export function GizmoOverlay({
   }, [containerRect, playerSize, projectSize, zoom]);
 
 
-  // Create marquee items with bounding rects for collision detection
+  // Create marquee items with pre-computed bounding rects for collision detection
+  // Rects are calculated once when items/coords change, not on every mouse move
   const marqueeItems = useMemo(() => {
     if (!coordParams || !containerRect) return [];
-    return visibleItems.map((item) => ({
-      id: item.id,
-      getBoundingRect: (): Rect => {
-        const sourceDims = getSourceDimensions(item);
-        const resolved = resolveTransform(item, { ...projectSize, fps: 30 }, sourceDims);
-        const screenBounds = transformToScreenBounds(
-          {
-            x: resolved.x,
-            y: resolved.y,
-            width: resolved.width,
-            height: resolved.height,
-            rotation: resolved.rotation,
-            opacity: resolved.opacity,
-            cornerRadius: resolved.cornerRadius,
-          },
-          coordParams
-        );
-        // Convert to viewport coordinates for collision detection
-        return {
-          left: containerRect.left + screenBounds.left,
-          top: containerRect.top + screenBounds.top,
-          right: containerRect.left + screenBounds.left + screenBounds.width,
-          bottom: containerRect.top + screenBounds.top + screenBounds.height,
-          width: screenBounds.width,
-          height: screenBounds.height,
-        };
-      },
-    }));
+    return visibleItems.map((item) => {
+      // Pre-compute the bounding rect
+      const sourceDims = getSourceDimensions(item);
+      const resolved = resolveTransform(item, { ...projectSize, fps: 30 }, sourceDims);
+      const screenBounds = transformToScreenBounds(
+        {
+          x: resolved.x,
+          y: resolved.y,
+          width: resolved.width,
+          height: resolved.height,
+          rotation: resolved.rotation,
+          opacity: resolved.opacity,
+          cornerRadius: resolved.cornerRadius,
+        },
+        coordParams
+      );
+      const rect: Rect = {
+        left: containerRect.left + screenBounds.left,
+        top: containerRect.top + screenBounds.top,
+        right: containerRect.left + screenBounds.left + screenBounds.width,
+        bottom: containerRect.top + screenBounds.top + screenBounds.height,
+        width: screenBounds.width,
+        height: screenBounds.height,
+      };
+      return {
+        id: item.id,
+        getBoundingRect: () => rect,
+      };
+    });
   }, [visibleItems, coordParams, projectSize, containerRect]);
 
   // Marquee selection hook

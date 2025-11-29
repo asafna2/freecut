@@ -136,6 +136,11 @@ export function useMarqueeSelection({
 }: UseMarqueeSelectionOptions) {
   // Use hitAreaRef for bounds checking if provided, otherwise fall back to containerRef
   const boundsRef = hitAreaRef ?? containerRef;
+
+  // Use refs for high-frequency updates during drag to avoid React re-renders
+  const marqueeRef = useRef({ startX: 0, startY: 0, currentX: 0, currentY: 0 });
+
+  // React state for rendering - only updates on RAF (batched) or active state changes
   const [marqueeState, setMarqueeState] = useState<MarqueeState>({
     active: false,
     startX: 0,
@@ -149,30 +154,37 @@ export function useMarqueeSelection({
   const hasMovedRef = useRef(false);
   const onSelectionChangeRef = useRef(onSelectionChange);
   const prevSelectedIdsRef = useRef<string[]>([]);
+  const rafIdRef = useRef<number | null>(null);
+  const itemsRef = useRef(items);
 
-  // Keep ref up to date
+  // Keep refs up to date
   useEffect(() => {
     onSelectionChangeRef.current = onSelectionChange;
   }, [onSelectionChange]);
 
-  // Update selection based on current marquee intersection
-  const updateSelection = useCallback(() => {
-    if (!marqueeState.active || !containerRef.current) return;
+  useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
+
+  // Update selection based on current marquee intersection (uses refs for performance)
+  const updateSelectionFromRefs = useCallback(() => {
+    if (!containerRef.current) return;
 
     const container = containerRef.current;
     const containerRect = container.getBoundingClientRect();
+    const m = marqueeRef.current;
 
     // Convert marquee from content space to viewport space for comparison
-    // Marquee coordinates include scroll offset, so we subtract it and add container position
     const marqueeRect = getMarqueeRect(
-      marqueeState.startX - container.scrollLeft + containerRect.left,
-      marqueeState.startY - container.scrollTop + containerRect.top,
-      marqueeState.currentX - container.scrollLeft + containerRect.left,
-      marqueeState.currentY - container.scrollTop + containerRect.top
+      m.startX - container.scrollLeft + containerRect.left,
+      m.startY - container.scrollTop + containerRect.top,
+      m.currentX - container.scrollLeft + containerRect.left,
+      m.currentY - container.scrollTop + containerRect.top
     );
 
     // Find all items that currently intersect with marquee
-    const intersectingIds = items
+    const currentItems = itemsRef.current;
+    const intersectingIds = currentItems
       .filter((item) => {
         const itemRect = item.getBoundingRect();
         return rectIntersects(marqueeRect, itemRect);
@@ -191,7 +203,7 @@ export function useMarqueeSelection({
       prevSelectedIdsRef.current = intersectingIds;
       onSelectionChangeRef.current?.(intersectingIds);
     }
-  }, [marqueeState, items, containerRef]);
+  }, [containerRef]);
 
   // Handle mouse down - start marquee
   const handleMouseDown = useCallback(
@@ -248,23 +260,19 @@ export function useMarqueeSelection({
       const startX = e.clientX - containerRect.left + container.scrollLeft;
       const startY = e.clientY - containerRect.top + container.scrollTop;
 
-      setMarqueeState({
-        active: false, // Don't activate until we move past threshold
-        startX,
-        startY,
-        currentX: startX,
-        currentY: startY,
-      });
+      // Store in ref (no re-render)
+      marqueeRef.current = { startX, startY, currentX: startX, currentY: startY };
 
       // Clear selection if not in append mode
       if (!appendMode) {
         setSelectedIds([]);
+        prevSelectedIdsRef.current = [];
       }
     },
     [enabled, containerRef, boundsRef, appendMode]
   );
 
-  // Handle mouse move - update marquee
+  // Handle mouse move - update marquee using RAF for performance
   const handleMouseMove = useCallback(
     (e: MouseEvent) => {
       if (!isDraggingRef.current || !containerRef.current) return;
@@ -278,24 +286,48 @@ export function useMarqueeSelection({
 
       // Check if we've moved past threshold
       if (!hasMovedRef.current) {
-        const deltaX = Math.abs(currentX - marqueeState.startX);
-        const deltaY = Math.abs(currentY - marqueeState.startY);
+        const m = marqueeRef.current;
+        const deltaX = Math.abs(currentX - m.startX);
+        const deltaY = Math.abs(currentY - m.startY);
 
         if (deltaX > threshold || deltaY > threshold) {
           hasMovedRef.current = true;
+          // Activate marquee (triggers one re-render)
+          setMarqueeState({
+            active: true,
+            startX: m.startX,
+            startY: m.startY,
+            currentX,
+            currentY,
+          });
         } else {
           return; // Don't activate yet
         }
       }
 
-      setMarqueeState((prev) => ({
-        ...prev,
-        active: true,
-        currentX,
-        currentY,
-      }));
+      // Update ref (no re-render)
+      marqueeRef.current.currentX = currentX;
+      marqueeRef.current.currentY = currentY;
+
+      // Batch updates with RAF
+      if (rafIdRef.current === null) {
+        rafIdRef.current = requestAnimationFrame(() => {
+          rafIdRef.current = null;
+          const m = marqueeRef.current;
+
+          // Update React state for rendering
+          setMarqueeState((prev) => ({
+            ...prev,
+            currentX: m.currentX,
+            currentY: m.currentY,
+          }));
+
+          // Update selection
+          updateSelectionFromRefs();
+        });
+      }
     },
-    [containerRef, threshold, marqueeState.startX, marqueeState.startY]
+    [containerRef, threshold, updateSelectionFromRefs]
   );
 
   // Handle mouse up - end marquee
@@ -305,10 +337,16 @@ export function useMarqueeSelection({
 
     const wasActualDrag = hasMovedRef.current;
 
-    // Selection is already updated in real-time via updateSelection
-    // Just clean up the marquee state
+    // Cancel any pending RAF
+    if (rafIdRef.current !== null) {
+      cancelAnimationFrame(rafIdRef.current);
+      rafIdRef.current = null;
+    }
+
+    // Clean up
     isDraggingRef.current = false;
     hasMovedRef.current = false;
+    marqueeRef.current = { startX: 0, startY: 0, currentX: 0, currentY: 0 };
 
     setMarqueeState({
       active: false,
@@ -330,12 +368,14 @@ export function useMarqueeSelection({
     }
   }, []);
 
-  // Update selection as marquee moves
+  // Cleanup RAF on unmount
   useEffect(() => {
-    if (marqueeState.active) {
-      updateSelection();
-    }
-  }, [marqueeState.active, marqueeState.currentX, marqueeState.currentY, updateSelection]);
+    return () => {
+      if (rafIdRef.current !== null) {
+        cancelAnimationFrame(rafIdRef.current);
+      }
+    };
+  }, []);
 
   // Register global mouse event listeners
   // Listen at document level to support containers with pointer-events: none
