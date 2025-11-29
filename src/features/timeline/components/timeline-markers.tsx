@@ -14,6 +14,13 @@ import { TimelineProjectMarkers } from './timeline-project-markers';
 import { useTimelineZoom } from '../hooks/use-timeline-zoom';
 import { formatTimecode, secondsToFrames } from '@/utils/time-utils';
 
+// Edge-scrolling configuration
+const EDGE_SCROLL_MAX_SPEED = 20; // Max pixels per frame at max distance
+const EDGE_SCROLL_ACCELERATION = 0.3; // Speed multiplier per pixel of distance
+const EDGE_SCROLL_ZONE = 30; // Pixels from edge to trigger scroll (for when mouse is inside viewport)
+const EDGE_ZONE_MULTIPLIER = 2.5; // Scale zone distance to match outside-edge feel
+const PLAYHEAD_CLEARANCE = 15; // Pixels to reserve at end so playhead isn't clipped
+
 export interface TimelineMarkersProps {
   duration: number; // Total timeline duration in seconds
   width?: number; // Explicit width in pixels (optional)
@@ -208,16 +215,28 @@ export const TimelineMarkers = memo(function TimelineMarkers({ duration, width }
   const pixelsToFrameRef = useRef(pixelsToFrame);
   const setCurrentFrameRef = useRef(setCurrentFrame);
   const pauseRef = useRef(pause);
+  const fpsRef = useRef(fps);
+  const durationRef = useRef(duration);
+  const widthRef = useRef(width);
 
   useEffect(() => {
     pixelsToFrameRef.current = pixelsToFrame;
     setCurrentFrameRef.current = setCurrentFrame;
     pauseRef.current = pause;
-  }, [pixelsToFrame, setCurrentFrame, pause]);
+    fpsRef.current = fps;
+    widthRef.current = width;
+    durationRef.current = duration;
+  }, [pixelsToFrame, setCurrentFrame, pause, fps, duration, width]);
 
   // Track viewport and scroll
   const scrollLeftRef = useRef(0);
   const rafIdRef = useRef<number | null>(null);
+
+  // Edge-scrolling refs
+  const edgeScrollIdRef = useRef<number | null>(null);
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const edgeScrollDirectionRef = useRef<'left' | 'right' | null>(null);
+  const edgeScrollDistanceRef = useRef<number>(0);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -330,6 +349,56 @@ export const TimelineMarkers = memo(function TimelineMarkers({ duration, width }
     };
   }, []);
 
+  // Stop edge scrolling
+  const stopEdgeScroll = useCallback(() => {
+    if (edgeScrollIdRef.current !== null) {
+      cancelAnimationFrame(edgeScrollIdRef.current);
+      edgeScrollIdRef.current = null;
+    }
+    edgeScrollDirectionRef.current = null;
+    edgeScrollDistanceRef.current = 0;
+  }, []);
+
+  // Edge scroll loop - continuously scrolls while at edge
+  const runEdgeScroll = useCallback(() => {
+    const scrollContainer = scrollContainerRef.current;
+    const direction = edgeScrollDirectionRef.current;
+    const distance = edgeScrollDistanceRef.current;
+
+    if (!scrollContainer || !direction || distance <= 0) {
+      stopEdgeScroll();
+      return;
+    }
+
+    // Calculate speed based on distance past edge (clamped)
+    const speed = Math.min(distance * EDGE_SCROLL_ACCELERATION, EDGE_SCROLL_MAX_SPEED);
+    const delta = direction === 'left' ? -speed : speed;
+
+    // Apply scroll
+    const prevScrollLeft = scrollContainer.scrollLeft;
+    scrollContainer.scrollLeft += delta;
+
+    // Check if we actually scrolled (not at boundary)
+    const didScroll = scrollContainer.scrollLeft !== prevScrollLeft;
+
+    if (didScroll) {
+      // Playhead anchors at visible edge: left edge = scrollLeft, right edge = scrollLeft + viewportWidth
+      const edgeX = direction === 'left'
+        ? scrollContainer.scrollLeft
+        : scrollContainer.scrollLeft + scrollContainer.clientWidth;
+      // Clamp to timeline width minus clearance
+      const maxFrame = Math.round(pixelsToFrameRef.current(Math.max(0, (widthRef.current ?? 0) - PLAYHEAD_CLEARANCE)));
+      const frame = Math.min(maxFrame, Math.max(0, Math.round(pixelsToFrameRef.current(edgeX))));
+      setCurrentFrameRef.current(frame);
+
+      // Continue scrolling
+      edgeScrollIdRef.current = requestAnimationFrame(runEdgeScroll);
+    } else {
+      // Hit scroll boundary - stop the loop
+      stopEdgeScroll();
+    }
+  }, [stopEdgeScroll]);
+
   // Scrubbing handlers
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -339,11 +408,16 @@ export const TimelineMarkers = memo(function TimelineMarkers({ duration, width }
     // Clear marker selection when clicking on ruler
     selectMarker(null);
 
+    // Cache scroll container for edge-scrolling
+    scrollContainerRef.current = containerRef.current.closest('.timeline-container') as HTMLDivElement | null;
+
     const rect = containerRef.current.getBoundingClientRect();
     const x = e.clientX - rect.left;
 
     pauseRef.current();
-    const frame = Math.max(0, pixelsToFrameRef.current(x));
+    // Clamp to timeline width minus playhead clearance (prevents playhead from being cut off at edge)
+    const maxFrame = Math.round(pixelsToFrameRef.current(Math.max(0, (widthRef.current ?? 0) - PLAYHEAD_CLEARANCE)));
+    const frame = Math.min(maxFrame, Math.max(0, Math.round(pixelsToFrameRef.current(x))));
     setCurrentFrameRef.current(frame);
     setIsDragging(true);
   }, [selectMarker]);
@@ -354,11 +428,87 @@ export const TimelineMarkers = memo(function TimelineMarkers({ duration, width }
     const originalCursor = document.body.style.cursor;
     document.body.style.cursor = 'grabbing';
 
+    const scrollContainer = scrollContainerRef.current;
+
     const handleMouseMove = (e: MouseEvent) => {
       if (!containerRef.current) return;
+
+      const mouseX = e.clientX;
+
+      // Check for edge scrolling
+      if (scrollContainer) {
+        const viewportRect = scrollContainer.getBoundingClientRect();
+
+        // Left edge: scroll container's left (after track headers)
+        const leftEdge = viewportRect.left;
+        // Right edge: scroll container's right edge
+        const rightEdge = viewportRect.right;
+
+        // Calculate distance past edges OR into edge zone
+        // Past edge = positive distance outside viewport
+        // In zone = positive distance into the zone from inside viewport
+        const distancePastLeft = leftEdge - mouseX;
+        const distanceIntoLeftZone = EDGE_SCROLL_ZONE - (mouseX - leftEdge);
+        const distancePastRight = mouseX - rightEdge;
+        const distanceIntoRightZone = EDGE_SCROLL_ZONE - (rightEdge - mouseX);
+
+        // Check scroll boundaries to avoid sticky behavior when already at edge
+        const canScrollLeft = scrollContainer.scrollLeft > 0;
+        const canScrollRight = scrollContainer.scrollLeft + scrollContainer.clientWidth < scrollContainer.scrollWidth;
+
+        // Trigger left edge scroll if past edge OR in left zone
+        if (distancePastLeft > 0 || distanceIntoLeftZone > 0) {
+          // Scale zone distance to feel consistent with outside-edge dragging
+          const scaledZoneDistance = distanceIntoLeftZone * EDGE_ZONE_MULTIPLIER;
+          const effectiveDistance = Math.max(distancePastLeft, scaledZoneDistance);
+          if (canScrollLeft) {
+            edgeScrollDirectionRef.current = 'left';
+            edgeScrollDistanceRef.current = effectiveDistance;
+            if (edgeScrollIdRef.current === null) {
+              edgeScrollIdRef.current = requestAnimationFrame(runEdgeScroll);
+            }
+            return; // Edge scroll loop handles playhead position
+          } else {
+            // Already at left boundary - just clamp to frame 0
+            stopEdgeScroll();
+            setCurrentFrameRef.current(0);
+            return;
+          }
+        }
+
+        // Trigger right edge scroll if past edge OR in right zone
+        if (distancePastRight > 0 || distanceIntoRightZone > 0) {
+          // Scale zone distance to feel consistent with outside-edge dragging
+          const scaledZoneDistance = distanceIntoRightZone * EDGE_ZONE_MULTIPLIER;
+          const effectiveDistance = Math.max(distancePastRight, scaledZoneDistance);
+          if (canScrollRight) {
+            edgeScrollDirectionRef.current = 'right';
+            edgeScrollDistanceRef.current = effectiveDistance;
+            if (edgeScrollIdRef.current === null) {
+              edgeScrollIdRef.current = requestAnimationFrame(runEdgeScroll);
+            }
+            return; // Edge scroll loop handles playhead position
+          } else {
+            // Already at right boundary - position at rightmost point (clamped to timeline width minus clearance)
+            stopEdgeScroll();
+            const rightEdgeX = scrollContainer.scrollLeft + scrollContainer.clientWidth;
+            const maxFrame = Math.round(pixelsToFrameRef.current(Math.max(0, (widthRef.current ?? 0) - PLAYHEAD_CLEARANCE)));
+            const frame = Math.min(maxFrame, Math.max(0, Math.round(pixelsToFrameRef.current(rightEdgeX))));
+            setCurrentFrameRef.current(frame);
+            return;
+          }
+        }
+
+        // Mouse is inside viewport (not in edge zones) - stop any edge scrolling
+        stopEdgeScroll();
+      }
+
+      // Normal scrubbing - update playhead based on mouse position
+      // Clamp to timeline width minus clearance (prevents playhead from being cut off)
       const rect = containerRef.current.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const frame = Math.max(0, pixelsToFrameRef.current(x));
+      const x = mouseX - rect.left;
+      const maxFrame = Math.round(pixelsToFrameRef.current(Math.max(0, (widthRef.current ?? 0) - PLAYHEAD_CLEARANCE)));
+      const frame = Math.min(maxFrame, Math.max(0, Math.round(pixelsToFrameRef.current(x))));
       setCurrentFrameRef.current(frame);
     };
 
@@ -371,8 +521,9 @@ export const TimelineMarkers = memo(function TimelineMarkers({ duration, width }
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
       document.body.style.cursor = originalCursor;
+      stopEdgeScroll();
     };
-  }, [isDragging]);
+  }, [isDragging, runEdgeScroll, stopEdgeScroll]);
 
   return (
     <div

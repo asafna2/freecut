@@ -60,11 +60,15 @@ export function NumberInput({
   const clamp = useCallback(
     (v: number) => {
       let result = v;
+      // Round to nearest step if step is an integer (e.g., 1 for pixel values)
+      if (Number.isInteger(step)) {
+        result = Math.round(result);
+      }
       if (min !== undefined) result = Math.max(min, result);
       if (max !== undefined) result = Math.min(max, result);
       return result;
     },
-    [min, max]
+    [min, max, step]
   );
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {

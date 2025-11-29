@@ -104,6 +104,9 @@ export function TimelineContent({ duration, scrollRef, onZoomHandlersReady }: Ti
   const zoomLevelRef = useRef(zoomLevel);
   zoomLevelRef.current = zoomLevel;
 
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
+
 
   // Momentum scrolling state
   const velocityXRef = useRef(0);
@@ -325,27 +328,24 @@ export function TimelineContent({ duration, scrollRef, onZoomHandlersReady }: Ti
 
   // Calculate the actual timeline duration and width based on content
   const { actualDuration, timelineWidth } = useMemo(() => {
-    // Find the furthest item end position
+    // Find the furthest item end position (actual content end)
     const furthestItemEnd = items.reduce((max, item) => {
       const itemEnd = (item.from + item.durationInFrames) / fps; // Convert to seconds
       return Math.max(max, itemEnd);
-    }, duration); // Use duration as minimum
+    }, 0);
 
-    // Calculate how much duration the viewport represents
-    // Use measured containerWidth or fallback to 1920px (typical desktop width)
+    // Use actual content end, with minimum of 10 seconds for empty timelines
+    const contentDuration = Math.max(furthestItemEnd, 10);
+
+    // Calculate width: content width + minimal buffer for scrollbar
     const effectiveContainerWidth = containerWidth > 0 ? containerWidth : 1920;
-    const viewportDuration = pixelsToTime(effectiveContainerWidth);
+    const contentWidth = timeToPixels(contentDuration);
 
-    // Add generous padding: at least viewport width + 20 seconds buffer
-    // This ensures when scrolled to the end, there's still content visible
-    const padding = viewportDuration + 20;
-    const totalDuration = Math.max(duration, furthestItemEnd + padding);
+    // Ensure at least viewport width, plus small buffer for edge cases
+    const width = Math.max(contentWidth, effectiveContainerWidth) + 50;
 
-    // Convert to pixels and add extra 200px buffer for scrollbar and edge cases
-    const width = Math.max(timeToPixels(totalDuration), effectiveContainerWidth) + 200;
-
-    return { actualDuration: totalDuration, timelineWidth: width };
-  }, [items, duration, fps, timeToPixels, pixelsToTime, containerWidth]);
+    return { actualDuration: contentDuration, timelineWidth: width };
+  }, [items, fps, timeToPixels, containerWidth]);
 
   // Render all items - browser handles visibility via CSS content-visibility: auto
   // This prevents flickering during zoom (items stay in DOM, browser skips off-screen rendering)
@@ -372,8 +372,20 @@ export function TimelineContent({ duration, scrollRef, onZoomHandlersReady }: Ti
     // This prevents scroll position from jumping when Ctrl+scrolling at limits
     if (clampedZoom === zoomLevelRef.current) return;
 
-    // Calculate playhead position AFTER zoom (using CLAMPED zoom level)
-    const timeInSeconds = currentFrame / fps;
+    // Calculate what the content duration will be (same logic as useMemo)
+    const contentDuration = Math.max(10, itemsRef.current.reduce((max, item) => {
+      const itemEnd = (item.from + item.durationInFrames) / fps;
+      return Math.max(max, itemEnd);
+    }, 0));
+
+    // If playhead is beyond content, move it back to last valid frame
+    const maxValidFrame = Math.floor(contentDuration * fps);
+    const frameToUse = currentFrame > maxValidFrame
+      ? (usePlaybackStore.getState().setCurrentFrame(maxValidFrame), maxValidFrame)
+      : currentFrame;
+
+    // Calculate playhead position AFTER zoom
+    const timeInSeconds = frameToUse / fps;
     const pixelsPerSecondAfter = 100 * clampedZoom;
     const playheadPixelsAfter = timeInSeconds * pixelsPerSecondAfter;
 
