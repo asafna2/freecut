@@ -144,15 +144,17 @@ export const useProjectStore = create<ProjectState & ProjectActions>()(
           set({ isLoading: true, error: null });
 
           const previousProjects = get().projects;
+          const currentProject = get().currentProject;
           const projectIndex = previousProjects.findIndex((p) => p.id === id);
 
-          if (projectIndex === -1) {
-            set({ error: `Project not found: ${id}`, isLoading: false });
-            throw new Error(`Project not found: ${id}`);
+          // Find the existing project - either in projects array or currentProject
+          let existingProject: Project | null = null;
+          if (projectIndex !== -1) {
+            existingProject = previousProjects[projectIndex] ?? null;
+          } else if (currentProject?.id === id) {
+            existingProject = currentProject;
           }
 
-          // Optimistic update
-          const existingProject = previousProjects[projectIndex];
           if (!existingProject) {
             set({ error: `Project not found: ${id}`, isLoading: false });
             throw new Error(`Project not found: ${id}`);
@@ -166,18 +168,27 @@ export const useProjectStore = create<ProjectState & ProjectActions>()(
               width: data.width ?? existingProject.metadata.width,
               height: data.height ?? existingProject.metadata.height,
               fps: data.fps ?? existingProject.metadata.fps,
+              backgroundColor: data.backgroundColor ?? existingProject.metadata.backgroundColor,
             },
-            updatedAt: new Date().toISOString(),
+            updatedAt: Date.now(),
           };
 
-          const optimisticProjects = [...previousProjects];
-          optimisticProjects[projectIndex] = updatedProject;
-          set({ projects: optimisticProjects });
+          // Optimistic update - update projects array if project is there
+          if (projectIndex !== -1) {
+            const optimisticProjects = [...previousProjects];
+            optimisticProjects[projectIndex] = updatedProject;
+            set({ projects: optimisticProjects });
+          }
+
+          // Always update currentProject if it matches
+          if (currentProject?.id === id) {
+            set({ currentProject: updatedProject });
+          }
 
           try {
             const updated = await updateProjectDB(id, updatedProject);
 
-            // Update current project if it's the one being edited
+            // Update current project with DB result
             if (get().currentProject?.id === id) {
               set({ currentProject: updated });
             }
@@ -186,7 +197,12 @@ export const useProjectStore = create<ProjectState & ProjectActions>()(
             return updated;
           } catch (error) {
             // Rollback on error
-            set({ projects: previousProjects });
+            if (projectIndex !== -1) {
+              set({ projects: previousProjects });
+            }
+            if (currentProject?.id === id) {
+              set({ currentProject: currentProject });
+            }
 
             const errorMessage =
               error instanceof Error ? error.message : 'Failed to update project';

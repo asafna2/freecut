@@ -38,6 +38,11 @@ export const projectFormSchema = z.object({
     .refine((fps) => [24, 25, 30, 50, 60, 120, 240].includes(fps), {
       message: 'FPS should be a common frame rate (24, 25, 30, 50, 60, 120, 240)',
     }),
+
+  backgroundColor: z
+    .string()
+    .regex(/^#[0-9A-Fa-f]{6}$/, 'Must be a valid hex color (e.g., #000000)')
+    .optional(),
 });
 
 /**

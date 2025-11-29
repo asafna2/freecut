@@ -37,6 +37,8 @@ interface GizmoStoreState {
   propertiesPreview: Record<string, Partial<Transform>> | null;
   /** Properties panel preview for item properties like fades (itemId -> partial properties) */
   itemPropertiesPreview: Record<string, ItemPropertiesPreview> | null;
+  /** Canvas background color preview (during color picker drag) */
+  canvasBackgroundPreview: string | null;
 }
 
 interface GizmoStoreActions {
@@ -91,6 +93,12 @@ interface GizmoStoreActions {
 
   /** Clear item properties preview */
   clearItemPropertiesPreview: () => void;
+
+  /** Set canvas background color preview */
+  setCanvasBackgroundPreview: (color: string) => void;
+
+  /** Clear canvas background color preview */
+  clearCanvasBackgroundPreview: () => void;
 }
 
 export const useGizmoStore = create<GizmoStoreState & GizmoStoreActions>(
@@ -103,6 +111,7 @@ export const useGizmoStore = create<GizmoStoreState & GizmoStoreActions>(
     snappingEnabled: true,
     propertiesPreview: null,
     itemPropertiesPreview: null,
+    canvasBackgroundPreview: null,
 
     // Actions
     setCanvasSize: (width, height) =>
@@ -211,5 +220,11 @@ export const useGizmoStore = create<GizmoStoreState & GizmoStoreActions>(
 
     clearItemPropertiesPreview: () =>
       set({ itemPropertiesPreview: null }),
+
+    setCanvasBackgroundPreview: (color) =>
+      set({ canvasBackgroundPreview: color }),
+
+    clearCanvasBackgroundPreview: () =>
+      set({ canvasBackgroundPreview: null }),
   })
 );

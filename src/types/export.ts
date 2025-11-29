@@ -15,4 +15,5 @@ export interface RemotionInputProps {
   width?: number;
   height?: number;
   tracks: TimelineTrack[];
+  backgroundColor?: string; // Hex color for canvas background
 }

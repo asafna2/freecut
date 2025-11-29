@@ -15,7 +15,7 @@ import { generateStableKey } from '../utils/generate-stable-key';
  * - Respects track visibility, mute, and solo states
  * - Pre-mounts media items 2 seconds early for smooth transitions
  */
-export const MainComposition: React.FC<RemotionInputProps> = ({ tracks }) => {
+export const MainComposition: React.FC<RemotionInputProps> = ({ tracks, backgroundColor = '#000000' }) => {
   const { fps } = useVideoConfig();
   const currentFrame = useCurrentFrame();
   const hasSoloTracks = tracks.some((track) => track.solo);
@@ -60,8 +60,8 @@ export const MainComposition: React.FC<RemotionInputProps> = ({ tracks }) => {
 
   return (
     <AbsoluteFill>
-      {/* BACKGROUND LAYER - Ensures empty areas show black instead of last frame */}
-      <AbsoluteFill style={{ backgroundColor: '#000000', zIndex: -1 }} />
+      {/* BACKGROUND LAYER - Ensures empty areas show canvas background color */}
+      <AbsoluteFill style={{ backgroundColor, zIndex: -1 }} />
 
       {/* MEDIA LAYER - All video/audio at composition level (prevents cross-track remounts) */}
       {/* z-index: 0-999 range for media items */}
@@ -81,10 +81,10 @@ export const MainComposition: React.FC<RemotionInputProps> = ({ tracks }) => {
         );
       })}
 
-      {/* CLEARING LAYER - Paints black over stale video frames when no videos are active */}
+      {/* CLEARING LAYER - Paints background color over stale video frames when no videos are active */}
       {/* z-index: 1000 - above media (0-999), below non-media (1001+) */}
       {!hasActiveVideo && (
-        <AbsoluteFill style={{ backgroundColor: '#000000', zIndex: 1000 }} />
+        <AbsoluteFill style={{ backgroundColor, zIndex: 1000 }} />
       )}
 
       {/* NON-MEDIA LAYERS - Track-based rendering for text/shapes/images */}

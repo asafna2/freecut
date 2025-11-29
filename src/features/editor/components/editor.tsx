@@ -16,6 +16,7 @@ import { useTimelineStore } from '@/features/timeline/stores/timeline-store';
 import { usePlaybackStore } from '@/features/preview/stores/playback-store';
 import { useZoomStore } from '@/features/timeline/stores/zoom-store';
 import { useMediaLibraryStore } from '@/features/media-library/stores/media-library-store';
+import { useProjectStore } from '@/features/projects/stores/project-store';
 import { DEFAULT_TRACK_HEIGHT } from '@/constants/timeline';
 import type { ProjectTimeline } from '@/types/project';
 
@@ -51,10 +52,26 @@ export function Editor({ projectId, project }: EditorProps) {
   useEffect(() => {
     const { setCurrentFrame } = usePlaybackStore.getState();
     const { setZoomLevel } = useZoomStore.getState();
-    const { setCurrentProject } = useMediaLibraryStore.getState();
+    const { setCurrentProject: setMediaProject } = useMediaLibraryStore.getState();
+    const { setCurrentProject } = useProjectStore.getState();
 
     // Set current project context for media library (v3: project-scoped media)
-    setCurrentProject(projectId);
+    setMediaProject(projectId);
+
+    // Set current project in project store for properties panel
+    setCurrentProject({
+      id: project.id,
+      name: project.name,
+      description: '',
+      duration: 0,
+      metadata: {
+        width: project.width,
+        height: project.height,
+        fps: project.fps,
+      },
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
 
     if (project.timeline) {
       // Load timeline from project data (router already loaded it)
@@ -119,10 +136,11 @@ export function Editor({ projectId, project }: EditorProps) {
     // Cleanup: clear project context and stop playback when leaving editor
     return () => {
       useMediaLibraryStore.getState().setCurrentProject(null);
+      useProjectStore.getState().setCurrentProject(null);
       usePlaybackStore.getState().pause();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, project.timeline]); // Re-initialize when projectId or timeline data changes
+  }, [projectId, project]); // Re-initialize when projectId or project data changes
 
   // Track unsaved changes
   const isDirty = useTimelineStore((s) => s.isDirty);

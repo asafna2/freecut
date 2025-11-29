@@ -85,6 +85,7 @@ export interface ProjectResolution {
   width: number;
   height: number;
   fps: number;
+  backgroundColor?: string; // Hex color, defaults to #000000
 }
 
 export interface ProjectFormData {
