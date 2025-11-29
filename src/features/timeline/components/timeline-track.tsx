@@ -72,10 +72,10 @@ export const TimelineTrack = memo(function TimelineTrack({ track, items }: Timel
   const [menuKey, setMenuKey] = useState(0);
   const trackRef = useRef<HTMLDivElement>(null);
 
-  // Store selectors
+  // Store selectors - avoid subscribing to items array to prevent re-renders
+  // Read items from store directly in callbacks when needed for collision detection
   const addItem = useTimelineStore((s) => s.addItem);
   const fps = useTimelineStore((s) => s.fps);
-  const allItems = useTimelineStore((s) => s.items);
   const closeGapAtPosition = useTimelineStore((s) => s.closeGapAtPosition);
   const getMedia = useMediaLibraryStore((s) => s.mediaItems);
   const currentProject = useProjectStore((s) => s.currentProject);
@@ -191,8 +191,9 @@ export const TimelineTrack = memo(function TimelineTrack({ track, items }: Timel
             const durationInFrames = Math.round(item.duration * fps);
             const itemDuration = durationInFrames > 0 ? durationInFrames : (item.mediaType === 'image' ? fps * 3 : fps);
 
-            // Find collision-free position - cast temp items to satisfy TypeScript
-            const itemsToCheck = [...allItems, ...tempItems as unknown as TimelineItemType[]];
+            // Find collision-free position - read items from store directly to avoid subscription
+            const storeItems = useTimelineStore.getState().items;
+            const itemsToCheck = [...storeItems, ...tempItems as unknown as TimelineItemType[]];
             const finalPosition = findNearestAvailableSpace(currentPosition, itemDuration, track.id, itemsToCheck);
 
             if (finalPosition !== null) {
@@ -213,7 +214,9 @@ export const TimelineTrack = memo(function TimelineTrack({ track, items }: Timel
             const durationInFrames = Math.round(media.duration * fps);
             const itemDuration = durationInFrames > 0 ? durationInFrames : (data.mediaType === 'image' ? fps * 3 : fps);
             const proposedPosition = Math.max(0, dropFrame);
-            const finalPosition = findNearestAvailableSpace(proposedPosition, itemDuration, track.id, allItems);
+            // Read items from store directly to avoid subscription
+            const storeItems = useTimelineStore.getState().items;
+            const finalPosition = findNearestAvailableSpace(proposedPosition, itemDuration, track.id, storeItems);
 
             if (finalPosition !== null) {
               previews.push({
@@ -296,7 +299,9 @@ export const TimelineTrack = memo(function TimelineTrack({ track, items }: Timel
           const itemDuration = durationInFrames > 0 ? durationInFrames : (mediaType === 'image' ? fps * 3 : fps);
 
           // Find nearest available space considering both existing items and items we're adding
-          const itemsToCheck = [...allItems, ...addedItems];
+          // Read items from store directly to avoid subscription
+          const storeItems = useTimelineStore.getState().items;
+          const itemsToCheck = [...storeItems, ...addedItems];
           const finalPosition = findNearestAvailableSpace(
             currentPosition,
             itemDuration,
@@ -406,11 +411,13 @@ export const TimelineTrack = memo(function TimelineTrack({ track, items }: Timel
       const proposedPosition = Math.max(0, dropFrame);
 
       // Find nearest available space (snaps forward if collision)
+      // Read items from store directly to avoid subscription
+      const storeItems = useTimelineStore.getState().items;
       const finalPosition = findNearestAvailableSpace(
         proposedPosition,
         itemDuration,
         track.id,
-        allItems
+        storeItems
       );
 
       // If no available space found, cancel the drop

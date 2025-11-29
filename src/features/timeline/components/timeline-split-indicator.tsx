@@ -24,10 +24,13 @@ const SNAP_THRESHOLD_PX = 10;
 export function TimelineSplitIndicator({ cursorX, hoveredElement, tracksContainerRef }: TimelineSplitIndicatorProps) {
   const { pixelsToFrame, frameToPixels } = useTimelineZoom();
   const fps = useTimelineStore((s) => s.fps);
-  const currentFrame = usePlaybackStore((s) => s.currentFrame);
-  const isPlaying = usePlaybackStore((s) => s.isPlaying);
+  // Don't subscribe to currentFrame - read from store only when needed for snap calculation
+  // This prevents re-renders during playback
 
   if (cursorX === null || !hoveredElement || !tracksContainerRef.current) return null;
+
+  // Read playback state directly from store (no subscription = no re-renders during playback)
+  const { currentFrame, isPlaying } = usePlaybackStore.getState();
 
   // Get playhead position in pixels
   const playheadX = frameToPixels(currentFrame);

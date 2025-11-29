@@ -60,8 +60,37 @@ export function GizmoOverlay({
   // Ref to track if we just finished a drag (to prevent background click from deselecting)
   const justFinishedDragRef = useRef(false);
 
-  // Playback state - get current frame to determine visible items
-  const currentFrame = usePlaybackStore((s) => s.currentFrame);
+  // Playback state - only subscribe to isPlaying to avoid re-renders during playback
+  // Read currentFrame directly from store when needed (not during playback)
+  const isPlaying = usePlaybackStore((s) => s.isPlaying);
+
+  // Track the "frozen" frame when playback starts - gizmos stay at this frame during playback
+  // This prevents re-renders during playback while maintaining accuracy when paused
+  const frozenFrameRef = useRef<number>(usePlaybackStore.getState().currentFrame);
+
+  // Update frozen frame when playback stops or when paused and frame changes
+  useEffect(() => {
+    if (!isPlaying) {
+      // When paused, sync to current frame
+      frozenFrameRef.current = usePlaybackStore.getState().currentFrame;
+    }
+  }, [isPlaying]);
+
+  // Subscribe to frame changes only when paused (for seeking/scrubbing)
+  useEffect(() => {
+    if (isPlaying) return; // Don't subscribe during playback
+
+    return usePlaybackStore.subscribe((state, prevState) => {
+      if (state.currentFrame !== prevState.currentFrame) {
+        frozenFrameRef.current = state.currentFrame;
+        // Force re-render to update visible items
+        setForceUpdate((n) => n + 1);
+      }
+    });
+  }, [isPlaying]);
+
+  // Force update state to trigger re-render when frame changes while paused
+  const [, setForceUpdate] = useState(0);
 
   // Gizmo store
   const setCanvasSize = useGizmoStore((s) => s.setCanvasSize);
@@ -78,7 +107,11 @@ export function GizmoOverlay({
 
   // Get visual items visible at current frame (excluding audio, hidden tracks, and locked tracks)
   // Sorted by track order: items on top tracks (lower order) come LAST for proper stacking/click priority
+  // Uses frozenFrameRef to avoid re-renders during playback - only updates when paused
   const visibleItems = useMemo(() => {
+    // Read the frozen frame (updated via effect when paused)
+    const frame = frozenFrameRef.current;
+
     // Create maps for track properties
     const trackVisible = new Map<string, boolean>();
     const trackLocked = new Map<string, boolean>();
@@ -99,12 +132,13 @@ export function GizmoOverlay({
         if (trackLocked.get(item.trackId)) return false;
         // Check if item is visible at current frame
         const itemEnd = item.from + item.durationInFrames;
-        return currentFrame >= item.from && currentFrame < itemEnd;
+        return frame >= item.from && frame < itemEnd;
       })
       // Sort by track order descending: higher order (bottom tracks) first, lower order (top tracks) last
       // This ensures top track items render last (on top) and get click priority
       .sort((a, b) => (trackOrder.get(b.trackId) ?? 0) - (trackOrder.get(a.trackId) ?? 0));
-  }, [items, tracks, currentFrame]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- frozenFrameRef updates trigger re-render via setForceUpdate
+  }, [items, tracks, isPlaying]);
 
   // Get selected items
   const selectedItems = useMemo(() => {
