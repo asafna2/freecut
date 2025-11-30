@@ -63,16 +63,9 @@ const MarkerColorPicker = memo(function MarkerColorPicker({
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-2 w-full"
-      >
-        <div
-          className="w-6 h-6 rounded border border-border flex-shrink-0"
-          style={{ backgroundColor: localColor }}
-        />
-        <span className="text-xs font-mono text-muted-foreground truncate">
-          {localColor}
-        </span>
-      </button>
+        className="w-6 h-6 rounded border border-border flex-shrink-0"
+        style={{ backgroundColor: localColor }}
+      />
 
       {isOpen && (
         <div className="absolute top-8 left-0 z-50 p-2 bg-popover border border-border rounded-lg shadow-lg">
