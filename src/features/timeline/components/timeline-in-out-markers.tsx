@@ -143,26 +143,69 @@ export function TimelineInOutMarkers() {
             }}
           />
 
-          {/* Flag with 'I' label */}
+          {/* Invisible hit area for vertical line */}
           <div
-            className="absolute flex items-center justify-center pointer-events-auto"
+            className="absolute pointer-events-auto"
             style={{
-              top: '-2px',
-              left: '2px',
-              width: '20px',
-              height: '16px',
-              backgroundColor: 'oklch(0.65 0.18 142)', // Green
-              color: 'white',
-              fontSize: '11px',
-              fontWeight: '600',
+              top: '12px',
+              bottom: '12px',
+              left: '-5px',
+              width: '12px',
               cursor: isDraggingIn ? 'grabbing' : 'grab',
-              borderTopRightRadius: '2px',
-              borderBottomRightRadius: '2px',
-              boxShadow: '0 1px 3px rgba(0, 0, 0, 0.3)',
+            }}
+            onMouseDown={handleInMouseDown}
+          />
+
+          {/* Top bracket handle (L-shape with filled corner) */}
+          <div
+            className="absolute pointer-events-auto"
+            style={{
+              top: 0,
+              left: 0,
+              width: '10px',
+              height: '12px',
+              borderTop: '2px solid oklch(0.65 0.18 142)',
+              borderLeft: '2px solid oklch(0.65 0.18 142)',
+              cursor: isDraggingIn ? 'grabbing' : 'grab',
             }}
             onMouseDown={handleInMouseDown}
           >
-            I
+            {/* Filled corner square */}
+            <div
+              style={{
+                position: 'absolute',
+                top: '-2px',
+                left: '-2px',
+                width: '4px',
+                height: '4px',
+                backgroundColor: 'oklch(0.65 0.18 142)',
+              }}
+            />
+          </div>
+
+          {/* Bottom bracket (mirrored L-shape with filled corner) */}
+          <div
+            className="absolute"
+            style={{
+              bottom: 0,
+              left: 0,
+              width: '10px',
+              height: '12px',
+              borderBottom: '2px solid oklch(0.65 0.18 142)',
+              borderLeft: '2px solid oklch(0.65 0.18 142)',
+            }}
+          >
+            {/* Filled corner square */}
+            <div
+              style={{
+                position: 'absolute',
+                bottom: '-2px',
+                left: '-2px',
+                width: '4px',
+                height: '4px',
+                backgroundColor: 'oklch(0.65 0.18 142)',
+              }}
+            />
           </div>
         </div>
       )}
@@ -189,26 +232,69 @@ export function TimelineInOutMarkers() {
             }}
           />
 
-          {/* Flag with 'O' label */}
+          {/* Invisible hit area for vertical line */}
           <div
-            className="absolute flex items-center justify-center pointer-events-auto"
+            className="absolute pointer-events-auto"
             style={{
-              top: '-2px',
-              right: '2px',
-              width: '20px',
-              height: '16px',
-              backgroundColor: 'oklch(0.61 0.22 29)', // Red
-              color: 'white',
-              fontSize: '11px',
-              fontWeight: '600',
+              top: '12px',
+              bottom: '12px',
+              right: '-5px',
+              width: '12px',
               cursor: isDraggingOut ? 'grabbing' : 'grab',
-              borderTopLeftRadius: '2px',
-              borderBottomLeftRadius: '2px',
-              boxShadow: '0 1px 3px rgba(0, 0, 0, 0.3)',
+            }}
+            onMouseDown={handleOutMouseDown}
+          />
+
+          {/* Top bracket handle (mirrored L-shape with filled corner) */}
+          <div
+            className="absolute pointer-events-auto"
+            style={{
+              top: 0,
+              right: 0,
+              width: '10px',
+              height: '12px',
+              borderTop: '2px solid oklch(0.61 0.22 29)',
+              borderRight: '2px solid oklch(0.61 0.22 29)',
+              cursor: isDraggingOut ? 'grabbing' : 'grab',
             }}
             onMouseDown={handleOutMouseDown}
           >
-            O
+            {/* Filled corner square */}
+            <div
+              style={{
+                position: 'absolute',
+                top: '-2px',
+                right: '-2px',
+                width: '4px',
+                height: '4px',
+                backgroundColor: 'oklch(0.61 0.22 29)',
+              }}
+            />
+          </div>
+
+          {/* Bottom bracket (mirrored L-shape with filled corner) */}
+          <div
+            className="absolute"
+            style={{
+              bottom: 0,
+              right: 0,
+              width: '10px',
+              height: '12px',
+              borderBottom: '2px solid oklch(0.61 0.22 29)',
+              borderRight: '2px solid oklch(0.61 0.22 29)',
+            }}
+          >
+            {/* Filled corner square */}
+            <div
+              style={{
+                position: 'absolute',
+                bottom: '-2px',
+                right: '-2px',
+                width: '4px',
+                height: '4px',
+                backgroundColor: 'oklch(0.61 0.22 29)',
+              }}
+            />
           </div>
         </div>
       )}

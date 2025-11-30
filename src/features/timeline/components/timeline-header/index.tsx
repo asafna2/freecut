@@ -8,8 +8,6 @@ import {
   Magnet,
   Scissors,
   Gauge,
-  CornerRightDown,
-  CornerRightUp,
   X,
   MousePointer2,
   Undo2,
@@ -240,7 +238,7 @@ export function TimelineHeader({ onZoomChange, onZoomIn, onZoomOut }: TimelineHe
             onClick={() => setInPoint(usePlaybackStore.getState().currentFrame)}
             data-tooltip="Set In Point (I)"
           >
-            <CornerRightDown className="w-3.5 h-3.5" style={{ color: 'oklch(0.65 0.18 142)' }} />
+            <span className="text-sm font-bold" style={{ color: 'oklch(0.65 0.18 142)' }}>[</span>
           </Button>
 
           <Button
@@ -250,7 +248,7 @@ export function TimelineHeader({ onZoomChange, onZoomIn, onZoomOut }: TimelineHe
             onClick={() => setOutPoint(usePlaybackStore.getState().currentFrame)}
             data-tooltip="Set Out Point (O)"
           >
-            <CornerRightUp className="w-3.5 h-3.5" style={{ color: 'oklch(0.61 0.22 29)' }} />
+            <span className="text-sm font-bold" style={{ color: 'oklch(0.61 0.22 29)' }}>]</span>
           </Button>
 
           <Button
