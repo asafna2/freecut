@@ -5,6 +5,7 @@ import {
   Film,
   ZoomIn,
   ZoomOut,
+  Maximize2,
   Magnet,
   Scissors,
   Gauge,
@@ -31,6 +32,7 @@ export interface TimelineHeaderProps {
   onZoomChange?: (newZoom: number) => void;
   onZoomIn?: () => void;
   onZoomOut?: () => void;
+  onZoomToFit?: () => void;
 }
 
 /**
@@ -42,7 +44,7 @@ export interface TimelineHeaderProps {
  * - In/Out points, Snap toggle
  * - Zoom controls
  */
-export function TimelineHeader({ onZoomChange, onZoomIn, onZoomOut }: TimelineHeaderProps) {
+export function TimelineHeader({ onZoomChange, onZoomIn, onZoomOut, onZoomToFit }: TimelineHeaderProps) {
   const { zoomLevel, zoomIn, zoomOut, setZoom } = useTimelineZoom();
   const snapEnabled = useTimelineStore((s) => s.snapEnabled);
   const toggleSnap = useTimelineStore((s) => s.toggleSnap);
@@ -366,6 +368,16 @@ export function TimelineHeader({ onZoomChange, onZoomIn, onZoomOut }: TimelineHe
           data-tooltip="Zoom In"
         >
           <ZoomIn className="w-3.5 h-3.5" />
+        </Button>
+
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7"
+          onClick={onZoomToFit}
+          data-tooltip="Zoom to Fit (Z)"
+        >
+          <Maximize2 className="w-3.5 h-3.5" />
         </Button>
 
         <span className="text-xs text-muted-foreground font-mono w-12 text-right">

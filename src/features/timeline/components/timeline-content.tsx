@@ -37,6 +37,7 @@ export interface TimelineContentProps {
     handleZoomChange: (newZoom: number) => void;
     handleZoomIn: () => void;
     handleZoomOut: () => void;
+    handleZoomToFit: () => void;
   }) => void;
 }
 
@@ -437,6 +438,39 @@ export function TimelineContent({ duration, scrollRef, onZoomHandlersReady }: Ti
     applyZoomWithPlayheadCentering(newZoomLevel);
   }, [applyZoomWithPlayheadCentering]);
 
+  // Keep a ref to containerWidth for use in stable callbacks
+  const containerWidthRef = useRef(containerWidth);
+  containerWidthRef.current = containerWidth;
+
+  const handleZoomToFit = useCallback(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    // Use refs for dynamic values to keep callback stable
+    const fps = fpsRef.current;
+    const items = itemsRef.current;
+    const effectiveContainerWidth = containerWidthRef.current > 0 ? containerWidthRef.current : container.clientWidth;
+
+    // Calculate content duration from items (same logic as useMemo above)
+    const contentDuration = Math.max(10, items.reduce((max, item) => {
+      const itemEnd = (item.from + item.durationInFrames) / fps;
+      return Math.max(max, itemEnd);
+    }, 0));
+
+    // Calculate zoom level needed to fit content in viewport
+    // pixelsPerSecond = zoomLevel * 100
+    // contentWidth = contentDuration * pixelsPerSecond = contentDuration * zoomLevel * 100
+    // We want: contentWidth = effectiveContainerWidth (with some padding)
+    // So: zoomLevel = effectiveContainerWidth / (contentDuration * 100)
+    const padding = 50; // Leave some padding on the right
+    const targetWidth = effectiveContainerWidth - padding;
+    const newZoomLevel = Math.max(0.01, Math.min(2, targetWidth / (contentDuration * 100)));
+
+    // Apply zoom and reset scroll to start
+    setZoom(newZoomLevel);
+    container.scrollLeft = 0;
+  }, [setZoom]);
+
   // Expose zoom handlers to parent component (only once on mount)
   useEffect(() => {
     if (onZoomHandlersReady) {
@@ -444,6 +478,7 @@ export function TimelineContent({ duration, scrollRef, onZoomHandlersReady }: Ti
         handleZoomChange,
         handleZoomIn,
         handleZoomOut,
+        handleZoomToFit,
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

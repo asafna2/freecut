@@ -33,6 +33,7 @@ export const HOTKEYS = {
   ZOOM_OUT: 'mod+minus',
   ZOOM_OUT_ALT: 'minus',
   ZOOM_RESET: 'mod+0',
+  ZOOM_TO_FIT: 'z',
 
   // Selection
   SELECT_ALL: 'mod+a',
@@ -100,6 +101,7 @@ export const HOTKEY_DESCRIPTIONS: Record<HotkeyKey, string> = {
   ZOOM_OUT: 'Zoom out',
   ZOOM_OUT_ALT: 'Zoom out (alternative)',
   ZOOM_RESET: 'Reset zoom to 100%',
+  ZOOM_TO_FIT: 'Zoom to fit all content',
 
   // Selection
   SELECT_ALL: 'Select all items',

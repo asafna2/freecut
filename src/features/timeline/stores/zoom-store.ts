@@ -9,6 +9,7 @@ export interface ZoomActions {
   setZoomLevel: (level: number) => void;
   zoomIn: () => void;
   zoomOut: () => void;
+  zoomToFit: (containerWidth: number, contentDurationSeconds: number) => void;
 }
 
 // IMPORTANT: Always use granular selectors to prevent unnecessary re-renders!
@@ -65,4 +66,16 @@ export const useZoomStore = create<ZoomState & ZoomActions>((set) => ({
       const newLevel = Math.max(state.level / 1.2, 0.01);
       return { level: newLevel, pixelsPerSecond: newLevel * 100 };
     }),
+  zoomToFit: (containerWidth, contentDurationSeconds) => {
+    // Calculate zoom level needed to fit content in viewport
+    // pixelsPerSecond = zoomLevel * 100
+    // contentWidth = contentDuration * pixelsPerSecond = contentDuration * zoomLevel * 100
+    // We want: contentWidth = containerWidth (with some padding)
+    // So: zoomLevel = containerWidth / (contentDuration * 100)
+    const padding = 50; // Leave some padding on the right
+    const targetWidth = containerWidth - padding;
+    const duration = Math.max(10, contentDurationSeconds); // Minimum 10 seconds
+    const newLevel = Math.max(0.01, Math.min(2, targetWidth / (duration * 100)));
+    set({ level: newLevel, pixelsPerSecond: newLevel * 100 });
+  },
 }));

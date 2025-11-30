@@ -53,6 +53,7 @@ export function Timeline({ duration }: TimelineProps) {
     handleZoomChange: (newZoom: number) => void;
     handleZoomIn: () => void;
     handleZoomOut: () => void;
+    handleZoomToFit: () => void;
   } | null>(null);
 
   // State for drop indicator (updated via RAF from drag hook)
@@ -241,6 +242,7 @@ export function Timeline({ duration }: TimelineProps) {
         onZoomChange={zoomHandlers?.handleZoomChange}
         onZoomIn={zoomHandlers?.handleZoomIn}
         onZoomOut={zoomHandlers?.handleZoomOut}
+        onZoomToFit={zoomHandlers?.handleZoomToFit}
       />
 
       {/* Timeline Content */}

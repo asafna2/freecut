@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { useHotkeys } from 'react-hotkeys-hook';
 import { usePlaybackStore } from '@/features/preview/stores/playback-store';
 import { useTimelineStore } from '../stores/timeline-store';
+import { useZoomStore } from '../stores/zoom-store';
 import { useSelectionStore } from '@/features/editor/stores/selection-store';
 import { HOTKEYS, HOTKEY_OPTIONS } from '@/config/hotkeys';
 import { canJoinMultipleItems } from '@/utils/clip-utils';
@@ -13,6 +14,7 @@ export interface TimelineShortcutCallbacks {
   onDelete?: () => void;
   onUndo?: () => void;
   onRedo?: () => void;
+  onZoomToFit?: () => void;
 }
 
 /**
@@ -365,6 +367,39 @@ export function useTimelineShortcuts(callbacks: TimelineShortcutCallbacks = {}) 
     },
     HOTKEY_OPTIONS,
     [toggleSnap]
+  );
+
+  // Zoom: Z - Zoom to Fit
+  useHotkeys(
+    HOTKEYS.ZOOM_TO_FIT,
+    (event) => {
+      event.preventDefault();
+      // Try the callback first (provides playhead centering via TimelineContent)
+      if (callbacks.onZoomToFit) {
+        callbacks.onZoomToFit();
+        return;
+      }
+      // Fallback: calculate and apply zoom directly
+      const container = document.querySelector('.timeline-container');
+      if (!container) return;
+
+      const fps = useTimelineStore.getState().fps;
+      const items = useTimelineStore.getState().items;
+      const containerWidth = container.clientWidth;
+
+      // Calculate content duration from items
+      const contentDuration = Math.max(10, items.reduce((max, item) => {
+        const itemEnd = (item.from + item.durationInFrames) / fps;
+        return Math.max(max, itemEnd);
+      }, 0));
+
+      useZoomStore.getState().zoomToFit(containerWidth, contentDuration);
+
+      // Reset scroll to start
+      (container as HTMLElement).scrollLeft = 0;
+    },
+    HOTKEY_OPTIONS,
+    [callbacks]
   );
 
   // Markers: M - Add marker at playhead
