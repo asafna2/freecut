@@ -7,6 +7,11 @@ import {
   Layers,
   Type,
   Shapes,
+  Square,
+  Circle,
+  Triangle,
+  Star,
+  Hexagon,
 } from 'lucide-react';
 import { useEditorStore } from '../stores/editor-store';
 import { useTimelineStore } from '@/features/timeline/stores/timeline-store';
@@ -15,7 +20,7 @@ import { useSelectionStore } from '../stores/selection-store';
 import { useProjectStore } from '@/features/projects/stores/project-store';
 import { MediaLibrary } from '@/features/media-library/components/media-library';
 import { findNearestAvailableSpace } from '@/features/timeline/utils/collision-utils';
-import type { TextItem } from '@/types/timeline';
+import type { TextItem, ShapeItem, ShapeType } from '@/types/timeline';
 
 export function MediaSidebar() {
   // Use granular selectors - Zustand v5 best practice
@@ -100,6 +105,75 @@ export function MediaSidebar() {
     selectItems([textItem.id]);
   }, [tracks, items, fps, currentProject, addItem, selectItems, activeTrackId]);
 
+  // Add shape item to timeline at the best available position
+  const handleAddShape = useCallback((shapeType: ShapeType) => {
+    // Use active track if available and not locked, otherwise find first available
+    let targetTrack = activeTrackId
+      ? tracks.find((t) => t.id === activeTrackId && t.visible !== false && !t.locked)
+      : null;
+
+    // Fallback to first available visible/unlocked track
+    if (!targetTrack) {
+      targetTrack = tracks.find((t) => t.visible !== false && !t.locked);
+    }
+
+    if (!targetTrack) {
+      console.warn('No available track for shape item');
+      return;
+    }
+
+    // Default duration: 5 seconds
+    const durationInFrames = fps * 5;
+
+    // Find the best position: start at playhead, find nearest available space
+    const proposedPosition = usePlaybackStore.getState().currentFrame;
+    const finalPosition = findNearestAvailableSpace(
+      proposedPosition,
+      durationInFrames,
+      targetTrack.id,
+      items
+    ) ?? proposedPosition;
+
+    // Get canvas dimensions for initial transform
+    const canvasWidth = currentProject?.metadata.width ?? 1920;
+    const canvasHeight = currentProject?.metadata.height ?? 1080;
+
+    // Shape size: 25% of canvas, centered
+    const shapeSize = Math.min(canvasWidth, canvasHeight) * 0.25;
+
+    // Create a new shape item with defaults based on shape type
+    const shapeItem: ShapeItem = {
+      id: crypto.randomUUID(),
+      type: 'shape',
+      trackId: targetTrack.id,
+      from: finalPosition,
+      durationInFrames,
+      label: shapeType.charAt(0).toUpperCase() + shapeType.slice(1),
+      shapeType,
+      fillColor: '#3b82f6', // Blue
+      strokeColor: undefined,
+      strokeWidth: 0,
+      cornerRadius: shapeType === 'rectangle' ? 0 : undefined,
+      direction: shapeType === 'triangle' ? 'up' : undefined,
+      points: shapeType === 'star' ? 5 : shapeType === 'polygon' ? 6 : undefined,
+      innerRadius: shapeType === 'star' ? 0.5 : undefined,
+      // Center the shape on canvas with locked aspect ratio
+      transform: {
+        x: 0,
+        y: 0,
+        width: shapeSize,
+        height: shapeSize,
+        rotation: 0,
+        opacity: 1,
+        aspectRatioLocked: true,
+      },
+    };
+
+    addItem(shapeItem);
+    // Select the new item
+    selectItems([shapeItem.id]);
+  }, [tracks, items, fps, currentProject, addItem, selectItems, activeTrackId]);
+
   return (
     <>
       {/* Left Sidebar */}
@@ -178,13 +252,83 @@ export function MediaSidebar() {
                 </div>
               </div>
 
-              {/* Shapes Section - Placeholder */}
+              {/* Shapes Section */}
               <div>
                 <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
                   Shapes
                 </h3>
-                <div className="text-center py-6 text-muted-foreground text-xs">
-                  Coming soon
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    onClick={() => handleAddShape('rectangle')}
+                    className="flex flex-col items-center justify-center gap-1.5 p-3 rounded-lg border border-border bg-secondary/30 hover:bg-secondary/50 hover:border-primary/50 transition-colors group"
+                  >
+                    <div className="w-8 h-8 rounded-md bg-timeline-shape/20 border border-timeline-shape/50 flex items-center justify-center group-hover:bg-timeline-shape/30">
+                      <Square className="w-4 h-4 text-timeline-shape" />
+                    </div>
+                    <span className="text-[10px] text-muted-foreground group-hover:text-foreground">
+                      Rectangle
+                    </span>
+                  </button>
+
+                  <button
+                    onClick={() => handleAddShape('circle')}
+                    className="flex flex-col items-center justify-center gap-1.5 p-3 rounded-lg border border-border bg-secondary/30 hover:bg-secondary/50 hover:border-primary/50 transition-colors group"
+                  >
+                    <div className="w-8 h-8 rounded-md bg-timeline-shape/20 border border-timeline-shape/50 flex items-center justify-center group-hover:bg-timeline-shape/30">
+                      <Circle className="w-4 h-4 text-timeline-shape" />
+                    </div>
+                    <span className="text-[10px] text-muted-foreground group-hover:text-foreground">
+                      Circle
+                    </span>
+                  </button>
+
+                  <button
+                    onClick={() => handleAddShape('triangle')}
+                    className="flex flex-col items-center justify-center gap-1.5 p-3 rounded-lg border border-border bg-secondary/30 hover:bg-secondary/50 hover:border-primary/50 transition-colors group"
+                  >
+                    <div className="w-8 h-8 rounded-md bg-timeline-shape/20 border border-timeline-shape/50 flex items-center justify-center group-hover:bg-timeline-shape/30">
+                      <Triangle className="w-4 h-4 text-timeline-shape" />
+                    </div>
+                    <span className="text-[10px] text-muted-foreground group-hover:text-foreground">
+                      Triangle
+                    </span>
+                  </button>
+
+                  <button
+                    onClick={() => handleAddShape('ellipse')}
+                    className="flex flex-col items-center justify-center gap-1.5 p-3 rounded-lg border border-border bg-secondary/30 hover:bg-secondary/50 hover:border-primary/50 transition-colors group"
+                  >
+                    <div className="w-8 h-8 rounded-md bg-timeline-shape/20 border border-timeline-shape/50 flex items-center justify-center group-hover:bg-timeline-shape/30">
+                      <Circle className="w-4 h-3 text-timeline-shape" />
+                    </div>
+                    <span className="text-[10px] text-muted-foreground group-hover:text-foreground">
+                      Ellipse
+                    </span>
+                  </button>
+
+                  <button
+                    onClick={() => handleAddShape('star')}
+                    className="flex flex-col items-center justify-center gap-1.5 p-3 rounded-lg border border-border bg-secondary/30 hover:bg-secondary/50 hover:border-primary/50 transition-colors group"
+                  >
+                    <div className="w-8 h-8 rounded-md bg-timeline-shape/20 border border-timeline-shape/50 flex items-center justify-center group-hover:bg-timeline-shape/30">
+                      <Star className="w-4 h-4 text-timeline-shape" />
+                    </div>
+                    <span className="text-[10px] text-muted-foreground group-hover:text-foreground">
+                      Star
+                    </span>
+                  </button>
+
+                  <button
+                    onClick={() => handleAddShape('polygon')}
+                    className="flex flex-col items-center justify-center gap-1.5 p-3 rounded-lg border border-border bg-secondary/30 hover:bg-secondary/50 hover:border-primary/50 transition-colors group"
+                  >
+                    <div className="w-8 h-8 rounded-md bg-timeline-shape/20 border border-timeline-shape/50 flex items-center justify-center group-hover:bg-timeline-shape/30">
+                      <Hexagon className="w-4 h-4 text-timeline-shape" />
+                    </div>
+                    <span className="text-[10px] text-muted-foreground group-hover:text-foreground">
+                      Polygon
+                    </span>
+                  </button>
                 </div>
               </div>
             </div>

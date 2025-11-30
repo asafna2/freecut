@@ -83,10 +83,21 @@ export type ImageItem = BaseTimelineItem & {
   sourceHeight?: number;
 };
 
+export type ShapeType = 'rectangle' | 'circle' | 'triangle' | 'ellipse' | 'star' | 'polygon';
+
 export type ShapeItem = BaseTimelineItem & {
   type: 'shape';
-  shapeType: 'rectangle' | 'circle' | 'triangle' | 'solid';
+  shapeType: ShapeType;
+  // Fill
   fillColor: string;
+  // Stroke
+  strokeColor?: string;
+  strokeWidth?: number;
+  // Shape-specific
+  cornerRadius?: number;        // Rect, Triangle, Star, Polygon
+  direction?: 'up' | 'down' | 'left' | 'right';  // Triangle only
+  points?: number;              // Star (5 default), Polygon (6 default)
+  innerRadius?: number;         // Star only (ratio 0-1 of outer)
 };
 
 // Union type for all timeline items

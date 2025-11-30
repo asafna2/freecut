@@ -84,9 +84,8 @@ export function SelectableItem({
         transformOrigin: 'center center',
         // Z-index to render above GroupGizmo border but below handles
         zIndex: 5,
-        // Subtle hover indicator (only for unselected items)
-        backgroundColor: showHover ? 'rgba(249, 115, 22, 0.1)' : 'transparent',
-        border: showHover ? '1px solid rgba(249, 115, 22, 0.2)' : '1px solid transparent',
+        // Subtle hover indicator (only for unselected items) - outline only
+        border: showHover ? '3px solid rgba(249, 115, 22, 0.4)' : '2px solid transparent',
       }}
       data-gizmo="selectable-item"
       onMouseDown={handleMouseDown}

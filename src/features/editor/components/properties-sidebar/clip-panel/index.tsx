@@ -11,6 +11,7 @@ import { FillSection } from './fill-section';
 import { VideoSection } from './video-section';
 import { AudioSection } from './audio-section';
 import { TextSection } from './text-section';
+import { ShapeSection } from './shape-section';
 
 /**
  * Clip properties panel - shown when one or more clips are selected.
@@ -64,6 +65,12 @@ export function ClipPanel() {
   // Check if selection includes text items
   const hasTextItems = useMemo(
     () => selectedItems.some((item) => item.type === 'text'),
+    [selectedItems]
+  );
+
+  // Check if selection includes shape items
+  const hasShapeItems = useMemo(
+    () => selectedItems.some((item) => item.type === 'shape'),
     [selectedItems]
   );
 
@@ -148,6 +155,14 @@ export function ClipPanel() {
       {hasTextItems && (
         <>
           <TextSection items={selectedItems} />
+          <Separator />
+        </>
+      )}
+
+      {/* Shape - only for shape items */}
+      {hasShapeItems && (
+        <>
+          <ShapeSection items={selectedItems} />
           <Separator />
         </>
       )}

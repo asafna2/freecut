@@ -41,8 +41,13 @@ export interface ProjectTimeline {
     fontSize?: number;
     fontFamily?: string;
     color?: string;
-    shapeType?: 'rectangle' | 'circle' | 'triangle' | 'solid';
+    shapeType?: 'rectangle' | 'circle' | 'triangle' | 'ellipse' | 'star' | 'polygon';
     fillColor?: string;
+    strokeColor?: string;
+    strokeWidth?: number;
+    direction?: 'up' | 'down' | 'left' | 'right';
+    points?: number;
+    innerRadius?: number;
     speed?: number; // Playback speed multiplier (default 1.0)
     // Source dimensions (for video/image items)
     sourceWidth?: number;

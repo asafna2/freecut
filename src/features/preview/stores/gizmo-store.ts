@@ -25,6 +25,15 @@ export interface ItemPropertiesPreview {
   letterSpacing?: number;
   lineHeight?: number;
   color?: string;
+  // Shape properties
+  shapeType?: 'rectangle' | 'circle' | 'triangle' | 'ellipse' | 'star' | 'polygon';
+  fillColor?: string;
+  strokeColor?: string;
+  strokeWidth?: number;
+  cornerRadius?: number;
+  direction?: 'up' | 'down' | 'left' | 'right';
+  points?: number;
+  innerRadius?: number;
 }
 
 interface GizmoStoreState {

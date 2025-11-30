@@ -262,7 +262,7 @@ export function TransformGizmo({
 
   return (
     <div
-      className="absolute pointer-events-none transition-opacity duration-150"
+      className="absolute transition-opacity duration-150"
       style={{
         left: screenBounds.left,
         top: screenBounds.top,
@@ -271,42 +271,50 @@ export function TransformGizmo({
         transform: `rotate(${currentTransform.rotation}deg)`,
         transformOrigin: 'center center',
         opacity: isPlaying ? 0 : 1,
+        // High z-index to ensure gizmo is always above SelectableItems
+        zIndex: 100,
+        // Container captures events to block SelectableItems below
+        pointerEvents: 'auto',
       }}
+      // Prevent events from propagating to elements below
+      onMouseDown={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => e.stopPropagation()}
     >
-      {/* Selection border */}
+      {/* Selection border - high z-index to ensure it's above all SelectableItems */}
       <div
-        className="absolute pointer-events-auto cursor-move"
+        className="absolute cursor-move"
         style={{
           inset: -2,
           border: `2px dashed ${isInteracting ? '#ea580c' : '#f97316'}`,
           boxSizing: 'border-box',
+          zIndex: 101,
         }}
         data-gizmo="border"
         onMouseDown={handleTranslateStart}
         onDoubleClick={(e) => e.stopPropagation()}
       />
 
-      {/* Scale handles - z-index 10 to stay above SelectableItem (z-index 5) */}
+      {/* Scale handles - high z-index to ensure they're above all SelectableItems */}
       {SCALE_HANDLES.map((handle) => (
         <div
           key={handle}
-          className="bg-white border border-orange-500 pointer-events-auto"
-          style={{ ...getHandleStyle(handle), zIndex: 10 }}
+          className="bg-white border border-orange-500"
+          style={{ ...getHandleStyle(handle), zIndex: 102 }}
           data-gizmo={`scale-${handle}`}
           onMouseDown={(e) => handleScaleStart(handle, e)}
         />
       ))}
 
-      {/* Rotation handle - z-index 10 to stay above SelectableItem (z-index 5) */}
+      {/* Rotation handle - high z-index to ensure it's above all SelectableItems */}
       <div
-        className="absolute bg-white border border-orange-500 rounded-full pointer-events-auto cursor-crosshair"
+        className="absolute bg-white border border-orange-500 rounded-full cursor-crosshair"
         style={{
           width: 10,
           height: 10,
           left: '50%',
           top: -ROTATION_HANDLE_OFFSET,
           marginLeft: -5,
-          zIndex: 10,
+          zIndex: 102,
         }}
         data-gizmo="rotate"
         onMouseDown={handleRotateStart}

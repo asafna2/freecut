@@ -1,9 +1,10 @@
 import React from 'react';
 import { AbsoluteFill, OffthreadVideo, useVideoConfig, useCurrentFrame, interpolate, useRemotionEnvironment } from 'remotion';
 import { Video } from '@remotion/media';
+import { Rect, Circle, Triangle, Ellipse, Star, Polygon } from '@remotion/shapes';
 import { useGizmoStore } from '@/features/preview/stores/gizmo-store';
 import { usePlaybackStore } from '@/features/preview/stores/playback-store';
-import type { TimelineItem, VideoItem, TextItem } from '@/types/timeline';
+import type { TimelineItem, VideoItem, TextItem, ShapeItem } from '@/types/timeline';
 import { DebugOverlay } from './debug-overlay';
 import { PitchCorrectedAudio } from './pitch-corrected-audio';
 import { GifPlayer } from './gif-player';
@@ -247,6 +248,207 @@ const TextContent: React.FC<{ item: TextItem }> = ({ item }) => {
       </div>
     </div>
   );
+};
+
+/**
+ * Shape content with live property preview support.
+ * Renders Remotion shapes (Rect, Circle, Triangle, Ellipse, Star, Polygon).
+ * Reads preview values from gizmo store for real-time updates during editing.
+ */
+const ShapeContent: React.FC<{ item: ShapeItem }> = ({ item }) => {
+  // Read preview values from gizmo store for shape properties
+  const itemPropertiesPreview = useGizmoStore((s) => s.itemPropertiesPreview);
+  const preview = itemPropertiesPreview?.[item.id];
+
+  // Read transform preview from gizmo store for real-time scaling
+  const activeGizmo = useGizmoStore((s) => s.activeGizmo);
+  const previewTransform = useGizmoStore((s) => s.previewTransform);
+  const propertiesPreview = useGizmoStore((s) => s.propertiesPreview);
+  const groupPreviewTransforms = useGizmoStore((s) => s.groupPreviewTransforms);
+
+  // Use preview values if available, otherwise use item's stored values
+  const fillColor = preview?.fillColor ?? item.fillColor ?? '#3b82f6';
+  const strokeColor = preview?.strokeColor ?? item.strokeColor;
+  const strokeWidth = preview?.strokeWidth ?? item.strokeWidth ?? 0;
+  const cornerRadius = preview?.cornerRadius ?? item.cornerRadius ?? 0;
+  const direction = preview?.direction ?? item.direction ?? 'up';
+  const points = preview?.points ?? item.points ?? 5;
+  const innerRadius = preview?.innerRadius ?? item.innerRadius ?? 0.5;
+  const shapeType = preview?.shapeType ?? item.shapeType;
+
+  // Get dimensions with preview support for real-time gizmo scaling
+  // Priority: Group preview > Single gizmo preview > Properties preview > Base transform
+  let width = item.transform?.width ?? 200;
+  let height = item.transform?.height ?? 200;
+
+  const groupPreviewForItem = groupPreviewTransforms?.get(item.id);
+  const isGizmoPreviewActive = activeGizmo?.itemId === item.id && previewTransform !== null;
+  const propertiesPreviewForItem = propertiesPreview?.[item.id];
+
+  if (groupPreviewForItem) {
+    width = groupPreviewForItem.width;
+    height = groupPreviewForItem.height;
+  } else if (isGizmoPreviewActive && previewTransform) {
+    width = previewTransform.width;
+    height = previewTransform.height;
+  } else if (propertiesPreviewForItem) {
+    width = propertiesPreviewForItem.width ?? width;
+    height = propertiesPreviewForItem.height ?? height;
+  }
+
+  // Common stroke props
+  const strokeProps = strokeWidth > 0 && strokeColor ? {
+    stroke: strokeColor,
+    strokeWidth,
+  } : {};
+
+  // Check if aspect ratio is locked (for squish/squash behavior)
+  // Read from preview transforms if available, otherwise from item
+  let aspectLocked = item.transform?.aspectRatioLocked ?? true;
+  if (groupPreviewForItem?.aspectRatioLocked !== undefined) {
+    aspectLocked = groupPreviewForItem.aspectRatioLocked;
+  } else if (isGizmoPreviewActive && previewTransform?.aspectRatioLocked !== undefined) {
+    aspectLocked = previewTransform.aspectRatioLocked;
+  } else if (propertiesPreviewForItem?.aspectRatioLocked !== undefined) {
+    aspectLocked = propertiesPreviewForItem.aspectRatioLocked;
+  }
+
+  // Centering wrapper style for SVG shapes
+  const centerStyle: React.CSSProperties = {
+    width: '100%',
+    height: '100%',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  };
+
+  // For shapes that need to squish/squash when aspect is unlocked,
+  // we render at base size and apply CSS scale transform
+  const baseSize = Math.min(width, height);
+  const scaleX = aspectLocked ? 1 : width / baseSize;
+  const scaleY = aspectLocked ? 1 : height / baseSize;
+  const needsScale = !aspectLocked && (scaleX !== 1 || scaleY !== 1);
+
+  const scaleStyle: React.CSSProperties = needsScale ? {
+    transform: `scale(${scaleX}, ${scaleY})`,
+  } : {};
+
+  // Render appropriate shape based on shapeType
+  switch (shapeType) {
+    case 'rectangle':
+      // Rectangle fills the entire container (naturally supports non-proportional)
+      return (
+        <div style={centerStyle}>
+          <Rect
+            width={width}
+            height={height}
+            fill={fillColor}
+            cornerRadius={cornerRadius}
+            {...strokeProps}
+          />
+        </div>
+      );
+
+    case 'circle': {
+      // Circle: squish/squash when aspect unlocked
+      const radius = baseSize / 2;
+      return (
+        <div style={centerStyle}>
+          <div style={scaleStyle}>
+            <Circle
+              radius={radius}
+              fill={fillColor}
+              {...strokeProps}
+            />
+          </div>
+        </div>
+      );
+    }
+
+    case 'triangle': {
+      // Triangle: squish/squash when aspect unlocked
+      return (
+        <div style={centerStyle}>
+          <div style={scaleStyle}>
+            <Triangle
+              length={baseSize}
+              direction={direction}
+              fill={fillColor}
+              cornerRadius={cornerRadius}
+              {...strokeProps}
+            />
+          </div>
+        </div>
+      );
+    }
+
+    case 'ellipse': {
+      // Ellipse naturally supports non-proportional via rx/ry
+      const rx = width / 2;
+      const ry = height / 2;
+      return (
+        <div style={centerStyle}>
+          <Ellipse
+            rx={rx}
+            ry={ry}
+            fill={fillColor}
+            {...strokeProps}
+          />
+        </div>
+      );
+    }
+
+    case 'star': {
+      // Star: squish/squash when aspect unlocked
+      const outerRadius = baseSize / 2;
+      const innerRadiusValue = outerRadius * innerRadius;
+      return (
+        <div style={centerStyle}>
+          <div style={scaleStyle}>
+            <Star
+              points={points}
+              outerRadius={outerRadius}
+              innerRadius={innerRadiusValue}
+              fill={fillColor}
+              cornerRadius={cornerRadius}
+              {...strokeProps}
+            />
+          </div>
+        </div>
+      );
+    }
+
+    case 'polygon': {
+      // Polygon: squish/squash when aspect unlocked
+      const radius = baseSize / 2;
+      return (
+        <div style={centerStyle}>
+          <div style={scaleStyle}>
+            <Polygon
+              points={points}
+              radius={radius}
+              fill={fillColor}
+              cornerRadius={cornerRadius}
+              {...strokeProps}
+            />
+          </div>
+        </div>
+      );
+    }
+
+    default:
+      // Fallback to simple colored div for unknown types
+      return (
+        <div
+          style={{
+            width: '100%',
+            height: '100%',
+            backgroundColor: fillColor,
+            borderRadius: cornerRadius,
+          }}
+        />
+      );
+  }
 };
 
 // Set to true to show debug overlay on video items during rendering
@@ -582,18 +784,13 @@ export const Item: React.FC<ItemProps> = ({ item, muted = false }) => {
   }
 
   if (item.type === 'shape') {
-    const shapeContent = (
-      <div
-        style={{
-          width: '100%',
-          height: '100%',
-          backgroundColor: item.fillColor
-        }}
-      />
-    );
-
     // Always use TransformWrapper for consistent rendering between preview and export
-    return <TransformWrapper item={item}>{shapeContent}</TransformWrapper>;
+    // ShapeContent renders the appropriate Remotion shape based on shapeType
+    return (
+      <TransformWrapper item={item}>
+        <ShapeContent item={item} />
+      </TransformWrapper>
+    );
   }
 
   throw new Error(`Unknown item type: ${JSON.stringify(item)}`);

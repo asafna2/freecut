@@ -236,11 +236,34 @@ export function LayoutSection({
   const mediaItems = useMediaLibraryStore((s) => s.mediaItems);
 
   // Reset scale to source dimensions (1:1 scale)
+  // For shapes: reset to 1:1 aspect ratio (square based on smaller dimension)
   const handleResetScale = useCallback(() => {
     const tolerance = 0.5;
 
     // For each item, reset to its source dimensions
     items.forEach((item) => {
+      // Get current dimensions
+      const sourceDimensions = getSourceDimensions(item);
+      const resolved = resolveTransform(item, canvas, sourceDimensions);
+
+      // For shapes: reset to 1:1 aspect ratio
+      if (item.type === 'shape' || item.type === 'text') {
+        const size = Math.min(resolved.width, resolved.height);
+        const updates: Partial<TransformProperties> = {};
+
+        if (Math.abs(resolved.width - size) > tolerance) {
+          updates.width = size;
+        }
+        if (Math.abs(resolved.height - size) > tolerance) {
+          updates.height = size;
+        }
+
+        if (Object.keys(updates).length > 0) {
+          onTransformChange([item.id], updates);
+        }
+        return;
+      }
+
       // First try to get source dimensions from the item itself
       let source = getSourceDimensions(item);
 
@@ -253,10 +276,6 @@ export function LayoutSection({
       }
 
       if (!source) return;
-
-      // Get current dimensions to check if change is needed
-      const sourceDimensions = getSourceDimensions(item);
-      const resolved = resolveTransform(item, canvas, sourceDimensions);
 
       // Only update if dimensions actually changed
       const updates: Partial<TransformProperties> = {};

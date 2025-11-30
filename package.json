@@ -33,6 +33,7 @@
     "@remotion/media": "^4.0.375",
     "@remotion/player": "^4.0.375",
     "@remotion/renderer": "^4.0.375",
+    "@remotion/shapes": "^4.0.379",
     "@tanstack/react-router": "^1.91.6",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.5",

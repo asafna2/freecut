@@ -263,10 +263,12 @@ export function GizmoOverlay({
       updateItemTransform(itemId, transformProps);
 
       // Prevent background click from deselecting after drag
+      // Use setTimeout instead of requestAnimationFrame because click events
+      // may fire after the next animation frame
       justFinishedDragRef.current = true;
-      requestAnimationFrame(() => {
+      setTimeout(() => {
         justFinishedDragRef.current = false;
-      });
+      }, 100);
     },
     [updateItemTransform]
   );
@@ -291,10 +293,12 @@ export function GizmoOverlay({
       updateItemsTransformMap(transformsMap);
 
       // Prevent background click from deselecting after drag
+      // Use setTimeout instead of requestAnimationFrame because click events
+      // may fire after the next animation frame
       justFinishedDragRef.current = true;
-      requestAnimationFrame(() => {
+      setTimeout(() => {
         justFinishedDragRef.current = false;
-      });
+      }, 100);
     },
     [updateItemsTransformMap]
   );
