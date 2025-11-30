@@ -683,6 +683,194 @@ const MaskWrapper: React.FC<{
   );
 };
 
+/**
+ * GroupMaskWrapper applies masks to a group of children as a single unit.
+ * This ensures that items composite together FIRST (respecting z-index),
+ * and THEN the mask is applied to the composite result.
+ *
+ * This is critical for feathered masks - without grouping, each item would
+ * become semi-transparent at the mask edges, causing lower layers to show through.
+ * With grouping, items stack properly before the mask cuts out the visible area.
+ */
+export const GroupMaskWrapper: React.FC<{
+  masks: MaskInfo[];
+  children: React.ReactNode;
+}> = ({ masks, children }) => {
+  const { width: canvasWidth, height: canvasHeight } = useVideoConfig();
+
+  // Read gizmo store for real-time mask preview during drag operations
+  const activeGizmo = useGizmoStore((s) => s.activeGizmo);
+  const previewTransform = useGizmoStore((s) => s.previewTransform);
+  const propertiesPreview = useGizmoStore((s) => s.propertiesPreview);
+  const groupPreviewTransforms = useGizmoStore((s) => s.groupPreviewTransforms);
+
+  if (!masks || masks.length === 0) {
+    return <>{children}</>;
+  }
+
+  // All masks use the first mask's type settings
+  const firstMask = masks[0]!;
+  const maskType = firstMask.shape.maskType ?? 'clip';
+  const maskFeather = firstMask.shape.maskFeather ?? 0;
+  const maskInvert = firstMask.shape.maskInvert ?? false;
+
+  // Generate paths for all masks with rotation baked in
+  const maskPathsWithStroke = masks.map(({ shape, transform }) => {
+    // Check if this mask has an active preview transform
+    const groupPreviewForMask = groupPreviewTransforms?.get(shape.id);
+    const isGizmoPreviewActive = activeGizmo?.itemId === shape.id && previewTransform !== null;
+    const propertiesPreviewForMask = propertiesPreview?.[shape.id];
+
+    // Priority: Group preview > Single gizmo preview > Properties preview > Base transform
+    let resolvedTransform = {
+      x: transform.x ?? 0,
+      y: transform.y ?? 0,
+      width: transform.width ?? canvasWidth,
+      height: transform.height ?? canvasHeight,
+      rotation: transform.rotation ?? 0,
+      opacity: transform.opacity ?? 1,
+    };
+
+    if (groupPreviewForMask) {
+      resolvedTransform = {
+        x: groupPreviewForMask.x,
+        y: groupPreviewForMask.y,
+        width: groupPreviewForMask.width,
+        height: groupPreviewForMask.height,
+        rotation: groupPreviewForMask.rotation,
+        opacity: groupPreviewForMask.opacity,
+      };
+    } else if (isGizmoPreviewActive && previewTransform) {
+      resolvedTransform = {
+        x: previewTransform.x,
+        y: previewTransform.y,
+        width: previewTransform.width,
+        height: previewTransform.height,
+        rotation: previewTransform.rotation,
+        opacity: previewTransform.opacity,
+      };
+    } else if (propertiesPreviewForMask) {
+      resolvedTransform = {
+        ...resolvedTransform,
+        ...propertiesPreviewForMask,
+      };
+    }
+
+    let path = getShapePath(shape, resolvedTransform, {
+      canvasWidth,
+      canvasHeight,
+    });
+
+    // Bake rotation into path coordinates for CSS clip-path compatibility
+    if (resolvedTransform.rotation !== 0) {
+      const centerX = canvasWidth / 2 + resolvedTransform.x;
+      const centerY = canvasHeight / 2 + resolvedTransform.y;
+      path = rotatePath(path, resolvedTransform.rotation, centerX, centerY);
+    }
+
+    const strokeWidth = shape.strokeWidth ?? 0;
+    return { path, strokeWidth };
+  });
+
+  const maskPaths = maskPathsWithStroke.map(m => m.path);
+  const combinedPath = maskPaths.join(' ');
+  const hasStroke = maskPathsWithStroke.some(m => m.strokeWidth > 0);
+
+  // For clip mode without stroke, use CSS clip-path
+  if (maskType === 'clip' && !maskInvert && maskFeather === 0 && !hasStroke) {
+    return (
+      <div
+        style={{
+          position: 'absolute',
+          inset: 0,
+          clipPath: `path('${combinedPath}')`,
+        }}
+      >
+        {children}
+      </div>
+    );
+  }
+
+  // For inverted clip without stroke
+  if (maskType === 'clip' && maskInvert && !hasStroke) {
+    const invertedPath = `M 0 0 L ${canvasWidth} 0 L ${canvasWidth} ${canvasHeight} L 0 ${canvasHeight} Z ${combinedPath}`;
+    return (
+      <div
+        style={{
+          position: 'absolute',
+          inset: 0,
+          clipPath: `path(evenodd, '${invertedPath}')`,
+        }}
+      >
+        {children}
+      </div>
+    );
+  }
+
+  // Alpha mask, feathering, or stroke: use inline SVG mask
+  const maskId = `group-mask-${masks.map(m => m.shape.id).join('-')}`;
+  const filterId = `blur-${maskId}`;
+
+  return (
+    <>
+      <svg
+        style={{
+          position: 'absolute',
+          width: 0,
+          height: 0,
+          overflow: 'hidden',
+          pointerEvents: 'none',
+        }}
+        aria-hidden="true"
+      >
+        <defs>
+          {maskFeather > 0 && (
+            <filter id={filterId} x="-50%" y="-50%" width="200%" height="200%">
+              <feGaussianBlur stdDeviation={maskFeather} />
+            </filter>
+          )}
+          <mask
+            id={maskId}
+            maskUnits="userSpaceOnUse"
+            x="0"
+            y="0"
+            width={canvasWidth}
+            height={canvasHeight}
+          >
+            <rect
+              x="0"
+              y="0"
+              width={canvasWidth}
+              height={canvasHeight}
+              fill={maskInvert ? 'white' : 'black'}
+            />
+            {maskPathsWithStroke.map(({ path: pathD, strokeWidth }, i) => (
+              <path
+                key={i}
+                d={pathD}
+                fill={maskInvert ? 'black' : 'white'}
+                stroke={strokeWidth > 0 ? (maskInvert ? 'black' : 'white') : undefined}
+                strokeWidth={strokeWidth > 0 ? strokeWidth : undefined}
+                filter={maskFeather > 0 ? `url(#${filterId})` : undefined}
+              />
+            ))}
+          </mask>
+        </defs>
+      </svg>
+      <div
+        style={{
+          position: 'absolute',
+          inset: 0,
+          mask: `url(#${maskId})`,
+          WebkitMask: `url(#${maskId})`,
+        }}
+      >
+        {children}
+      </div>
+    </>
+  );
+};
+
 export interface ItemProps {
   item: TimelineItem;
   muted?: boolean;

@@ -1,8 +1,8 @@
 import React, { useMemo } from 'react';
 import { AbsoluteFill, Sequence, useVideoConfig, useCurrentFrame } from 'remotion';
 import type { RemotionInputProps } from '@/types/export';
-import type { TextItem, ShapeItem, TimelineItem } from '@/types/timeline';
-import { Item, type MaskInfo } from '../components/item';
+import type { TextItem, ShapeItem } from '@/types/timeline';
+import { Item, type MaskInfo, GroupMaskWrapper } from '../components/item';
 import { generateStableKey } from '../utils/generate-stable-key';
 import { loadFonts } from '../utils/fonts';
 import { resolveTransform } from '../utils/transform-resolver';
@@ -14,34 +14,24 @@ interface MaskWithTrackOrder {
 }
 
 /**
- * Check if a mask applies to a target item at the current frame.
- * A mask affects items when:
- * 1. Mask is on a track with lower order (visually above)
- * 2. Time ranges overlap at current frame
+ * Check if a mask is active at the current frame (within its time range).
  */
-function shouldApplyMask(
-  mask: ShapeItem,
-  maskTrackOrder: number,
-  targetItem: TimelineItem,
-  targetTrackOrder: number,
-  currentFrame: number
-): boolean {
-  // Mask must be on a track above (lower order = higher visual position)
-  if (maskTrackOrder >= targetTrackOrder) return false;
-
-  // Check time overlap - item and mask must both be active at current frame
+function isMaskActiveAtFrame(mask: ShapeItem, currentFrame: number): boolean {
   const maskStart = mask.from;
   const maskEnd = mask.from + mask.durationInFrames;
-  const targetStart = targetItem.from;
-  const targetEnd = targetItem.from + targetItem.durationInFrames;
+  return currentFrame >= maskStart && currentFrame < maskEnd;
+}
 
-  // Current frame must be within both ranges
-  return (
-    currentFrame >= maskStart &&
-    currentFrame < maskEnd &&
-    currentFrame >= targetStart &&
-    currentFrame < targetEnd
-  );
+/**
+ * Check if a mask should affect a target item based on track order.
+ * A mask affects ALL items on tracks below it (higher order numbers).
+ */
+function shouldMaskAffectItem(
+  maskTrackOrder: number,
+  targetTrackOrder: number
+): boolean {
+  // Mask affects items on tracks with higher order (visually below)
+  return maskTrackOrder < targetTrackOrder;
 }
 
 /**
@@ -111,18 +101,13 @@ export const MainComposition: React.FC<RemotionInputProps> = ({ tracks, backgrou
   }));
 
   /**
-   * Get masks that apply to a specific item at the current frame.
-   * Returns MaskInfo array for the Item component.
-   * Uses resolveTransform to ensure masks use the same coordinate system as rendered shapes.
+   * Get active masks at the current frame that could affect items below them.
+   * Returns MaskInfo array for group-level masking.
    */
-  const getMasksForItem = (item: TimelineItem, trackOrder: number): MaskInfo[] => {
+  const getActiveMasks = useMemo((): MaskInfo[] => {
     return allMasks
-      .filter(({ mask, trackOrder: maskTrackOrder }) =>
-        shouldApplyMask(mask, maskTrackOrder, item, trackOrder, currentFrame)
-      )
+      .filter(({ mask }) => isMaskActiveAtFrame(mask, currentFrame))
       .map(({ mask }) => {
-        // Use resolveTransform to get proper defaults matching how shapes are rendered
-        // Shapes don't have source dimensions, so defaults to canvas size
         const resolved = resolveTransform(mask, canvas);
         return {
           shape: mask,
@@ -136,7 +121,53 @@ export const MainComposition: React.FC<RemotionInputProps> = ({ tracks, backgrou
           },
         };
       });
-  };
+  }, [allMasks, currentFrame, canvas]);
+
+  // Find the topmost mask's track order (lowest order number = topmost)
+  const topmostMaskTrackOrder = useMemo(() => {
+    if (allMasks.length === 0) return null;
+    const activeMaskOrders = allMasks
+      .filter(({ mask }) => isMaskActiveAtFrame(mask, currentFrame))
+      .map(({ trackOrder }) => trackOrder);
+    if (activeMaskOrders.length === 0) return null;
+    return Math.min(...activeMaskOrders);
+  }, [allMasks, currentFrame]);
+
+  // Separate media items into those affected by the mask and those not affected
+  const { maskedMediaItems, unmaskedMediaItems } = useMemo(() => {
+    if (topmostMaskTrackOrder === null) {
+      return { maskedMediaItems: [], unmaskedMediaItems: mediaItems };
+    }
+    const masked: typeof mediaItems = [];
+    const unmasked: typeof mediaItems = [];
+    mediaItems.forEach((item) => {
+      const trackOrder = maxOrder - item.zIndex;
+      if (shouldMaskAffectItem(topmostMaskTrackOrder, trackOrder)) {
+        masked.push(item);
+      } else {
+        unmasked.push(item);
+      }
+    });
+    return { maskedMediaItems: masked, unmaskedMediaItems: unmasked };
+  }, [mediaItems, topmostMaskTrackOrder, maxOrder]);
+
+  // Separate non-media tracks into those affected by the mask and those not affected
+  const { maskedNonMediaTracks, unmaskedNonMediaTracks } = useMemo(() => {
+    if (topmostMaskTrackOrder === null) {
+      return { maskedNonMediaTracks: [], unmaskedNonMediaTracks: nonMediaByTrack };
+    }
+    const masked: typeof nonMediaByTrack = [];
+    const unmasked: typeof nonMediaByTrack = [];
+    nonMediaByTrack.forEach((track) => {
+      const trackOrder = track.order ?? 0;
+      if (shouldMaskAffectItem(topmostMaskTrackOrder, trackOrder)) {
+        masked.push(track);
+      } else {
+        unmasked.push(track);
+      }
+    });
+    return { maskedNonMediaTracks: masked, unmaskedNonMediaTracks: unmasked };
+  }, [nonMediaByTrack, topmostMaskTrackOrder]);
 
   // Load fonts for all text items
   // This ensures Google Fonts are loaded before rendering
@@ -168,14 +199,9 @@ export const MainComposition: React.FC<RemotionInputProps> = ({ tracks, backgrou
       {/* BACKGROUND LAYER - Ensures empty areas show canvas background color */}
       <AbsoluteFill style={{ backgroundColor, zIndex: -1 }} />
 
-      {/* MEDIA LAYER - All video/audio at composition level (prevents cross-track remounts) */}
-      {/* z-index: 0-999 range for media items */}
-      {mediaItems.map((item) => {
+      {/* UNMASKED MEDIA LAYER - Items above the mask, rendered without masking */}
+      {unmaskedMediaItems.map((item) => {
         const premountFrames = Math.round(fps * 2);
-        // Get masks that apply to this media item
-        // Note: item.zIndex is inverted track order, so we need to find original track order
-        const trackOrder = maxOrder - item.zIndex;
-        const masks = getMasksForItem(item, trackOrder);
         return (
           <Sequence
             key={generateStableKey(item)}
@@ -184,11 +210,33 @@ export const MainComposition: React.FC<RemotionInputProps> = ({ tracks, backgrou
             premountFor={premountFrames}
           >
             <AbsoluteFill style={{ zIndex: item.zIndex }}>
-              <Item item={item} muted={item.muted} masks={masks} />
+              <Item item={item} muted={item.muted} masks={[]} />
             </AbsoluteFill>
           </Sequence>
         );
       })}
+
+      {/* MASKED MEDIA LAYER - Items below the mask, grouped and masked together */}
+      {/* This ensures items composite FIRST (Video A covers Video B), then mask applies to composite */}
+      {maskedMediaItems.length > 0 && (
+        <GroupMaskWrapper masks={getActiveMasks}>
+          {maskedMediaItems.map((item) => {
+            const premountFrames = Math.round(fps * 2);
+            return (
+              <Sequence
+                key={generateStableKey(item)}
+                from={item.from}
+                durationInFrames={item.durationInFrames}
+                premountFor={premountFrames}
+              >
+                <AbsoluteFill style={{ zIndex: item.zIndex }}>
+                  <Item item={item} muted={item.muted} masks={[]} />
+                </AbsoluteFill>
+              </Sequence>
+            );
+          })}
+        </GroupMaskWrapper>
+      )}
 
       {/* CLEARING LAYER - Paints background color over stale video frames when no videos are active */}
       {/* z-index: 1000 - above media (0-999), below non-media (1001+) */}
@@ -196,30 +244,49 @@ export const MainComposition: React.FC<RemotionInputProps> = ({ tracks, backgrou
         <AbsoluteFill style={{ backgroundColor, zIndex: 1000 }} />
       )}
 
-      {/* NON-MEDIA LAYERS - Track-based rendering for text/shapes/images */}
-      {/* z-index: 1001+ range so they appear above clearing layer */}
-      {/* Invert z-index: top track (order=0) gets highest z-index */}
-      {nonMediaByTrack
+      {/* UNMASKED NON-MEDIA LAYERS - Items above the mask */}
+      {unmaskedNonMediaTracks
         .filter((track) => track.items.length > 0)
         .map((track) => {
           const trackOrder = track.order ?? 0;
           return (
             <AbsoluteFill key={track.id} style={{ zIndex: 1001 + (maxOrder - trackOrder) }}>
-              {track.items.map((item) => {
-                const masks = getMasksForItem(item, trackOrder);
-                return (
-                  <Sequence
-                    key={item.id}
-                    from={item.from}
-                    durationInFrames={item.durationInFrames}
-                  >
-                    <Item item={item} muted={false} masks={masks} />
-                  </Sequence>
-                );
-              })}
+              {track.items.map((item) => (
+                <Sequence
+                  key={item.id}
+                  from={item.from}
+                  durationInFrames={item.durationInFrames}
+                >
+                  <Item item={item} muted={false} masks={[]} />
+                </Sequence>
+              ))}
             </AbsoluteFill>
           );
         })}
+
+      {/* MASKED NON-MEDIA LAYERS - Items below the mask, grouped and masked together */}
+      {maskedNonMediaTracks.some((track) => track.items.length > 0) && (
+        <GroupMaskWrapper masks={getActiveMasks}>
+          {maskedNonMediaTracks
+            .filter((track) => track.items.length > 0)
+            .map((track) => {
+              const trackOrder = track.order ?? 0;
+              return (
+                <AbsoluteFill key={track.id} style={{ zIndex: 1001 + (maxOrder - trackOrder) }}>
+                  {track.items.map((item) => (
+                    <Sequence
+                      key={item.id}
+                      from={item.from}
+                      durationInFrames={item.durationInFrames}
+                    >
+                      <Item item={item} muted={false} masks={[]} />
+                    </Sequence>
+                  ))}
+                </AbsoluteFill>
+              );
+            })}
+        </GroupMaskWrapper>
+      )}
     </AbsoluteFill>
   );
 };
