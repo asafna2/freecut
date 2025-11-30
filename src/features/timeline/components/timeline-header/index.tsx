@@ -53,11 +53,14 @@ export function TimelineHeader({ onZoomChange, onZoomIn, onZoomOut }: TimelineHe
   const clearInOutPoints = useTimelineStore((s) => s.clearInOutPoints);
   const addMarker = useTimelineStore((s) => s.addMarker);
   const markers = useTimelineStore((s) => s.markers);
+  const removeMarker = useTimelineStore((s) => s.removeMarker);
   const clearAllMarkers = useTimelineStore((s) => s.clearAllMarkers);
   // NOTE: Don't subscribe to currentFrame - only needed in click handlers
   // Read from store directly when needed to avoid re-renders every frame
   const activeTool = useSelectionStore((s) => s.activeTool);
   const setActiveTool = useSelectionStore((s) => s.setActiveTool);
+  const selectedMarkerId = useSelectionStore((s) => s.selectedMarkerId);
+  const clearSelection = useSelectionStore((s) => s.clearSelection);
 
 
   // Momentum state for zoom slider
@@ -281,11 +284,27 @@ export function TimelineHeader({ onZoomChange, onZoomIn, onZoomOut }: TimelineHe
             variant="ghost"
             size="icon"
             className="h-7 w-7"
+            onClick={() => {
+              if (selectedMarkerId) {
+                removeMarker(selectedMarkerId);
+                clearSelection();
+              }
+            }}
+            disabled={!selectedMarkerId}
+            data-tooltip="Remove Selected Marker"
+          >
+            <FlagOff className="w-3.5 h-3.5" />
+          </Button>
+
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
             onClick={clearAllMarkers}
             disabled={markers.length === 0}
             data-tooltip="Clear All Markers"
           >
-            <FlagOff className="w-3.5 h-3.5" />
+            <X className="w-3.5 h-3.5" />
           </Button>
         </div>
 

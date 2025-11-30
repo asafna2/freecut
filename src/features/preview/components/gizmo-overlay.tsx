@@ -89,8 +89,8 @@ export function GizmoOverlay({
     });
   }, [isPlaying]);
 
-  // Force update state to trigger re-render when frame changes while paused
-  const [, setForceUpdate] = useState(0);
+  // Force update state to trigger re-render and useMemo recalculation when frame changes while paused
+  const [frameUpdateKey, setForceUpdate] = useState(0);
 
   // Gizmo store
   const setCanvasSize = useGizmoStore((s) => s.setCanvasSize);
@@ -137,8 +137,7 @@ export function GizmoOverlay({
       // Sort by track order descending: higher order (bottom tracks) first, lower order (top tracks) last
       // This ensures top track items render last (on top) and get click priority
       .sort((a, b) => (trackOrder.get(b.trackId) ?? 0) - (trackOrder.get(a.trackId) ?? 0));
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- frozenFrameRef updates trigger re-render via setForceUpdate
-  }, [items, tracks, isPlaying]);
+  }, [items, tracks, isPlaying, frameUpdateKey]);
 
   // Get selected items
   const selectedItems = useMemo(() => {
