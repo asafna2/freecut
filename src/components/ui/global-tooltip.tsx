@@ -144,13 +144,33 @@ export function GlobalTooltip() {
       hideTooltip();
     };
 
+    const handleClick = (e: MouseEvent) => {
+      // Hide tooltip on any click on a tooltip element
+      const eventTarget = e.target as Node;
+      const element = eventTarget?.nodeType === Node.ELEMENT_NODE
+        ? (eventTarget as Element)
+        : eventTarget?.parentElement;
+
+      if (!element || !element.closest('[data-tooltip]')) return;
+
+      // Clear any pending show timeout
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
+      }
+
+      hideTooltip();
+    };
+
     // Use capture phase to catch events before they bubble
     document.addEventListener('mouseenter', handleMouseEnter, true);
     document.addEventListener('mouseleave', handleMouseLeave, true);
+    document.addEventListener('click', handleClick, true);
 
     return () => {
       document.removeEventListener('mouseenter', handleMouseEnter, true);
       document.removeEventListener('mouseleave', handleMouseLeave, true);
+      document.removeEventListener('click', handleClick, true);
       if (timeoutRef.current) {
         clearTimeout(timeoutRef.current);
       }

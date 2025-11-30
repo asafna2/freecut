@@ -61,6 +61,7 @@ export function Toolbar({ project, isDirty = false, onSave, onExport, onExportBu
           className="h-9 w-9"
           onClick={handleBackClick}
           data-tooltip="Back to Projects"
+          data-tooltip-side="right"
         >
           <ArrowLeft className="w-4 h-4" />
         </Button>
