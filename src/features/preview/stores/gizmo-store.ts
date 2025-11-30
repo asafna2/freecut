@@ -26,7 +26,7 @@ export interface ItemPropertiesPreview {
   lineHeight?: number;
   color?: string;
   // Shape properties
-  shapeType?: 'rectangle' | 'circle' | 'triangle' | 'ellipse' | 'star' | 'polygon';
+  shapeType?: 'rectangle' | 'circle' | 'triangle' | 'ellipse' | 'star' | 'polygon' | 'heart';
   fillColor?: string;
   strokeColor?: string;
   strokeWidth?: number;
@@ -68,7 +68,8 @@ interface GizmoStoreActions {
   startTranslate: (
     itemId: string,
     startPoint: Point,
-    transform: Transform
+    transform: Transform,
+    strokeWidth?: number
   ) => void;
 
   /** Start scale interaction (drag handle to resize) */
@@ -78,14 +79,16 @@ interface GizmoStoreActions {
     startPoint: Point,
     transform: Transform,
     itemType?: 'video' | 'audio' | 'image' | 'text' | 'shape',
-    aspectRatioLocked?: boolean
+    aspectRatioLocked?: boolean,
+    strokeWidth?: number
   ) => void;
 
   /** Start rotate interaction (drag rotation handle) */
   startRotate: (
     itemId: string,
     startPoint: Point,
-    transform: Transform
+    transform: Transform,
+    strokeWidth?: number
   ) => void;
 
   /** Update interaction with current mouse position */
@@ -142,7 +145,7 @@ export const useGizmoStore = create<GizmoStoreState & GizmoStoreActions>(
     setSnappingEnabled: (enabled) =>
       set({ snappingEnabled: enabled }),
 
-    startTranslate: (itemId, startPoint, transform) =>
+    startTranslate: (itemId, startPoint, transform, strokeWidth) =>
       set({
         activeGizmo: {
           mode: 'translate',
@@ -153,12 +156,13 @@ export const useGizmoStore = create<GizmoStoreState & GizmoStoreActions>(
           shiftKey: false,
           ctrlKey: false,
           itemId,
+          strokeWidth,
         },
         previewTransform: { ...transform },
         snapLines: [],
       }),
 
-    startScale: (itemId, handle, startPoint, transform, itemType, aspectRatioLocked) =>
+    startScale: (itemId, handle, startPoint, transform, itemType, aspectRatioLocked, strokeWidth) =>
       set({
         activeGizmo: {
           mode: 'scale',
@@ -171,12 +175,13 @@ export const useGizmoStore = create<GizmoStoreState & GizmoStoreActions>(
           itemId,
           itemType,
           aspectRatioLocked,
+          strokeWidth,
         },
         previewTransform: { ...transform },
         snapLines: [],
       }),
 
-    startRotate: (itemId, startPoint, transform) =>
+    startRotate: (itemId, startPoint, transform, strokeWidth) =>
       set({
         activeGizmo: {
           mode: 'rotate',
@@ -187,6 +192,7 @@ export const useGizmoStore = create<GizmoStoreState & GizmoStoreActions>(
           shiftKey: false,
           ctrlKey: false,
           itemId,
+          strokeWidth,
         },
         previewTransform: { ...transform },
         snapLines: [],
@@ -225,11 +231,12 @@ export const useGizmoStore = create<GizmoStoreState & GizmoStoreActions>(
       // Apply snapping based on mode (pass current snapLines for hysteresis)
       const { snapLines: currentSnapLines } = get();
       let snapLines: SnapLine[] = [];
+      const strokeExpansion = activeGizmo.strokeWidth ?? 0;
       if (snappingEnabled && activeGizmo.mode !== 'rotate') {
         const snapResult =
           activeGizmo.mode === 'translate'
-            ? applySnapping(newTransform, canvasSize.width, canvasSize.height, currentSnapLines)
-            : applyScaleSnapping(newTransform, canvasSize.width, canvasSize.height, currentSnapLines);
+            ? applySnapping(newTransform, canvasSize.width, canvasSize.height, currentSnapLines, strokeExpansion)
+            : applyScaleSnapping(newTransform, canvasSize.width, canvasSize.height, currentSnapLines, strokeExpansion);
         newTransform = snapResult.transform;
         snapLines = snapResult.snapLines;
       } else {

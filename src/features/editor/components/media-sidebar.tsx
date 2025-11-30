@@ -12,6 +12,7 @@ import {
   Triangle,
   Star,
   Hexagon,
+  Heart,
 } from 'lucide-react';
 import { useEditorStore } from '../stores/editor-store';
 import { useTimelineStore } from '@/features/timeline/stores/timeline-store';
@@ -327,6 +328,18 @@ export function MediaSidebar() {
                     </div>
                     <span className="text-[10px] text-muted-foreground group-hover:text-foreground">
                       Polygon
+                    </span>
+                  </button>
+
+                  <button
+                    onClick={() => handleAddShape('heart')}
+                    className="flex flex-col items-center justify-center gap-1.5 p-3 rounded-lg border border-border bg-secondary/30 hover:bg-secondary/50 hover:border-primary/50 transition-colors group"
+                  >
+                    <div className="w-8 h-8 rounded-md bg-timeline-shape/20 border border-timeline-shape/50 flex items-center justify-center group-hover:bg-timeline-shape/30">
+                      <Heart className="w-4 h-4 text-timeline-shape" />
+                    </div>
+                    <span className="text-[10px] text-muted-foreground group-hover:text-foreground">
+                      Heart
                     </span>
                   </button>
                 </div>

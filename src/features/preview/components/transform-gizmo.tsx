@@ -41,6 +41,7 @@ export function TransformGizmo({
   const activeGizmo = useGizmoStore((s) => s.activeGizmo);
   const previewTransform = useGizmoStore((s) => s.previewTransform);
   const propertiesPreview = useGizmoStore((s) => s.propertiesPreview);
+  const itemPropertiesPreview = useGizmoStore((s) => s.itemPropertiesPreview);
   const startTranslate = useGizmoStore((s) => s.startTranslate);
   const startScale = useGizmoStore((s) => s.startScale);
   const startRotate = useGizmoStore((s) => s.startRotate);
@@ -85,10 +86,31 @@ export function TransformGizmo({
     return baseTransform;
   }, [item, coordParams, isInteracting, previewTransform, propertiesPreview]);
 
-  // Convert to screen bounds
+  // Convert to screen bounds, expanding for stroke width on shapes
   const screenBounds = useMemo(() => {
-    return transformToScreenBounds(currentTransform, coordParams);
-  }, [currentTransform, coordParams]);
+    const bounds = transformToScreenBounds(currentTransform, coordParams);
+
+    // Expand bounds for stroke width on shape items
+    if (item.type === 'shape') {
+      // Get stroke width from item properties preview or item
+      const previewStroke = itemPropertiesPreview?.[item.id]?.strokeWidth;
+      const strokeWidth = previewStroke ?? item.strokeWidth ?? 0;
+
+      if (strokeWidth > 0) {
+        // Scale stroke width to screen space
+        const scale = coordParams.playerSize.width / coordParams.projectSize.width;
+        const screenStroke = strokeWidth * scale;
+
+        // Expand bounds by half stroke on each side (stroke is centered on path)
+        bounds.left -= screenStroke / 2;
+        bounds.top -= screenStroke / 2;
+        bounds.width += screenStroke;
+        bounds.height += screenStroke;
+      }
+    }
+
+    return bounds;
+  }, [currentTransform, coordParams, item, itemPropertiesPreview]);
 
   // Helper to convert screen position to canvas position
   const toCanvasPoint = useCallback(
@@ -138,6 +160,9 @@ export function TransformGizmo({
     );
   }, []);
 
+  // Get stroke width for shapes (used in snapping)
+  const strokeWidth = item.type === 'shape' ? item.strokeWidth ?? 0 : 0;
+
   // Mouse event handlers
   const handleTranslateStart = useCallback(
     (e: React.MouseEvent) => {
@@ -145,7 +170,7 @@ export function TransformGizmo({
       e.preventDefault();
       const point = toCanvasPoint(e);
       const startTransformSnapshot = { ...currentTransform };
-      startTranslate(item.id, point, currentTransform);
+      startTranslate(item.id, point, currentTransform, strokeWidth);
       onTransformStart();
       document.body.style.cursor = 'move';
 
@@ -172,7 +197,7 @@ export function TransformGizmo({
       window.addEventListener('mousemove', handleMouseMove);
       window.addEventListener('mouseup', handleMouseUp);
     },
-    [item.id, currentTransform, toCanvasPoint, startTranslate, updateInteraction, endInteraction, clearInteraction, onTransformStart, onTransformEnd, transformChanged]
+    [item.id, currentTransform, toCanvasPoint, startTranslate, updateInteraction, endInteraction, clearInteraction, onTransformStart, onTransformEnd, transformChanged, strokeWidth]
   );
 
   const handleScaleStart = useCallback(
@@ -181,7 +206,7 @@ export function TransformGizmo({
       e.preventDefault();
       const point = toCanvasPoint(e);
       const startTransformSnapshot = { ...currentTransform };
-      startScale(item.id, handle, point, currentTransform, item.type, item.transform?.aspectRatioLocked);
+      startScale(item.id, handle, point, currentTransform, item.type, item.transform?.aspectRatioLocked, strokeWidth);
       onTransformStart();
       document.body.style.cursor = getScaleCursor(handle, currentTransform.rotation);
 
@@ -207,7 +232,7 @@ export function TransformGizmo({
       window.addEventListener('mousemove', handleMouseMove);
       window.addEventListener('mouseup', handleMouseUp);
     },
-    [item.id, currentTransform, toCanvasPoint, startScale, updateInteraction, endInteraction, clearInteraction, onTransformStart, onTransformEnd, transformChanged]
+    [item.id, currentTransform, toCanvasPoint, startScale, updateInteraction, endInteraction, clearInteraction, onTransformStart, onTransformEnd, transformChanged, strokeWidth]
   );
 
   const handleRotateStart = useCallback(
@@ -216,7 +241,7 @@ export function TransformGizmo({
       e.preventDefault();
       const point = toCanvasPoint(e);
       const startTransformSnapshot = { ...currentTransform };
-      startRotate(item.id, point, currentTransform);
+      startRotate(item.id, point, currentTransform, strokeWidth);
       onTransformStart();
       document.body.style.cursor = 'crosshair';
 
@@ -242,7 +267,7 @@ export function TransformGizmo({
       window.addEventListener('mousemove', handleMouseMove);
       window.addEventListener('mouseup', handleMouseUp);
     },
-    [item.id, currentTransform, toCanvasPoint, startRotate, updateInteraction, endInteraction, clearInteraction, onTransformStart, onTransformEnd, transformChanged]
+    [item.id, currentTransform, toCanvasPoint, startRotate, updateInteraction, endInteraction, clearInteraction, onTransformStart, onTransformEnd, transformChanged, strokeWidth]
   );
 
   // Handle escape key to cancel interaction

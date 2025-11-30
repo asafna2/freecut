@@ -436,6 +436,31 @@ const ShapeContent: React.FC<{ item: ShapeItem }> = ({ item }) => {
       );
     }
 
+    case 'heart': {
+      // Heart: custom SVG path, squish/squash when aspect unlocked
+      // SVG heart path designed for 100x100 viewBox, centered at 50,50
+      const heartPath = 'M50 88.9C25 71.4 5 52.4 5 33.9c0-13.3 10.7-24 24-24 7.4 0 14.5 3.4 19.1 8.8L50 21l1.9-2.3C56.5 13.4 63.6 10 71 10c13.3 0 24 10.7 24 24 0 18.5-20 37.5-45 55z';
+      return (
+        <div style={centerStyle}>
+          <div style={scaleStyle}>
+            <svg
+              width={baseSize}
+              height={baseSize}
+              viewBox="0 0 100 100"
+              style={{ overflow: 'visible' }}
+            >
+              <path
+                d={heartPath}
+                fill={fillColor}
+                stroke={strokeColor}
+                strokeWidth={strokeWidth > 0 ? (strokeWidth / baseSize) * 100 : 0}
+              />
+            </svg>
+          </div>
+        </div>
+      );
+    }
+
     default:
       // Fallback to simple colored div for unknown types
       return (

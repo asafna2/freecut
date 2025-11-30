@@ -26,6 +26,7 @@ const SHAPE_TYPE_OPTIONS: { value: ShapeType; label: string }[] = [
   { value: 'ellipse', label: 'Ellipse' },
   { value: 'star', label: 'Star' },
   { value: 'polygon', label: 'Polygon' },
+  { value: 'heart', label: 'Heart' },
 ];
 
 // Triangle direction options
@@ -239,21 +240,31 @@ export function ShapeSection({ items }: ShapeSectionProps) {
   // Stroke width handlers with live preview
   const handleStrokeWidthLiveChange = useCallback(
     (value: number) => {
-      const previews: Record<string, { strokeWidth: number }> = {};
+      const previews: Record<string, { strokeWidth: number; strokeColor?: string }> = {};
       itemIds.forEach((id) => {
-        previews[id] = { strokeWidth: value };
+        // Include default stroke color in preview if not already set
+        if (value > 0 && !sharedValues?.strokeColor) {
+          previews[id] = { strokeWidth: value, strokeColor: '#1e40af' };
+        } else {
+          previews[id] = { strokeWidth: value };
+        }
       });
       setItemPropertiesPreview(previews);
     },
-    [itemIds, setItemPropertiesPreview]
+    [itemIds, setItemPropertiesPreview, sharedValues?.strokeColor]
   );
 
   const handleStrokeWidthChange = useCallback(
     (value: number) => {
-      updateShapeItems({ strokeWidth: value });
+      // When increasing stroke width from 0, also set default stroke color if not set
+      if (value > 0 && sharedValues?.strokeWidth === 0 && !sharedValues?.strokeColor) {
+        updateShapeItems({ strokeWidth: value, strokeColor: '#1e40af' });
+      } else {
+        updateShapeItems({ strokeWidth: value });
+      }
       queueMicrotask(() => clearItemPropertiesPreview());
     },
-    [updateShapeItems, clearItemPropertiesPreview]
+    [updateShapeItems, clearItemPropertiesPreview, sharedValues?.strokeWidth, sharedValues?.strokeColor]
   );
 
   // Corner radius handlers with live preview
@@ -359,16 +370,6 @@ export function ShapeSection({ items }: ShapeSectionProps) {
         defaultColor="#3b82f6"
       />
 
-      {/* Stroke Color */}
-      <ShapeColorPicker
-        label="Stroke"
-        color={sharedValues.strokeColor || '#1e40af'}
-        onChange={handleStrokeColorChange}
-        onLiveChange={handleStrokeColorLiveChange}
-        onReset={() => handleStrokeColorChange('')}
-        defaultColor=""
-      />
-
       {/* Stroke Width */}
       <PropertyRow label="Stroke W.">
         <NumberInput
@@ -381,6 +382,18 @@ export function ShapeSection({ items }: ShapeSectionProps) {
           unit="px"
         />
       </PropertyRow>
+
+      {/* Stroke Color - only show when stroke width > 0 */}
+      {(sharedValues.strokeWidth === 'mixed' || sharedValues.strokeWidth > 0) && (
+        <ShapeColorPicker
+          label="Stroke"
+          color={sharedValues.strokeColor || '#1e40af'}
+          onChange={handleStrokeColorChange}
+          onLiveChange={handleStrokeColorLiveChange}
+          onReset={() => handleStrokeColorChange('')}
+          defaultColor=""
+        />
+      )}
 
       {/* Corner Radius - shown for rectangle, triangle, star, polygon */}
       {showCornerRadius && (

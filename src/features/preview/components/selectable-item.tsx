@@ -50,10 +50,29 @@ export function SelectableItem({
     };
   }, [item, coordParams]);
 
-  // Convert to screen bounds for positioning
+  // Convert to screen bounds for positioning, expanding for stroke width on shapes
   const screenBounds = useMemo(() => {
-    return transformToScreenBounds(currentTransform, coordParams);
-  }, [currentTransform, coordParams]);
+    const bounds = transformToScreenBounds(currentTransform, coordParams);
+
+    // Expand bounds for stroke width on shape items
+    if (item.type === 'shape') {
+      const strokeWidth = item.strokeWidth ?? 0;
+
+      if (strokeWidth > 0) {
+        // Scale stroke width to screen space
+        const scale = coordParams.playerSize.width / coordParams.projectSize.width;
+        const screenStroke = strokeWidth * scale;
+
+        // Expand bounds by half stroke on each side (stroke is centered on path)
+        bounds.left -= screenStroke / 2;
+        bounds.top -= screenStroke / 2;
+        bounds.width += screenStroke;
+        bounds.height += screenStroke;
+      }
+    }
+
+    return bounds;
+  }, [currentTransform, coordParams, item]);
 
   // Handle mousedown - select and start dragging in one motion
   const handleMouseDown = useCallback((e: React.MouseEvent) => {

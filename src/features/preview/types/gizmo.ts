@@ -66,6 +66,8 @@ export interface GizmoState {
   itemType?: 'video' | 'audio' | 'image' | 'text' | 'shape';
   /** Whether aspect ratio is locked for this item (from item.transform.aspectRatioLocked) */
   aspectRatioLocked?: boolean;
+  /** Stroke width for snapping expansion (shapes with strokes) */
+  strokeWidth?: number;
 }
 
 /**

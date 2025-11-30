@@ -63,16 +63,24 @@ function getScaleSnapPoints(canvasWidth: number, canvasHeight: number) {
 /**
  * Get item edges and center in canvas coordinates.
  * Transform x/y is offset from canvas center.
+ * @param strokeExpansion - Optional stroke width to expand bounds (for shapes with strokes)
  */
-function getItemBounds(transform: Transform, canvasWidth: number, canvasHeight: number) {
+function getItemBounds(
+  transform: Transform,
+  canvasWidth: number,
+  canvasHeight: number,
+  strokeExpansion: number = 0
+) {
   const centerX = canvasWidth / 2 + transform.x;
   const centerY = canvasHeight / 2 + transform.y;
+  // Expand bounds by half stroke on each side
+  const expand = strokeExpansion / 2;
 
   return {
-    left: centerX - transform.width / 2,
-    right: centerX + transform.width / 2,
-    top: centerY - transform.height / 2,
-    bottom: centerY + transform.height / 2,
+    left: centerX - transform.width / 2 - expand,
+    right: centerX + transform.width / 2 + expand,
+    top: centerY - transform.height / 2 - expand,
+    bottom: centerY + transform.height / 2 + expand,
     centerX,
     centerY,
   };
@@ -82,15 +90,17 @@ function getItemBounds(transform: Transform, canvasWidth: number, canvasHeight: 
  * Apply snapping to a transform during drag operations.
  * Snaps item edges and center to canvas snap points.
  * Uses hysteresis (sticky snapping) - harder to exit a snap than to enter it.
+ * @param strokeExpansion - Optional stroke width to expand bounds (for shapes with strokes)
  */
 export function applySnapping(
   transform: Transform,
   canvasWidth: number,
   canvasHeight: number,
-  currentSnapLines: SnapLine[] = []
+  currentSnapLines: SnapLine[] = [],
+  strokeExpansion: number = 0
 ): SnapResult {
   const snapPoints = getTranslateSnapPoints(canvasWidth, canvasHeight);
-  const bounds = getItemBounds(transform, canvasWidth, canvasHeight);
+  const bounds = getItemBounds(transform, canvasWidth, canvasHeight, strokeExpansion);
   const snapLines: SnapLine[] = [];
 
   // Check if currently snapped to vertical/horizontal lines
@@ -186,15 +196,17 @@ export function applySnapping(
  * Snaps item edges to canvas snap points while maintaining aspect ratio.
  * Uses uniform scaling to prevent visual distortion.
  * Uses hysteresis (sticky snapping) - harder to exit a snap than to enter it.
+ * @param strokeExpansion - Optional stroke width to expand bounds (for shapes with strokes)
  */
 export function applyScaleSnapping(
   transform: Transform,
   canvasWidth: number,
   canvasHeight: number,
-  currentSnapLines: SnapLine[] = []
+  currentSnapLines: SnapLine[] = [],
+  strokeExpansion: number = 0
 ): SnapResult {
   const snapPoints = getScaleSnapPoints(canvasWidth, canvasHeight);
-  const bounds = getItemBounds(transform, canvasWidth, canvasHeight);
+  const bounds = getItemBounds(transform, canvasWidth, canvasHeight, strokeExpansion);
   const snapLines: SnapLine[] = [];
   const aspectRatio = transform.width / transform.height;
 

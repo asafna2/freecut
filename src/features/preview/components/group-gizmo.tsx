@@ -102,15 +102,34 @@ export function GroupGizmo({
     return calculateGroupBounds(currentTransforms, projectSize.width, projectSize.height);
   }, [currentTransforms, projectSize]);
 
-  // Convert group bounds to screen coordinates
+  // Convert group bounds to screen coordinates, expanding for stroke width on shapes
   const screenBounds = useMemo(() => {
-    return {
+    const bounds = {
       left: groupBounds.left * scale,
       top: groupBounds.top * scale,
       width: groupBounds.width * scale,
       height: groupBounds.height * scale,
     };
-  }, [groupBounds, scale]);
+
+    // Find maximum stroke width among shape items
+    let maxStrokeWidth = 0;
+    for (const item of items) {
+      if (item.type === 'shape' && item.strokeWidth) {
+        maxStrokeWidth = Math.max(maxStrokeWidth, item.strokeWidth);
+      }
+    }
+
+    // Expand bounds for stroke width
+    if (maxStrokeWidth > 0) {
+      const screenStroke = maxStrokeWidth * scale;
+      bounds.left -= screenStroke / 2;
+      bounds.top -= screenStroke / 2;
+      bounds.width += screenStroke;
+      bounds.height += screenStroke;
+    }
+
+    return bounds;
+  }, [groupBounds, scale, items]);
 
   // Group center for display (no rotation for group gizmo itself)
   const groupRotation = 0;
@@ -183,6 +202,7 @@ export function GroupGizmo({
       // Check items in reverse order (top items first, assuming later items render on top)
       for (let i = items.length - 1; i >= 0; i--) {
         const item = items[i];
+        if (!item) continue;
         const transform = itemTransforms.get(item.id);
         if (!transform) continue;
 

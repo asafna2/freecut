@@ -83,7 +83,7 @@ export type ImageItem = BaseTimelineItem & {
   sourceHeight?: number;
 };
 
-export type ShapeType = 'rectangle' | 'circle' | 'triangle' | 'ellipse' | 'star' | 'polygon';
+export type ShapeType = 'rectangle' | 'circle' | 'triangle' | 'ellipse' | 'star' | 'polygon' | 'heart';
 
 export type ShapeItem = BaseTimelineItem & {
   type: 'shape';
