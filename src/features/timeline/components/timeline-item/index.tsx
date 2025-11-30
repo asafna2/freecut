@@ -538,7 +538,7 @@ export const TimelineItem = memo(function TimelineItem({ item, timelineDuration 
             />
             {/* Overlayed label */}
             <div
-              className="absolute top-0 left-0 right-0 px-2 text-[11px] font-medium truncate"
+              className="absolute top-0 left-0 max-w-full px-2 text-[11px] font-medium truncate"
               style={{ lineHeight: `${CLIP_LABEL_HEIGHT}px` }}
             >
               {item.label}
