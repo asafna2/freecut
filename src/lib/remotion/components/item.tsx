@@ -843,12 +843,9 @@ const EffectWrapper: React.FC<{
     return getGlitchFilterString(glitchEffects, frame);
   }, [glitchEffects, frame]);
 
-  // If no effects, render children directly
-  if (effects.length === 0) {
-    return <>{children}</>;
-  }
-
   // Combine all CSS filters
+  // NOTE: No early return for empty effects - we always render the same div structure
+  // to prevent DOM changes when effects are added/removed (prevents re-render)
   const combinedFilter = [cssFilterString, glitchFilterString].filter(Boolean).join(' ');
 
   // Check for RGB split effect
