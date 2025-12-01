@@ -158,6 +158,25 @@ export function EffectsSection({ items }: EffectsSectionProps) {
     [itemIds, toggleEffect]
   );
 
+  // Check if all effects are enabled
+  const allEffectsEnabled = useMemo(
+    () => effects.length > 0 && effects.every((e) => e.enabled),
+    [effects]
+  );
+
+  // Toggle all effects on/off
+  const handleToggleAll = useCallback(() => {
+    const newEnabled = !allEffectsEnabled;
+    itemIds.forEach((id) => {
+      effects.forEach((effect) => {
+        // Only toggle if current state differs from target
+        if (effect.enabled !== newEnabled) {
+          toggleEffect(id, effect.id);
+        }
+      });
+    });
+  }, [itemIds, effects, allEffectsEnabled, toggleEffect]);
+
   // Remove effect
   const handleRemove = useCallback(
     (effectId: string) => {
@@ -170,11 +189,11 @@ export function EffectsSection({ items }: EffectsSectionProps) {
 
   return (
     <PropertySection title="Effects" icon={Sparkles} defaultOpen={true}>
-      {/* Add Effect Dropdown */}
-      <div className="px-2 pb-2">
+      {/* Add Effect Dropdown + Toggle All */}
+      <div className="px-2 pb-2 flex gap-1">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="outline" size="sm" className="w-full h-7 text-xs">
+            <Button variant="outline" size="sm" className="flex-1 h-7 text-xs">
               <Plus className="w-3 h-3 mr-1" />
               Add Effect
             </Button>
@@ -224,6 +243,21 @@ export function EffectsSection({ items }: EffectsSectionProps) {
             ))}
           </DropdownMenuContent>
         </DropdownMenu>
+        {effects.length > 0 && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 px-2"
+            onClick={handleToggleAll}
+            title={allEffectsEnabled ? 'Disable all effects' : 'Enable all effects'}
+          >
+            {allEffectsEnabled ? (
+              <EyeOff className="w-3.5 h-3.5" />
+            ) : (
+              <Eye className="w-3.5 h-3.5" />
+            )}
+          </Button>
+        )}
       </div>
 
       {/* Active Effects List */}
