@@ -28,7 +28,8 @@ interface VideoEditorDB extends DBSchema {
       fileName: string;
       mimeType: string;
       createdAt: number;
-      contentHash: string; // NEW: for deduplication lookup
+      contentHash: string; // for deduplication lookup
+      storageType: string; // v7: 'handle' or 'opfs'
       tags: string;
     };
   };
@@ -86,7 +87,7 @@ interface VideoEditorDB extends DBSchema {
 }
 
 const DB_NAME = 'video-editor-db';
-const DB_VERSION = 6; // v6: Add gifFrames store for pre-extracted GIF animation frames
+const DB_VERSION = 7; // v7: Add storageType for file handle support (local-first)
 
 let dbPromise: Promise<IDBPDatabase<VideoEditorDB>> | null = null;
 
@@ -204,6 +205,19 @@ export async function getDB(): Promise<IDBPDatabase<VideoEditorDB>> {
             gifFrameStore.createIndex('createdAt', 'createdAt', {
               unique: false,
             });
+          }
+        }
+
+        // v7: Add storageType index for file handle support (local-first)
+        // Existing media records are OPFS-based, so they get storageType: 'opfs'
+        if (oldVersion < 7) {
+          if (db.objectStoreNames.contains('media')) {
+            const mediaStore = transaction.objectStore('media');
+            if (!mediaStore.indexNames.contains('storageType')) {
+              mediaStore.createIndex('storageType', 'storageType', {
+                unique: false,
+              });
+            }
           }
         }
       },
@@ -736,13 +750,51 @@ export async function getContentByHash(
 }
 
 /**
- * Create a new content record
+ * Check if any content exists with the given file size
+ * Used for fast deduplication check - if no size match, can't be a duplicate
+ */
+export async function hasContentWithSize(fileSize: number): Promise<boolean> {
+  try {
+    const db = await getDB();
+    const allContent = await db.getAll('content');
+    return allContent.some((content) => content.fileSize === fileSize);
+  } catch (error) {
+    console.error('Failed to check content by size:', error);
+    return false; // On error, assume no match (will proceed with full check)
+  }
+}
+
+/**
+ * Create a new content record, or increment ref count if it already exists
+ * Handles race conditions from concurrent uploads of the same file
  */
 export async function createContent(record: ContentRecord): Promise<void> {
   try {
     const db = await getDB();
-    await db.add('content', record);
+    const existing = await db.get('content', record.hash);
+
+    if (existing) {
+      // Content already exists (race condition) - just increment ref count
+      await db.put('content', {
+        ...existing,
+        referenceCount: existing.referenceCount + 1,
+      });
+    } else {
+      await db.add('content', record);
+    }
   } catch (error) {
+    // Handle race condition where another upload created the record between our check and add
+    if (error instanceof Error && error.name === 'ConstraintError') {
+      const db = await getDB();
+      const existing = await db.get('content', record.hash);
+      if (existing) {
+        await db.put('content', {
+          ...existing,
+          referenceCount: existing.referenceCount + 1,
+        });
+        return;
+      }
+    }
     console.error('Failed to create content record:', error);
     throw error;
   }
@@ -912,6 +964,7 @@ export async function getProjectsUsingMedia(mediaId: string): Promise<string[]> 
 
 /**
  * Get all media metadata for a project
+ * Also cleans up orphaned projectMedia entries where the media no longer exists
  */
 export async function getMediaForProject(
   projectId: string
@@ -921,10 +974,27 @@ export async function getMediaForProject(
     const db = await getDB();
 
     const media: MediaMetadata[] = [];
+    const orphanedIds: string[] = [];
+
     for (const id of mediaIds) {
       const item = await db.get('media', id);
       if (item) {
         media.push(item);
+      } else {
+        // Media no longer exists - mark for cleanup
+        orphanedIds.push(id);
+      }
+    }
+
+    // Clean up orphaned projectMedia entries
+    if (orphanedIds.length > 0) {
+      console.warn(`Cleaning up ${orphanedIds.length} orphaned projectMedia entries for project ${projectId}`);
+      for (const mediaId of orphanedIds) {
+        try {
+          await db.delete('projectMedia', [projectId, mediaId]);
+        } catch (error) {
+          console.warn(`Failed to clean up orphaned entry for media ${mediaId}:`, error);
+        }
       }
     }
 

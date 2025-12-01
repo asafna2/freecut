@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { Loader2, Upload, AlertTriangle } from 'lucide-react';
 import { MediaCard } from './media-card';
 import { useMediaLibraryStore, useFilteredMediaItems } from '../stores/media-library-store';
@@ -19,16 +19,15 @@ import {
 
 export interface MediaGridProps {
   onMediaSelect?: (mediaId: string) => void;
-  onUpload: (files: File[]) => void;
-  disabled?: boolean;
+  onImportHandles: (handles: FileSystemFileHandle[]) => Promise<void>;
+  onShowNotification: (notification: { type: 'info' | 'warning' | 'error'; message: string }) => void;
   viewMode?: 'grid' | 'list';
 }
 
-export function MediaGrid({ onMediaSelect, onUpload, disabled = false, viewMode = 'grid' }: MediaGridProps) {
+export function MediaGrid({ onMediaSelect, onImportHandles, onShowNotification, viewMode = 'grid' }: MediaGridProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [mediaIdToDelete, setMediaIdToDelete] = useState<string | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const wasMarqueeDraggingRef = useRef(false);
   const hasAnimatedRef = useRef(false);
@@ -82,7 +81,7 @@ export function MediaGrid({ onMediaSelect, onUpload, disabled = false, viewMode 
     onSelectionChange: (ids) => {
       selectMedia(ids);
     },
-    enabled: !disabled && filteredItems.length > 0,
+    enabled: filteredItems.length > 0,
   });
 
   // Track when marquee was active to prevent click from clearing selection
@@ -149,7 +148,7 @@ export function MediaGrid({ onMediaSelect, onUpload, disabled = false, viewMode 
 
     // Don't show drag overlay if dragging media items from the grid
     // Media items have 'application/json' type, external files have 'Files' type
-    if (!disabled && !e.dataTransfer.types.includes('application/json')) {
+    if (!e.dataTransfer.types.includes('application/json')) {
       setIsDragging(true);
     }
   };
@@ -163,12 +162,10 @@ export function MediaGrid({ onMediaSelect, onUpload, disabled = false, viewMode 
     }
   };
 
-  const handleDrop = (e: React.DragEvent) => {
+  const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(false);
-
-    if (disabled) return;
 
     // Check if this is a media item being dragged (not external files)
     try {
@@ -176,7 +173,7 @@ export function MediaGrid({ onMediaSelect, onUpload, disabled = false, viewMode 
       if (jsonData) {
         const data = JSON.parse(jsonData);
         // Ignore media items being dragged from the grid itself
-        if (data.type === 'media-item') {
+        if (data.type === 'media-item' || data.type === 'media-items') {
           return;
         }
       }
@@ -184,48 +181,72 @@ export function MediaGrid({ onMediaSelect, onUpload, disabled = false, viewMode 
       // Not JSON data, continue with file handling
     }
 
-    // Only process if there are actual files
-    const files = Array.from(e.dataTransfer.files);
-    if (files.length === 0) return;
-
-    handleFiles(files);
-  };
-
-  const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files ? Array.from(e.target.files) : [];
-    handleFiles(files);
-
-    // Reset input so the same file can be selected again
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
+    // Check if getAsFileSystemHandle is supported (Chrome/Edge only)
+    const firstItem = e.dataTransfer.items[0];
+    if (!firstItem || !('getAsFileSystemHandle' in firstItem)) {
+      onShowNotification({
+        type: 'warning',
+        message: 'Drag-drop not supported in this browser. Use the Import button instead.',
+      });
+      return;
     }
-  };
 
-  const handleFiles = (files: File[]) => {
-    if (files.length === 0) return;
+    // Get file handles from drop
+    // IMPORTANT: Collect all handle promises SYNCHRONOUSLY first, then await them
+    // The DataTransferItemList can become invalid after any async operation
+    const items = Array.from(e.dataTransfer.items);
+    console.log(`[handleDrop] Processing ${items.length} dropped items`);
 
-    // Validate all files
-    const validFiles: File[] = [];
-    const errors: string[] = [];
-
-    for (const file of files) {
-      const validation = validateMediaFile(file);
-      if (validation.valid) {
-        validFiles.push(file);
-      } else {
-        errors.push(`${file.name}: ${validation.error}`);
+    // Start all getAsFileSystemHandle calls synchronously before any await
+    const handlePromises: Promise<FileSystemHandle | null>[] = [];
+    for (const item of items) {
+      console.log(`[handleDrop] Item kind: ${item.kind}, type: ${item.type}`);
+      if ('getAsFileSystemHandle' in item) {
+        handlePromises.push(item.getAsFileSystemHandle());
       }
     }
 
-    // Show errors if any
-    if (errors.length > 0) {
-      console.error('File validation errors:', errors);
-      alert(`Some files were rejected:\\n\\n${errors.join('\\n')}`);
+    // Now await all the promises
+    const rawHandles = await Promise.all(handlePromises);
+    console.log(`[handleDrop] Got ${rawHandles.length} raw handles`);
+
+    // Filter and validate
+    const handles: FileSystemFileHandle[] = [];
+    const errors: string[] = [];
+
+    for (const handle of rawHandles) {
+      console.log(`[handleDrop] Handle:`, handle?.kind, handle?.name);
+      if (handle?.kind === 'file') {
+        try {
+          const file = await (handle as FileSystemFileHandle).getFile();
+          console.log(`[handleDrop] File: ${file.name}, size: ${file.size}, type: ${file.type}`);
+          const validation = validateMediaFile(file);
+          if (validation.valid) {
+            handles.push(handle as FileSystemFileHandle);
+            console.log(`[handleDrop] Added handle for ${file.name}`);
+          } else {
+            errors.push(`${file.name}: ${validation.error}`);
+            console.log(`[handleDrop] Validation failed for ${file.name}: ${validation.error}`);
+          }
+        } catch (error) {
+          console.warn(`[handleDrop] Failed to get file from handle:`, error);
+        }
+      }
     }
 
-    // Upload valid files
-    if (validFiles.length > 0) {
-      onUpload(validFiles);
+    console.log(`[handleDrop] Total valid handles: ${handles.length}, errors: ${errors.length}`);
+
+    // Show validation errors if any
+    if (errors.length > 0) {
+      onShowNotification({
+        type: 'error',
+        message: `Some files were rejected: ${errors.join(', ')}`,
+      });
+    }
+
+    // Import valid file handles
+    if (handles.length > 0) {
+      await onImportHandles(handles);
     }
   };
 
@@ -242,11 +263,6 @@ export function MediaGrid({ onMediaSelect, onUpload, disabled = false, viewMode 
     if (!clickedOnCard) {
       // Clear selection when clicking empty area (not on a card)
       selectMedia([]);
-
-      // Open file browser if no items exist
-      if (!disabled && filteredItems.length === 0) {
-        fileInputRef.current?.click();
-      }
     }
   };
 
@@ -260,17 +276,6 @@ export function MediaGrid({ onMediaSelect, onUpload, disabled = false, viewMode 
       onDrop={handleDrop}
       onClick={handleContainerClick}
     >
-      {/* Hidden file input */}
-      <input
-        ref={fileInputRef}
-        type="file"
-        multiple
-        accept="video/*,audio/*,image/*"
-        onChange={handleFileInputChange}
-        disabled={disabled}
-        className="hidden"
-      />
-
       {/* Marquee selection overlay */}
       <MarqueeOverlay marqueeState={marqueeState} />
 

@@ -1,6 +1,7 @@
 import type {
   OPFSWorkerMessage,
   OPFSWorkerResponse,
+  UploadProgress,
 } from '../workers/opfs-worker';
 
 /**
@@ -110,6 +111,113 @@ export class OPFSService {
     });
 
     return files;
+  }
+
+  /**
+   * Process a file upload entirely in the worker
+   *
+   * Handles file reading, SHA-256 hashing, and OPFS storage off the main thread.
+   * Uses streaming to process large files without blocking the UI.
+   *
+   * @param file - The File object to upload
+   * @param onProgress - Optional progress callback
+   * @returns Object with content hash, bytes written, and OPFS path
+   */
+  async processUpload(
+    file: File,
+    onProgress?: (progress: { bytesWritten: number; percent: number }) => void
+  ): Promise<{ hash: string; bytesWritten: number; opfsPath: string }> {
+    return new Promise((resolve, reject) => {
+      const channel = new MessageChannel();
+
+      channel.port1.onmessage = (
+        event: MessageEvent<OPFSWorkerResponse | UploadProgress>
+      ) => {
+        // Handle progress updates
+        if ('type' in event.data && event.data.type === 'progress') {
+          const progress = event.data as UploadProgress;
+          onProgress?.({
+            bytesWritten: progress.bytesWritten,
+            percent: progress.percent,
+          });
+          return;
+        }
+
+        // Handle final response
+        const response = event.data as OPFSWorkerResponse;
+        if (response.success) {
+          resolve({
+            hash: response.hash!,
+            bytesWritten: response.bytesWritten!,
+            opfsPath: response.data as unknown as string,
+          });
+        } else {
+          reject(new Error(response.error || 'Upload processing failed'));
+        }
+      };
+
+      this.getWorker().postMessage(
+        {
+          type: 'processUpload',
+          payload: { file, fileSize: file.size },
+        } as OPFSWorkerMessage,
+        [channel.port2]
+      );
+    });
+  }
+
+  /**
+   * Save a file upload directly to target path WITHOUT hashing
+   *
+   * Used when file size is unique (no potential duplicates).
+   * Faster than processUpload since it skips hash computation.
+   *
+   * @param file - The File object to upload
+   * @param targetPath - Direct OPFS path to save to
+   * @param onProgress - Optional progress callback
+   * @returns Object with bytes written and OPFS path
+   */
+  async saveUpload(
+    file: File,
+    targetPath: string,
+    onProgress?: (progress: { bytesWritten: number; percent: number }) => void
+  ): Promise<{ bytesWritten: number; opfsPath: string }> {
+    return new Promise((resolve, reject) => {
+      const channel = new MessageChannel();
+
+      channel.port1.onmessage = (
+        event: MessageEvent<OPFSWorkerResponse | UploadProgress>
+      ) => {
+        // Handle progress updates
+        if ('type' in event.data && event.data.type === 'progress') {
+          const progress = event.data as UploadProgress;
+          onProgress?.({
+            bytesWritten: progress.bytesWritten,
+            percent: progress.percent,
+          });
+          return;
+        }
+
+        // Handle final response
+        const response = event.data as OPFSWorkerResponse;
+        if (response.success) {
+          resolve({
+            bytesWritten: response.bytesWritten!,
+            opfsPath: response.data as unknown as string,
+          });
+        } else {
+          reject(new Error(response.error || 'Save upload failed'));
+        }
+      };
+
+      this.getWorker().postMessage(
+        {
+          type: 'saveUpload',
+          payload: { file, targetPath },
+        } as OPFSWorkerMessage,
+        [channel.port2]
+      );
+    });
   }
 
   /**

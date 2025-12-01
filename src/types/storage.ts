@@ -1,7 +1,33 @@
+/**
+ * Storage type for media files
+ * - 'handle': Uses FileSystemFileHandle (instant import, reads from user's disk)
+ * - 'opfs': Uses OPFS copy (for drag-drop without handle, or imported URLs)
+ */
+export type MediaStorageType = 'handle' | 'opfs';
+
 export interface MediaMetadata {
   id: string;
-  contentHash: string; // SHA-256 hash of file content for deduplication
-  opfsPath: string; // Derived from contentHash: content/{hash[0:2]}/{hash[2:4]}/{hash}/data
+  /**
+   * How the media file is stored
+   * - 'handle': FileSystemFileHandle references user's original file (instant, no copy)
+   * - 'opfs': File copied to Origin Private File System (for drag-drop, URLs)
+   */
+  storageType: MediaStorageType;
+  /**
+   * FileSystemFileHandle for direct disk access (when storageType === 'handle')
+   * Stored in IndexedDB - requires permission re-request on new sessions
+   */
+  fileHandle?: FileSystemFileHandle;
+  /**
+   * OPFS path (when storageType === 'opfs')
+   * Format: content/{shard1}/{shard2}/{uuid}/data
+   */
+  opfsPath?: string;
+  /**
+   * Content identifier for deduplication (hash or UUID)
+   * Only computed when needed for dedup checks
+   */
+  contentHash?: string;
   fileName: string;
   fileSize: number;
   mimeType: string;

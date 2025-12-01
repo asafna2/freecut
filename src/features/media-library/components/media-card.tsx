@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Video, FileAudio, Image as ImageIcon, MoreVertical, Trash2 } from 'lucide-react';
+import { Video, FileAudio, Image as ImageIcon, MoreVertical, Trash2, Loader2 } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -25,22 +25,19 @@ export function MediaCard({ media, selected = false, onSelect, onDelete, viewMod
   const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null);
   const selectedMediaIds = useMediaLibraryStore((s) => s.selectedMediaIds);
   const mediaItems = useMediaLibraryStore((s) => s.mediaItems);
+  const importingIds = useMediaLibraryStore((s) => s.importingIds);
 
   const mediaType = getMediaType(media.mimeType);
+  const isImporting = importingIds.includes(media.id);
 
-  // Load thumbnail on mount
+  // Load thumbnail on mount (URLs are cached by the service, no need to revoke)
   useEffect(() => {
     let mounted = true;
-    let currentUrl: string | null = null;
 
     const loadThumbnail = async () => {
       const url = await mediaLibraryService.getThumbnailBlobUrl(media.id);
       if (mounted) {
-        currentUrl = url;
         setThumbnailUrl(url);
-      } else if (url) {
-        // If unmounted during async operation, clean up the created URL
-        URL.revokeObjectURL(url);
       }
     };
 
@@ -48,10 +45,6 @@ export function MediaCard({ media, selected = false, onSelect, onDelete, viewMod
 
     return () => {
       mounted = false;
-      // Cleanup blob URL using the ref from closure
-      if (currentUrl) {
-        URL.revokeObjectURL(currentUrl);
-      }
     };
   }, [media.id]);
 
@@ -138,11 +131,12 @@ export function MediaCard({ media, selected = false, onSelect, onDelete, viewMod
             ? 'border-primary ring-1 ring-primary/20'
             : 'border-border hover:border-primary/50'
           }
+          ${isImporting ? 'opacity-80 cursor-default' : ''}
         `}
-        draggable
-        onDragStart={handleDragStart}
-        onDragEnd={handleDragEnd}
-        onClick={handleClick}
+        draggable={!isImporting}
+        onDragStart={isImporting ? undefined : handleDragStart}
+        onDragEnd={isImporting ? undefined : handleDragEnd}
+        onClick={isImporting ? undefined : handleClick}
       >
         {/* Thumbnail */}
         <div className="w-16 h-12 bg-secondary rounded overflow-hidden flex-shrink-0 relative">
@@ -157,6 +151,12 @@ export function MediaCard({ media, selected = false, onSelect, onDelete, viewMod
               {getIcon()}
             </div>
           )}
+          {/* Importing overlay for list view thumbnail */}
+          {isImporting && (
+            <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
+              <Loader2 className="w-4 h-4 text-white animate-spin" />
+            </div>
+          )}
         </div>
 
         {/* Info */}
@@ -164,41 +164,50 @@ export function MediaCard({ media, selected = false, onSelect, onDelete, viewMod
           <h3 className="text-xs font-medium text-foreground truncate">
             {media.fileName}
           </h3>
-          <div className="flex items-center gap-2 mt-0.5">
-            {/* Type badge inline */}
-            <div className="p-0.5 rounded bg-primary/90 text-primary-foreground flex-shrink-0">
-              {mediaType === 'video' && <Video className="w-2.5 h-2.5" />}
-              {mediaType === 'audio' && <FileAudio className="w-2.5 h-2.5" />}
-              {mediaType === 'image' && <ImageIcon className="w-2.5 h-2.5" />}
+          {isImporting ? (
+            /* Importing indicator for list view */
+            <div className="flex items-center gap-1.5 mt-0.5">
+              <span className="text-[10px] text-muted-foreground">Importing...</span>
             </div>
+          ) : (
+            <div className="flex items-center gap-2 mt-0.5">
+              {/* Type badge inline */}
+              <div className="p-0.5 rounded bg-primary/90 text-primary-foreground flex-shrink-0">
+                {mediaType === 'video' && <Video className="w-2.5 h-2.5" />}
+                {mediaType === 'audio' && <FileAudio className="w-2.5 h-2.5" />}
+                {mediaType === 'image' && <ImageIcon className="w-2.5 h-2.5" />}
+              </div>
 
-            {/* Duration only */}
-            {(mediaType === 'video' || mediaType === 'audio') && media.duration > 0 && (
-              <span className="text-[10px] text-muted-foreground">
-                {formatDuration(media.duration)}
-              </span>
-            )}
-          </div>
+              {/* Duration only */}
+              {(mediaType === 'video' || mediaType === 'audio') && media.duration > 0 && (
+                <span className="text-[10px] text-muted-foreground">
+                  {formatDuration(media.duration)}
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
-        {/* Actions */}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-6 w-6 transition-all hover:bg-primary/20 hover:text-primary flex-shrink-0"
-            >
-              <MoreVertical className="w-3 h-3" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" onClick={(e) => e.stopPropagation()}>
-            <DropdownMenuItem onClick={handleDelete} className="text-destructive focus:text-destructive">
-              <Trash2 className="w-3 h-3 mr-2" />
-              Delete
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        {/* Actions - hidden during upload */}
+        {!isImporting && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6 transition-all hover:bg-primary/20 hover:text-primary flex-shrink-0"
+              >
+                <MoreVertical className="w-3 h-3" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" onClick={(e) => e.stopPropagation()}>
+              <DropdownMenuItem onClick={handleDelete} className="text-destructive focus:text-destructive">
+                <Trash2 className="w-3 h-3 mr-2" />
+                Delete
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
       </div>
     );
   }
@@ -214,11 +223,12 @@ export function MediaCard({ media, selected = false, onSelect, onDelete, viewMod
           ? 'border-primary ring-2 ring-primary/20 scale-[1.02]'
           : 'border-border hover:border-primary/50 hover:shadow-lg hover:shadow-primary/10'
         }
+        ${isImporting ? 'cursor-default hover:scale-100' : ''}
       `}
-      draggable
-      onDragStart={handleDragStart}
-      onDragEnd={handleDragEnd}
-      onClick={handleClick}
+      draggable={!isImporting}
+      onDragStart={isImporting ? undefined : handleDragStart}
+      onDragEnd={isImporting ? undefined : handleDragEnd}
+      onClick={isImporting ? undefined : handleClick}
     >
       {/* Film strip perforations effect */}
       <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-secondary via-muted to-secondary" />
@@ -239,26 +249,38 @@ export function MediaCard({ media, selected = false, onSelect, onDelete, viewMod
         )}
 
         {/* Selection glow - subtle overlay only */}
-        {selected && (
+        {selected && !isImporting && (
           <div className="absolute inset-0 bg-primary/10 pointer-events-none" />
         )}
 
-        {/* Overlaid badges */}
-        <div className="absolute inset-x-0 bottom-0 px-1.5 py-1 bg-gradient-to-t from-black/60 to-transparent flex items-center justify-between gap-1 pointer-events-none">
-          {/* Type icon badge - icon only */}
-          <div className="p-0.5 rounded bg-primary/90 text-primary-foreground">
-            {mediaType === 'video' && <Video className="w-2.5 h-2.5" />}
-            {mediaType === 'audio' && <FileAudio className="w-2.5 h-2.5" />}
-            {mediaType === 'image' && <ImageIcon className="w-2.5 h-2.5" />}
-          </div>
-
-          {/* Duration badge */}
-          {(mediaType === 'video' || mediaType === 'audio') && media.duration > 0 && (
-            <div className="px-1 py-0.5 bg-black/70 border border-white/20 rounded text-[8px] font-mono text-white">
-              {formatDuration(media.duration)}
+        {/* Importing overlay */}
+        {isImporting && (
+          <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center gap-2 pointer-events-none">
+            <Loader2 className="w-6 h-6 text-white animate-spin" />
+            <div className="text-[9px] text-white/60 uppercase tracking-wider">
+              Importing
             </div>
-          )}
-        </div>
+          </div>
+        )}
+
+        {/* Overlaid badges - hidden during upload */}
+        {!isImporting && (
+          <div className="absolute inset-x-0 bottom-0 px-1.5 py-1 bg-gradient-to-t from-black/60 to-transparent flex items-center justify-between gap-1 pointer-events-none">
+            {/* Type icon badge - icon only */}
+            <div className="p-0.5 rounded bg-primary/90 text-primary-foreground">
+              {mediaType === 'video' && <Video className="w-2.5 h-2.5" />}
+              {mediaType === 'audio' && <FileAudio className="w-2.5 h-2.5" />}
+              {mediaType === 'image' && <ImageIcon className="w-2.5 h-2.5" />}
+            </div>
+
+            {/* Duration badge */}
+            {(mediaType === 'video' || mediaType === 'audio') && media.duration > 0 && (
+              <div className="px-1 py-0.5 bg-black/70 border border-white/20 rounded text-[8px] font-mono text-white">
+                {formatDuration(media.duration)}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Content footer - minimal */}
@@ -270,24 +292,26 @@ export function MediaCard({ media, selected = false, onSelect, onDelete, viewMod
             </h3>
           </div>
 
-          {/* Actions dropdown */}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-5 w-5 transition-all hover:bg-primary/20 hover:text-primary flex-shrink-0"
-              >
-                <MoreVertical className="w-2.5 h-2.5" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" onClick={(e) => e.stopPropagation()}>
-              <DropdownMenuItem onClick={handleDelete} className="text-destructive focus:text-destructive">
-                <Trash2 className="w-3 h-3 mr-2" />
-                Delete
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          {/* Actions dropdown - hidden during upload */}
+          {!isImporting && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-5 w-5 transition-all hover:bg-primary/20 hover:text-primary flex-shrink-0"
+                >
+                  <MoreVertical className="w-2.5 h-2.5" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" onClick={(e) => e.stopPropagation()}>
+                <DropdownMenuItem onClick={handleDelete} className="text-destructive focus:text-destructive">
+                  <Trash2 className="w-3 h-3 mr-2" />
+                  Delete
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
         </div>
       </div>
 

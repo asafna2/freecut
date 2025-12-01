@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useMemo, memo } from 'react';
-import { Search, Filter, SortAsc, Video, FileAudio, Image as ImageIcon, Trash2, Grid3x3, List, AlertTriangle } from 'lucide-react';
+import { Search, Filter, SortAsc, Video, FileAudio, Image as ImageIcon, Trash2, Grid3x3, List, AlertTriangle, Info, X, FolderOpen } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -20,9 +20,8 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { MediaGrid } from './media-grid';
-import { useMediaLibraryStore, useStorageQuotaPercent } from '../stores/media-library-store';
+import { useMediaLibraryStore } from '../stores/media-library-store';
 import { useTimelineStore } from '@/features/timeline/stores/timeline-store';
-import { formatBytes } from '../utils/validation';
 
 export interface MediaLibraryProps {
   onMediaSelect?: (mediaId: string) => void;
@@ -40,8 +39,10 @@ export const MediaLibrary = memo(function MediaLibrary({ onMediaSelect }: MediaL
   // Store selectors
   const currentProjectId = useMediaLibraryStore((s) => s.currentProjectId);
   const loadMediaItems = useMediaLibraryStore((s) => s.loadMediaItems);
-  const uploadMediaBatch = useMediaLibraryStore((s) => s.uploadMediaBatch);
+  const importMedia = useMediaLibraryStore((s) => s.importMedia);
+  const importHandles = useMediaLibraryStore((s) => s.importHandles);
   const deleteMediaBatch = useMediaLibraryStore((s) => s.deleteMediaBatch);
+  const showNotification = useMediaLibraryStore((s) => s.showNotification);
   const searchQuery = useMediaLibraryStore((s) => s.searchQuery);
   const setSearchQuery = useMediaLibraryStore((s) => s.setSearchQuery);
   const filterByType = useMediaLibraryStore((s) => s.filterByType);
@@ -54,9 +55,8 @@ export const MediaLibrary = memo(function MediaLibrary({ onMediaSelect }: MediaL
   const clearSelection = useMediaLibraryStore((s) => s.clearSelection);
   const error = useMediaLibraryStore((s) => s.error);
   const clearError = useMediaLibraryStore((s) => s.clearError);
-  const storageUsed = useMediaLibraryStore((s) => s.storageUsed);
-  const storageQuota = useMediaLibraryStore((s) => s.storageQuota);
-  const storagePercent = useStorageQuotaPercent();
+  const notification = useMediaLibraryStore((s) => s.notification);
+  const clearNotification = useMediaLibraryStore((s) => s.clearNotification);
 
   // Load media items when project changes
   useEffect(() => {
@@ -83,12 +83,21 @@ export const MediaLibrary = memo(function MediaLibrary({ onMediaSelect }: MediaL
     };
   }, [selectedMediaIds.length, clearSelection]);
 
-  const handleUpload = async (files: File[]) => {
+  // Import files using file picker (instant, no copy)
+  const handleImport = async () => {
     try {
-      await uploadMediaBatch(files);
+      await importMedia();
     } catch (error) {
-      console.error('Upload failed:', error);
-      // Error is already set in store
+      console.error('Import failed:', error);
+    }
+  };
+
+  // Import files from drag-drop handles
+  const handleImportHandles = async (handles: FileSystemFileHandle[]) => {
+    try {
+      await importHandles(handles);
+    } catch (error) {
+      console.error('Import failed:', error);
     }
   };
 
@@ -127,36 +136,56 @@ export const MediaLibrary = memo(function MediaLibrary({ onMediaSelect }: MediaL
 
   return (
     <div ref={containerRef} className="h-full flex flex-col">
-      {/* Header with storage info */}
-      <div className="px-4 py-3 border-b border-border flex-shrink-0">
-        <div className="mb-3">
-          <h2 className="text-xs font-semibold tracking-wide uppercase text-muted-foreground flex items-center gap-2">
-            <span className="text-primary">MEDIA</span>
-            <span>/</span>
-            <span>Library</span>
-          </h2>
-        </div>
+      {/* Header toolbar */}
+      <div className="px-3 py-2 border-b border-border flex-shrink-0">
+        <div className="flex items-center gap-2 text-xs">
+          {/* Import action */}
+          <button
+            onClick={handleImport}
+            disabled={!currentProjectId}
+            className="flex items-center gap-1.5 h-7 px-2.5 rounded-md
+              bg-primary/10 border border-primary/25 text-primary
+              hover:bg-primary/20 hover:border-primary/40
+              active:bg-primary/15
+              disabled:opacity-40 disabled:cursor-not-allowed
+              transition-colors duration-150"
+            title="Import media files"
+          >
+            <FolderOpen className="w-3.5 h-3.5" />
+            <span>Import</span>
+          </button>
 
-        {/* Storage quota - compact progress bar */}
-        <div className="space-y-1.5">
-          <div className="flex items-center justify-between text-[10px] font-mono">
-            <span className="text-muted-foreground uppercase tracking-wider">Storage</span>
-            <span className="text-primary font-bold">
-              {formatBytes(storageUsed)} / {formatBytes(storageQuota)}
-            </span>
-          </div>
-          <div className="h-1.5 bg-secondary rounded overflow-hidden border border-border/50 relative">
-            <div
-              className={`h-full transition-all duration-500 ${
-                storagePercent > 90
-                  ? 'bg-destructive'
-                  : storagePercent > 70
-                  ? 'bg-yellow-500'
-                  : 'bg-primary'
-              }`}
-              style={{ width: `${Math.min(storagePercent, 100)}%` }}
-            />
-          </div>
+          {/* Selection indicator & actions */}
+          {selectedMediaIds.length > 0 && (
+            <>
+              <div className="h-4 w-px bg-border" />
+
+              {/* Selection badge */}
+              <div className="flex items-center gap-1 h-7 pl-2 pr-1 rounded-md bg-accent/50 border border-border">
+                <span className="tabular-nums">{selectedMediaIds.length}</span>
+                <span className="text-muted-foreground">selected</span>
+                <button
+                  onClick={clearSelection}
+                  className="ml-0.5 p-1 rounded hover:bg-foreground/10 text-muted-foreground hover:text-foreground transition-colors"
+                  title="Clear selection"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+
+              {/* Delete action */}
+              <button
+                onClick={handleDeleteSelected}
+                className="flex items-center gap-1 h-7 px-2 rounded-md
+                  text-destructive/80 hover:text-destructive hover:bg-destructive/10
+                  transition-colors duration-150"
+                title="Delete selected"
+              >
+                <Trash2 className="w-3 h-3" />
+                <span>Delete</span>
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -173,6 +202,48 @@ export const MediaLibrary = memo(function MediaLibrary({ onMediaSelect }: MediaL
             >
               Dismiss
             </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Notification message */}
+      {notification && (
+        <div className={`mx-4 mt-3 p-2.5 rounded text-xs animate-in slide-in-from-top-2 duration-200 ${
+          notification.type === 'info'
+            ? 'bg-orange-500/10 border border-orange-500/30'
+            : notification.type === 'warning'
+            ? 'bg-yellow-500/10 border border-yellow-500/30'
+            : notification.type === 'success'
+            ? 'bg-green-500/10 border border-green-500/30'
+            : 'bg-destructive/10 border border-destructive/50'
+        }`}>
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 flex-1 min-w-0">
+              <Info className={`w-3.5 h-3.5 flex-shrink-0 ${
+                notification.type === 'info'
+                  ? 'text-orange-500'
+                  : notification.type === 'warning'
+                  ? 'text-yellow-500'
+                  : notification.type === 'success'
+                  ? 'text-green-500'
+                  : 'text-destructive'
+              }`} />
+              <p className={`leading-relaxed line-clamp-2 ${
+                notification.type === 'info'
+                  ? 'text-orange-600 dark:text-orange-400'
+                  : notification.type === 'warning'
+                  ? 'text-yellow-600 dark:text-yellow-400'
+                  : notification.type === 'success'
+                  ? 'text-green-600 dark:text-green-400'
+                  : 'text-destructive'
+              }`}>{notification.message}</p>
+            </div>
+            <button
+              onClick={clearNotification}
+              className="text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
           </div>
         </div>
       )}
@@ -316,39 +387,11 @@ export const MediaLibrary = memo(function MediaLibrary({ onMediaSelect }: MediaL
       <div className="flex-1 overflow-y-auto px-4 pb-4">
         <MediaGrid
           onMediaSelect={onMediaSelect}
-          onUpload={handleUpload}
-          disabled={storagePercent >= 100}
+          onImportHandles={handleImportHandles}
+          onShowNotification={showNotification}
           viewMode={viewMode}
         />
       </div>
-
-      {/* Delete button - anchored at bottom */}
-      {selectedMediaIds.length > 0 && (
-        <div className="border-t border-border px-4 py-3 flex items-center justify-between animate-in fade-in slide-in-from-bottom-2 duration-200 flex-shrink-0">
-          <span className="text-xs font-mono text-primary font-bold">
-            {selectedMediaIds.length} SELECTED
-          </span>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={clearSelection}
-              className="h-7 text-xs text-muted-foreground hover:text-foreground hover:bg-accent border border-border"
-            >
-              Clear
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleDeleteSelected}
-              className="h-7 text-xs text-destructive hover:text-destructive hover:bg-destructive/10 border border-destructive/50 font-medium"
-            >
-              <Trash2 className="w-3 h-3 mr-1.5" />
-              Delete
-            </Button>
-          </div>
-        </div>
-      )}
 
       {/* Delete confirmation dialog */}
       <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>

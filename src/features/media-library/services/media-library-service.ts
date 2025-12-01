@@ -7,15 +7,10 @@ import {
   saveThumbnail as saveThumbnailDB,
   getThumbnailByMediaId,
   deleteThumbnailsByMediaId,
-  checkStorageQuota,
-  hasEnoughSpace,
   // v3: Content-addressable storage
-  getContentByHash,
-  createContent,
   incrementContentRef,
   decrementContentRef,
   deleteContent,
-  findMediaByContentHash,
   // v3: Project-media associations
   associateMediaWithProject,
   removeMediaFromProject as removeMediaFromProjectDB,
@@ -27,16 +22,54 @@ import { opfsService } from './opfs-service';
 import { validateMediaFile } from '../utils/validation';
 import { extractMetadata } from '../utils/metadata-extractor';
 import { generateThumbnail } from '../utils/thumbnail-generator';
-import { computeContentHash } from '../utils/content-hash';
-import { getContentPath } from '../utils/content-path';
+/**
+ * Check and request permission for a file handle
+ * @returns true if permission granted, false otherwise
+ */
+async function ensureFileHandlePermission(
+  handle: FileSystemFileHandle
+): Promise<boolean> {
+  try {
+    // Check current permission state
+    const permission = await handle.queryPermission({ mode: 'read' });
+    if (permission === 'granted') {
+      return true;
+    }
+
+    // Request permission if not granted
+    const newPermission = await handle.requestPermission({ mode: 'read' });
+    return newPermission === 'granted';
+  } catch (error) {
+    console.error('Failed to get file handle permission:', error);
+    return false;
+  }
+}
+
+/**
+ * Error thrown when file handle permission is denied or file is missing
+ */
+export class FileAccessError extends Error {
+  constructor(
+    message: string,
+    public readonly type: 'permission_denied' | 'file_missing' | 'unknown'
+  ) {
+    super(message);
+    this.name = 'FileAccessError';
+  }
+}
 
 /**
  * Media Library Service - Coordinates OPFS + IndexedDB + metadata extraction
+ *
+ * Includes in-memory thumbnail URL cache to prevent flicker on re-renders.
  *
  * Provides atomic operations for media management, ensuring OPFS and IndexedDB
  * stay in sync.
  */
 export class MediaLibraryService {
+  /** In-memory cache for thumbnail blob URLs to prevent flicker on re-renders */
+  private thumbnailUrlCache = new Map<string, string>();
+
   /**
    * Get all media items from IndexedDB
    */
@@ -53,403 +86,150 @@ export class MediaLibraryService {
   }
 
   /**
-   * Upload a media file to a project with content-based deduplication
+   * Import media using FileSystemFileHandle (instant, no copy)
    *
-   * v3: Uses SHA-256 content hashing for deduplication. If the same file
-   * is uploaded multiple times (same project or different), the actual file
-   * is stored only once in content-addressable storage.
+   * This is the preferred method for local-first experience. The file stays
+   * on the user's disk and is read on-demand. No copying or uploading.
    *
-   * @param file - The file to upload
+   * Duplicate detection: If a file with the same name and size already exists
+   * in the project, returns the existing media with `isDuplicate: true`.
+   *
+   * @param handle - FileSystemFileHandle from showOpenFilePicker
    * @param projectId - The project to associate the media with
-   * @param onProgress - Optional progress callback
+   * @returns MediaMetadata with optional isDuplicate flag
    */
-  async uploadMediaToProject(
-    file: File,
-    projectId: string,
-    onProgress?: (percent: number, stage: string) => void
-  ): Promise<MediaMetadata> {
-    // Stage 1: Validation (5%)
-    onProgress?.(5, 'Validating file...');
+  async importMediaWithHandle(
+    handle: FileSystemFileHandle,
+    projectId: string
+  ): Promise<MediaMetadata & { isDuplicate?: boolean }> {
+    // Stage 1: Get file from handle (instant)
+    const hasPermission = await ensureFileHandlePermission(handle);
+    if (!hasPermission) {
+      throw new FileAccessError(
+        'Permission denied to access file',
+        'permission_denied'
+      );
+    }
+
+    const file = await handle.getFile();
+
+    // Stage 2: Validation
     const validationResult = validateMediaFile(file);
     if (!validationResult.valid) {
       throw new Error(validationResult.error);
     }
 
-    // Stage 2: Compute content hash (5-25%)
-    onProgress?.(10, 'Computing file signature...');
-    const contentHash = await computeContentHash(file, (p) => {
-      onProgress?.(10 + p * 0.15, 'Computing file signature...');
-    });
-    onProgress?.(25, 'Signature computed');
+    // Stage 3: Check for duplicates (by fileName + fileSize)
+    const projectMedia = await getMediaForProjectDB(projectId);
+    console.log(`[importMediaWithHandle] Checking duplicates for "${file.name}" (${file.size} bytes)`);
+    console.log(`[importMediaWithHandle] Project has ${projectMedia.length} existing media items`);
 
-    // Stage 3: Check for existing content (deduplication)
-    const existingContent = await getContentByHash(contentHash);
-
-    if (existingContent) {
-      // DEDUP HIT: Content already exists
-      onProgress?.(30, 'File already stored, creating reference...');
-
-      // Find existing media entry with this hash
-      const existingMedia = await findMediaByContentHash(contentHash);
-
-      if (existingMedia) {
-        // Associate existing media with this project
-        await associateMediaWithProject(projectId, existingMedia.id);
-        await incrementContentRef(contentHash);
-
-        onProgress?.(100, 'Upload complete (deduplicated)');
-        return existingMedia;
-      }
-      // Content exists but no media entry - should not happen normally
-      // Fall through to create new media entry
-    }
-
-    // Stage 4: Quota check (30-35%)
-    onProgress?.(30, 'Checking storage quota...');
-    const hasQuota = await hasEnoughSpace(file.size);
-    if (!hasQuota) {
-      const { usage, quota } = await checkStorageQuota();
-      const percentUsed = ((usage / quota) * 100).toFixed(1);
-      throw new Error(
-        `Storage quota exceeded (${percentUsed}% used). Please delete some files to free up space.`
-      );
-    }
-
-    // Generate unique ID and content-addressable path
-    const id = crypto.randomUUID();
-    const opfsPath = getContentPath(contentHash);
-
-    let opfsStored = false;
-    let contentCreated = false;
-
-    try {
-      // Stage 5: Extract metadata (35-45%)
-      onProgress?.(35, 'Extracting metadata...');
-      const metadata = await extractMetadata(file);
-      onProgress?.(45, 'Metadata extracted');
-
-      // Stage 6: Store file in OPFS (45-60%)
-      onProgress?.(50, 'Storing file...');
-      const arrayBuffer = await file.arrayBuffer();
-      await opfsService.saveFile(opfsPath, arrayBuffer);
-      opfsStored = true;
-      onProgress?.(60, 'File stored');
-
-      // Stage 7: Create content record (60-65%) - only if it doesn't exist
-      onProgress?.(62, 'Creating content record...');
-      if (!existingContent) {
-        await createContent({
-          hash: contentHash,
-          fileSize: file.size,
-          mimeType: file.type,
-          referenceCount: 1,
-          createdAt: Date.now(),
-        });
-        contentCreated = true;
-      } else {
-        // Content exists but media entry was orphaned - just increment ref count
-        await incrementContentRef(contentHash);
-      }
-
-      // Stage 8: Generate thumbnail (65-80%)
-      onProgress?.(70, 'Generating thumbnail...');
-      let thumbnailId: string | undefined;
-
-      try {
-        const thumbnailBlob = await generateThumbnail(file, { timestamp: 1 });
-        thumbnailId = crypto.randomUUID();
-
-        const thumbnailData: ThumbnailData = {
-          id: thumbnailId,
-          mediaId: id,
-          blob: thumbnailBlob,
-          timestamp: 1,
-          width: 320,
-          height: 180,
-        };
-
-        await saveThumbnailDB(thumbnailData);
-        onProgress?.(80, 'Thumbnail generated');
-      } catch (error) {
-        console.warn('Failed to generate thumbnail:', error);
-        // Continue without thumbnail - not critical
-      }
-
-      // Stage 9: Save metadata to IndexedDB (80-90%)
-      onProgress?.(85, 'Saving metadata...');
-      const mediaMetadata: MediaMetadata = {
-        id,
-        contentHash,
-        opfsPath,
-        fileName: file.name,
-        fileSize: file.size,
-        mimeType: file.type,
-        duration: (metadata as { duration?: number }).duration ?? 0,
-        width: (metadata as { width?: number }).width ?? 0,
-        height: (metadata as { height?: number }).height ?? 0,
-        fps: (metadata as { fps?: number }).fps ?? 30,
-        codec: (metadata as { codec?: string }).codec ?? 'unknown',
-        bitrate: (metadata as { bitrate?: number }).bitrate ?? 0,
-        thumbnailId,
-        tags: [],
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      };
-
-      await createMediaDB(mediaMetadata);
-
-      // Stage 10: Associate with project (90-100%)
-      onProgress?.(92, 'Adding to project...');
-      await associateMediaWithProject(projectId, id);
-
-      // Pre-extract GIF frames in background for faster timeline scrubbing
-      // This is non-blocking - extraction continues after upload completes
-      if (file.type === 'image/gif') {
-        const blobUrl = URL.createObjectURL(file);
-        import('@/features/timeline/services/gif-frame-cache')
-          .then(({ gifFrameCache }) => {
-            return gifFrameCache.getGifFrames(id, blobUrl);
-          })
-          .catch((err) => {
-            console.warn('Failed to pre-extract GIF frames:', err);
-          })
-          .finally(() => {
-            URL.revokeObjectURL(blobUrl);
-          });
-      }
-
-      // Complete (100%)
-      onProgress?.(100, 'Upload complete');
-
-      return mediaMetadata;
-    } catch (error) {
-      // Rollback: Delete from OPFS if it was stored
-      if (opfsStored) {
-        try {
-          await opfsService.deleteFile(opfsPath);
-        } catch (cleanupError) {
-          console.error('Failed to cleanup OPFS file:', cleanupError);
-        }
-      }
-
-      // Rollback: Delete content record if it was created
-      if (contentCreated) {
-        try {
-          await deleteContent(contentHash);
-        } catch (cleanupError) {
-          console.error('Failed to cleanup content record:', cleanupError);
-        }
-      }
-
-      // Re-throw the original error
-      throw error;
-    }
-  }
-
-  /**
-   * @deprecated Use uploadMediaToProject instead for proper project isolation
-   * Legacy upload method for backward compatibility (no project association)
-   */
-  async uploadMedia(
-    file: File,
-    onProgress?: (percent: number, stage: string) => void
-  ): Promise<MediaMetadata> {
-    // For backward compatibility, upload without project association
-    // This creates orphaned media that isn't associated with any project
-    console.warn(
-      'uploadMedia is deprecated. Use uploadMediaToProject for proper project isolation.'
+    const existingMedia = projectMedia.find(
+      (m) => m.fileName === file.name && m.fileSize === file.size
     );
 
-    // Stage 1: Validation (5%)
-    onProgress?.(5, 'Validating file...');
-    const validationResult = validateMediaFile(file);
-    if (!validationResult.valid) {
-      throw new Error(validationResult.error);
+    if (existingMedia) {
+      // File already exists in project - return existing with duplicate flag
+      console.log(`[importMediaWithHandle] Found duplicate: "${existingMedia.fileName}" (${existingMedia.fileSize} bytes) with id ${existingMedia.id}`);
+      return { ...existingMedia, isDuplicate: true };
     }
 
-    // Stage 2: Compute content hash
-    onProgress?.(10, 'Computing file signature...');
-    const contentHash = await computeContentHash(file);
-    onProgress?.(25, 'Signature computed');
+    console.log(`[importMediaWithHandle] No duplicate found, proceeding with import`);
 
-    // Check for existing content (deduplication)
-    const existingContent = await getContentByHash(contentHash);
-    if (existingContent) {
-      const existingMedia = await findMediaByContentHash(contentHash);
-      if (existingMedia) {
-        await incrementContentRef(contentHash);
-        onProgress?.(100, 'Upload complete (deduplicated)');
-        return existingMedia;
-      }
-    }
+    // Stage 4: Extract metadata
+    const metadata = await extractMetadata(file);
 
-    // Stage 3: Quota check
-    onProgress?.(30, 'Checking storage quota...');
-    const hasQuota = await hasEnoughSpace(file.size);
-    if (!hasQuota) {
-      const { usage, quota } = await checkStorageQuota();
-      const percentUsed = ((usage / quota) * 100).toFixed(1);
-      throw new Error(
-        `Storage quota exceeded (${percentUsed}% used). Please delete some files to free up space.`
-      );
-    }
-
+    // Stage 5: Generate thumbnail
+    let thumbnailId: string | undefined;
     const id = crypto.randomUUID();
-    const opfsPath = getContentPath(contentHash);
-
-    let opfsStored = false;
-    let contentCreated = false;
 
     try {
-      // Extract metadata
-      onProgress?.(35, 'Extracting metadata...');
-      const metadata = await extractMetadata(file);
+      const thumbnailBlob = await generateThumbnail(file, { timestamp: 1 });
+      thumbnailId = crypto.randomUUID();
 
-      // Store file in OPFS
-      onProgress?.(50, 'Storing file...');
-      const arrayBuffer = await file.arrayBuffer();
-      await opfsService.saveFile(opfsPath, arrayBuffer);
-      opfsStored = true;
-
-      // Create content record
-      await createContent({
-        hash: contentHash,
-        fileSize: file.size,
-        mimeType: file.type,
-        referenceCount: 1,
-        createdAt: Date.now(),
-      });
-      contentCreated = true;
-
-      // Generate thumbnail
-      onProgress?.(70, 'Generating thumbnail...');
-      let thumbnailId: string | undefined;
-      try {
-        const thumbnailBlob = await generateThumbnail(file, { timestamp: 1 });
-        thumbnailId = crypto.randomUUID();
-        const thumbnailData: ThumbnailData = {
-          id: thumbnailId,
-          mediaId: id,
-          blob: thumbnailBlob,
-          timestamp: 1,
-          width: 320,
-          height: 180,
-        };
-        await saveThumbnailDB(thumbnailData);
-      } catch {
-        console.warn('Failed to generate thumbnail');
-      }
-
-      // Save metadata
-      onProgress?.(90, 'Saving metadata...');
-      const mediaMetadata: MediaMetadata = {
-        id,
-        contentHash,
-        opfsPath,
-        fileName: file.name,
-        fileSize: file.size,
-        mimeType: file.type,
-        duration: (metadata as { duration?: number }).duration ?? 0,
-        width: (metadata as { width?: number }).width ?? 0,
-        height: (metadata as { height?: number }).height ?? 0,
-        fps: (metadata as { fps?: number }).fps ?? 30,
-        codec: (metadata as { codec?: string }).codec ?? 'unknown',
-        bitrate: (metadata as { bitrate?: number }).bitrate ?? 0,
-        thumbnailId,
-        tags: [],
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
+      const thumbnailData: ThumbnailData = {
+        id: thumbnailId,
+        mediaId: id,
+        blob: thumbnailBlob,
+        timestamp: 1,
+        width: 320,
+        height: 180,
       };
 
-      await createMediaDB(mediaMetadata);
-      onProgress?.(100, 'Upload complete');
-      return mediaMetadata;
+      await saveThumbnailDB(thumbnailData);
     } catch (error) {
-      if (opfsStored) {
-        try {
-          await opfsService.deleteFile(opfsPath);
-        } catch {
-          console.error('Failed to cleanup OPFS file');
-        }
-      }
-      if (contentCreated) {
-        try {
-          await deleteContent(contentHash);
-        } catch {
-          console.error('Failed to cleanup content record');
-        }
-      }
-      throw error;
+      console.warn('Failed to generate thumbnail:', error);
     }
+
+    // Stage 6: Save metadata to IndexedDB with file handle
+    const mediaMetadata: MediaMetadata = {
+      id,
+      storageType: 'handle',
+      fileHandle: handle,
+      fileName: file.name,
+      fileSize: file.size,
+      mimeType: file.type,
+      duration: (metadata as { duration?: number }).duration ?? 0,
+      width: (metadata as { width?: number }).width ?? 0,
+      height: (metadata as { height?: number }).height ?? 0,
+      fps: (metadata as { fps?: number }).fps ?? 30,
+      codec: (metadata as { codec?: string }).codec ?? 'unknown',
+      bitrate: (metadata as { bitrate?: number }).bitrate ?? 0,
+      thumbnailId,
+      tags: [],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+
+    await createMediaDB(mediaMetadata);
+
+    // Stage 7: Associate with project
+    await associateMediaWithProject(projectId, id);
+
+    // Pre-extract GIF frames in background
+    if (file.type === 'image/gif') {
+      const blobUrl = URL.createObjectURL(file);
+      import('@/features/timeline/services/gif-frame-cache')
+        .then(({ gifFrameCache }) => gifFrameCache.getGifFrames(id, blobUrl))
+        .catch((err) => console.warn('Failed to pre-extract GIF frames:', err))
+        .finally(() => URL.revokeObjectURL(blobUrl));
+    }
+
+    return mediaMetadata;
   }
 
   /**
-   * Upload multiple files to a project in batch
+   * Import multiple files using FileSystemFileHandles (instant, no copy)
    */
-  async uploadMediaBatchToProject(
-    files: File[],
+  async importMediaBatchWithHandles(
+    handles: FileSystemFileHandle[],
     projectId: string,
     onProgress?: (current: number, total: number, fileName: string) => void
   ): Promise<MediaMetadata[]> {
     const results: MediaMetadata[] = [];
     const errors: { file: string; error: string }[] = [];
 
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      if (!file) continue;
+    for (let i = 0; i < handles.length; i++) {
+      const handle = handles[i];
+      if (!handle) continue;
 
-      onProgress?.(i + 1, files.length, file.name);
+      const file = await handle.getFile().catch(() => null);
+      const fileName = file?.name ?? handle.name;
+      onProgress?.(i + 1, handles.length, fileName);
 
       try {
-        const metadata = await this.uploadMediaToProject(file, projectId);
+        const metadata = await this.importMediaWithHandle(handle, projectId);
         results.push(metadata);
       } catch (error) {
         errors.push({
-          file: file.name,
+          file: fileName,
           error: error instanceof Error ? error.message : String(error),
         });
       }
     }
 
     if (errors.length > 0) {
-      console.warn('Some files failed to upload:', errors);
-    }
-
-    return results;
-  }
-
-  /**
-   * @deprecated Use uploadMediaBatchToProject instead
-   */
-  async uploadMediaBatch(
-    files: File[],
-    onProgress?: (current: number, total: number, fileName: string) => void
-  ): Promise<MediaMetadata[]> {
-    console.warn(
-      'uploadMediaBatch is deprecated. Use uploadMediaBatchToProject for proper project isolation.'
-    );
-    const results: MediaMetadata[] = [];
-    const errors: { file: string; error: string }[] = [];
-
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      if (!file) continue;
-
-      onProgress?.(i + 1, files.length, file.name);
-
-      try {
-        const metadata = await this.uploadMedia(file);
-        results.push(metadata);
-      } catch (error) {
-        errors.push({
-          file: file.name,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }
-
-    if (errors.length > 0) {
-      console.warn('Some files failed to upload:', errors);
+      console.warn('Some files failed to import:', errors);
     }
 
     return results;
@@ -458,8 +238,11 @@ export class MediaLibraryService {
   /**
    * Delete media from a project with reference counting
    *
-   * v3: Removes the media association from the project. If no other projects
-   * use this media, the actual file is deleted from storage.
+   * Removes the media association from the project. If no other projects
+   * use this media, the metadata is deleted.
+   *
+   * For OPFS storage: Also deletes the file if no more references.
+   * For handle storage: Just removes metadata (file stays on user's disk).
    *
    * @param projectId - The project to remove media from
    * @param mediaId - The media to remove
@@ -481,15 +264,13 @@ export class MediaLibraryService {
     const remainingProjects = await getProjectsUsingMedia(mediaId);
 
     if (remainingProjects.length === 0) {
-      // No other projects use this media - safe to fully delete
-
-      // Decrement content reference count
-      const newRefCount = await decrementContentRef(media.contentHash);
+      // No other projects use this media - safe to fully delete metadata
 
       // Delete media metadata
       await deleteMediaDB(mediaId);
 
-      // Delete thumbnails
+      // Delete thumbnails (clear cache first)
+      this.clearThumbnailCache(mediaId);
       try {
         await deleteThumbnailsByMediaId(mediaId);
       } catch (error) {
@@ -506,21 +287,27 @@ export class MediaLibraryService {
         console.warn('Failed to delete GIF frame cache:', error);
       }
 
-      // If no more references to content, delete the actual file
-      if (newRefCount === 0) {
-        try {
-          await opfsService.deleteFile(media.opfsPath);
-        } catch (error) {
-          console.warn('Failed to delete file from OPFS:', error);
-        }
+      // For OPFS storage, handle content reference counting
+      if (media.storageType === 'opfs' && media.contentHash) {
+        const newRefCount = await decrementContentRef(media.contentHash);
 
-        // Delete content record
-        try {
-          await deleteContent(media.contentHash);
-        } catch (error) {
-          console.warn('Failed to delete content record:', error);
+        // If no more references to content, delete the actual file
+        if (newRefCount === 0 && media.opfsPath) {
+          try {
+            await opfsService.deleteFile(media.opfsPath);
+          } catch (error) {
+            console.warn('Failed to delete file from OPFS:', error);
+          }
+
+          // Delete content record
+          try {
+            await deleteContent(media.contentHash);
+          } catch (error) {
+            console.warn('Failed to delete content record:', error);
+          }
         }
       }
+      // For handle storage: File stays on user's disk - nothing to delete
     }
   }
 
@@ -584,23 +371,37 @@ export class MediaLibraryService {
       throw new Error(`Media not found: ${id}`);
     }
 
-    // Decrement ref count and delete file if needed
-    const newRefCount = await decrementContentRef(media.contentHash);
-
-    if (newRefCount === 0) {
+    // Clean up all project-media associations for this media
+    const projectIds = await getProjectsUsingMedia(id);
+    for (const projectId of projectIds) {
       try {
-        await opfsService.deleteFile(media.opfsPath);
+        await removeMediaFromProjectDB(projectId, id);
       } catch (error) {
-        console.warn('Failed to delete file from OPFS:', error);
-      }
-
-      try {
-        await deleteContent(media.contentHash);
-      } catch (error) {
-        console.warn('Failed to delete content record:', error);
+        console.warn(`Failed to remove project association for ${projectId}:`, error);
       }
     }
 
+    // Handle OPFS storage cleanup
+    if (media.storageType === 'opfs' && media.contentHash) {
+      const newRefCount = await decrementContentRef(media.contentHash);
+
+      if (newRefCount === 0 && media.opfsPath) {
+        try {
+          await opfsService.deleteFile(media.opfsPath);
+        } catch (error) {
+          console.warn('Failed to delete file from OPFS:', error);
+        }
+
+        try {
+          await deleteContent(media.contentHash);
+        } catch (error) {
+          console.warn('Failed to delete content record:', error);
+        }
+      }
+    }
+    // Handle storage: nothing to delete, file stays on disk
+
+    this.clearThumbnailCache(id);
     try {
       await deleteThumbnailsByMediaId(id);
     } catch (error) {
@@ -650,7 +451,10 @@ export class MediaLibraryService {
   }
 
   /**
-   * Copy media to another project (no file duplication due to CAS)
+   * Copy media to another project (no file duplication)
+   *
+   * For handle-based media, the file handle is shared.
+   * For OPFS-based media, the content reference is incremented.
    */
   async copyMediaToProject(
     mediaId: string,
@@ -661,17 +465,24 @@ export class MediaLibraryService {
       throw new Error(`Media not found: ${mediaId}`);
     }
 
-    // Just create association - file stays in place due to CAS
+    // Create project association
     await associateMediaWithProject(targetProjectId, mediaId);
-    await incrementContentRef(media.contentHash);
+
+    // For OPFS storage, increment content reference
+    if (media.storageType === 'opfs' && media.contentHash) {
+      await incrementContentRef(media.contentHash);
+    }
+    // For handle storage, no additional action needed - handle is shared
   }
 
   /**
    * Get media file as Blob object
    *
-   * Note: Returns Blob instead of File to prevent OPFS access handle leaks.
-   * File objects maintain stronger internal references that can prevent
-   * new access handles from being created on the same file.
+   * Supports both storage types:
+   * - 'handle': Reads from user's disk via FileSystemFileHandle (instant)
+   * - 'opfs': Reads from Origin Private File System (legacy/fallback)
+   *
+   * @throws FileAccessError if permission denied or file missing
    */
   async getMediaFile(id: string): Promise<Blob | null> {
     const media = await getMediaDB(id);
@@ -680,16 +491,103 @@ export class MediaLibraryService {
       return null;
     }
 
-    try {
-      const arrayBuffer = await opfsService.getFile(media.opfsPath);
-      const blob = new Blob([arrayBuffer], {
-        type: media.mimeType,
-      });
-      return blob;
-    } catch (error) {
-      console.error('Failed to get media file from OPFS:', error);
-      return null;
+    // Handle file handle storage (local-first)
+    if (media.storageType === 'handle' && media.fileHandle) {
+      try {
+        const hasPermission = await ensureFileHandlePermission(media.fileHandle);
+        if (!hasPermission) {
+          throw new FileAccessError(
+            `Permission denied for "${media.fileName}". Please re-grant access.`,
+            'permission_denied'
+          );
+        }
+
+        const file = await media.fileHandle.getFile();
+        return file;
+      } catch (error) {
+        if (error instanceof FileAccessError) {
+          throw error;
+        }
+        // File might have been moved/deleted
+        console.error('Failed to get file from handle:', error);
+        throw new FileAccessError(
+          `File "${media.fileName}" not found. It may have been moved or deleted.`,
+          'file_missing'
+        );
+      }
     }
+
+    // Handle OPFS storage (legacy/fallback)
+    // Also handle old records without storageType (treat as OPFS)
+    if (media.opfsPath) {
+      try {
+        const arrayBuffer = await opfsService.getFile(media.opfsPath);
+        const blob = new Blob([arrayBuffer], {
+          type: media.mimeType,
+        });
+        return blob;
+      } catch (error) {
+        console.error('Failed to get media file from OPFS:', error);
+        return null;
+      }
+    }
+
+    console.error('Media has no valid storage path:', id);
+    return null;
+  }
+
+  /**
+   * Check if a file handle needs permission re-request
+   * Returns true if permission is needed, false if already granted or not a handle
+   */
+  async needsPermission(id: string): Promise<boolean> {
+    const media = await getMediaDB(id);
+    if (!media || media.storageType !== 'handle' || !media.fileHandle) {
+      return false;
+    }
+
+    try {
+      const permission = await media.fileHandle.queryPermission({ mode: 'read' });
+      return permission !== 'granted';
+    } catch {
+      return true; // Error means we likely need permission
+    }
+  }
+
+  /**
+   * Request permission for a file handle
+   * Returns true if granted, false otherwise
+   */
+  async requestPermission(id: string): Promise<boolean> {
+    const media = await getMediaDB(id);
+    if (!media || media.storageType !== 'handle' || !media.fileHandle) {
+      return true; // Not a handle, no permission needed
+    }
+
+    return ensureFileHandlePermission(media.fileHandle);
+  }
+
+  /**
+   * Get all media items that need permission re-request
+   */
+  async getMediaNeedingPermission(): Promise<MediaMetadata[]> {
+    const allMedia = await getAllMediaDB();
+    const needsPermission: MediaMetadata[] = [];
+
+    for (const media of allMedia) {
+      if (media.storageType === 'handle' && media.fileHandle) {
+        try {
+          const permission = await media.fileHandle.queryPermission({ mode: 'read' });
+          if (permission !== 'granted') {
+            needsPermission.push(media);
+          }
+        } catch {
+          needsPermission.push(media);
+        }
+      }
+    }
+
+    return needsPermission;
   }
 
   /**
@@ -714,29 +612,43 @@ export class MediaLibraryService {
   }
 
   /**
-   * Get thumbnail as blob URL
+   * Get thumbnail as blob URL (cached in memory to prevent flicker)
    */
   async getThumbnailBlobUrl(mediaId: string): Promise<string | null> {
+    // Check cache first
+    const cached = this.thumbnailUrlCache.get(mediaId);
+    if (cached) {
+      return cached;
+    }
+
     const thumbnail = await this.getThumbnail(mediaId);
 
     if (!thumbnail) {
       return null;
     }
 
-    return URL.createObjectURL(thumbnail.blob);
+    const url = URL.createObjectURL(thumbnail.blob);
+    this.thumbnailUrlCache.set(mediaId, url);
+    return url;
   }
 
   /**
-   * Get storage usage statistics
+   * Clear thumbnail URL from cache (call when media is deleted)
    */
-  async getStorageUsage(): Promise<{ used: number; quota: number }> {
-    const { usage, quota } = await checkStorageQuota();
-    return { used: usage, quota };
+  clearThumbnailCache(mediaId: string): void {
+    const url = this.thumbnailUrlCache.get(mediaId);
+    if (url) {
+      URL.revokeObjectURL(url);
+      this.thumbnailUrlCache.delete(mediaId);
+    }
   }
 
   /**
    * Validate sync between OPFS and IndexedDB
    * Returns list of issues found
+   *
+   * Note: Only validates OPFS-based media. Handle-based media is validated
+   * separately via permission checks.
    */
   async validateSync(): Promise<{
     orphanedMetadata: string[]; // Metadata without OPFS file
@@ -746,14 +658,18 @@ export class MediaLibraryService {
     const orphanedMetadata: string[] = [];
     const orphanedFiles: string[] = [];
 
-    // Check each metadata entry has corresponding OPFS file
+    // Check each OPFS-based metadata entry has corresponding OPFS file
     for (const media of allMedia) {
-      try {
-        await opfsService.getFile(media.opfsPath);
-      } catch (error) {
-        // File not found in OPFS
-        orphanedMetadata.push(media.id);
+      // Only check OPFS storage type
+      if (media.storageType === 'opfs' && media.opfsPath) {
+        try {
+          await opfsService.getFile(media.opfsPath);
+        } catch {
+          // File not found in OPFS
+          orphanedMetadata.push(media.id);
+        }
       }
+      // Handle-based storage is checked via needsPermission() instead
     }
 
     // Note: Checking for orphaned OPFS files would require listing all
@@ -772,6 +688,7 @@ export class MediaLibraryService {
     // Clean up orphaned metadata
     for (const id of orphanedMetadata) {
       try {
+        this.clearThumbnailCache(id);
         await deleteMediaDB(id);
         await deleteThumbnailsByMediaId(id);
       } catch (error) {

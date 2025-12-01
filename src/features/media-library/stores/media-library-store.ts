@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
-import type { MediaLibraryState, MediaLibraryActions } from '../types';
+import type { MediaLibraryState, MediaLibraryActions, MediaLibraryNotification } from '../types';
 import type { MediaMetadata } from '@/types/storage';
 import { mediaLibraryService } from '../services/media-library-service';
 
@@ -22,15 +22,14 @@ export const useMediaLibraryStore = create<
       currentProjectId: null, // v3: Project context
       mediaItems: [],
       isLoading: true, // Start loading until project context is set
-      uploadProgress: {},
+      importingIds: [],
       error: null,
+      notification: null,
       selectedMediaIds: [],
       searchQuery: '',
       filterByType: null,
       sortBy: 'date',
       viewMode: 'grid',
-      storageUsed: 0,
-      storageQuota: 0,
 
       // v3: Set current project context
       setCurrentProject: (projectId: string | null) => {
@@ -60,13 +59,8 @@ export const useMediaLibraryStore = create<
           // v3: Load project-scoped media only
           const mediaItems = await mediaLibraryService.getMediaForProject(currentProjectId);
 
-          // Also refresh storage quota
-          const { used, quota } = await mediaLibraryService.getStorageUsage();
-
           set({
             mediaItems,
-            storageUsed: used,
-            storageQuota: quota,
             isLoading: false,
           });
         } catch (error) {
@@ -78,123 +72,214 @@ export const useMediaLibraryStore = create<
         }
       },
 
-      // Upload a single media file (v3: project-scoped)
-      uploadMedia: async (file: File) => {
+      // Import media using file picker (instant, no copy - local-first)
+      importMedia: async () => {
         const { currentProjectId } = get();
-        const tempId = crypto.randomUUID();
 
-        // Create temporary placeholder
-        const tempItem: MediaMetadata = {
-          id: tempId,
-          contentHash: '', // v3: Will be computed
-          opfsPath: '',
-          fileName: file.name,
-          fileSize: file.size,
-          mimeType: file.type,
-          duration: 0,
-          width: 0,
-          height: 0,
-          fps: 30,
-          codec: 'uploading...',
-          bitrate: 0,
-          tags: [],
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        };
+        if (!currentProjectId) {
+          set({ error: 'No project selected' });
+          return [];
+        }
 
-        // Optimistic add
-        const previousItems = get().mediaItems;
-        set((state) => ({
-          mediaItems: [tempItem, ...state.mediaItems],
-          uploadProgress: { ...state.uploadProgress, [tempId]: 0 },
-          error: null,
-        }));
+        // Check if File System Access API is supported
+        if (!('showOpenFilePicker' in window)) {
+          set({ error: 'File picker not supported in this browser' });
+          return [];
+        }
 
         try {
-          // v3: Upload with project association
-          const metadata = currentProjectId
-            ? await mediaLibraryService.uploadMediaToProject(
-                file,
-                currentProjectId,
-                (percent) => {
-                  set((state) => ({
-                    uploadProgress: { ...state.uploadProgress, [tempId]: percent },
-                  }));
-                }
-              )
-            : await mediaLibraryService.uploadMedia(file, (percent) => {
+          // Open file picker
+          const handles = await window.showOpenFilePicker({
+            multiple: true,
+            types: [
+              {
+                description: 'Media files',
+                accept: {
+                  'video/*': ['.mp4', '.webm', '.mov', '.avi', '.mkv'],
+                  'audio/*': ['.mp3', '.wav', '.ogg', '.m4a', '.aac'],
+                  'image/*': ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg'],
+                },
+              },
+            ],
+          });
+
+          const results: MediaMetadata[] = [];
+          const duplicateNames: string[] = [];
+
+          for (const handle of handles) {
+            const tempId = crypto.randomUUID();
+            const file = await handle.getFile();
+
+            // Create temporary placeholder with 'handle' storage type
+            const tempItem: MediaMetadata = {
+              id: tempId,
+              storageType: 'handle',
+              fileHandle: handle,
+              fileName: file.name,
+              fileSize: file.size,
+              mimeType: file.type,
+              duration: 0,
+              width: 0,
+              height: 0,
+              fps: 30,
+              codec: 'importing...',
+              bitrate: 0,
+              tags: [],
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+            };
+
+            // Optimistic add with importing state
+            set((state) => ({
+              mediaItems: [tempItem, ...state.mediaItems],
+              importingIds: [...state.importingIds, tempId],
+              error: null,
+            }));
+
+            try {
+              const metadata = await mediaLibraryService.importMediaWithHandle(
+                handle,
+                currentProjectId
+              );
+
+              if (metadata.isDuplicate) {
+                // File already exists - remove temp item and collect for batch notification
                 set((state) => ({
-                  uploadProgress: { ...state.uploadProgress, [tempId]: percent },
+                  mediaItems: state.mediaItems.filter((item) => item.id !== tempId),
+                  importingIds: state.importingIds.filter((id) => id !== tempId),
                 }));
-              });
+                duplicateNames.push(file.name);
+              } else {
+                // Replace temp with actual metadata and clear importing state
+                set((state) => ({
+                  mediaItems: state.mediaItems.map((item) =>
+                    item.id === tempId ? metadata : item
+                  ),
+                  importingIds: state.importingIds.filter((id) => id !== tempId),
+                }));
+                results.push(metadata);
+              }
+            } catch (error) {
+              // Rollback this item
+              set((state) => ({
+                mediaItems: state.mediaItems.filter((item) => item.id !== tempId),
+                importingIds: state.importingIds.filter((id) => id !== tempId),
+              }));
+              console.error(`Failed to import ${file.name}:`, error);
+            }
+          }
 
-          // Replace temp with actual metadata
-          set((state) => ({
-            mediaItems: state.mediaItems.map((item) =>
-              item.id === tempId ? metadata : item
-            ),
-            uploadProgress: Object.fromEntries(
-              Object.entries(state.uploadProgress).filter(
-                ([id]) => id !== tempId
-              )
-            ),
-          }));
+          // Show batched notification for duplicates
+          if (duplicateNames.length > 0) {
+            const message = duplicateNames.length === 1
+              ? `"${duplicateNames[0]}" already exists in library`
+              : `${duplicateNames.length} files already exist in library`;
+            get().showNotification({ type: 'info', message });
+          }
 
-          // Refresh storage quota
-          get().refreshStorageQuota();
-
-          return metadata;
+          return results;
         } catch (error) {
-          // Rollback optimistic update
-          set((state) => ({
-            mediaItems: previousItems,
-            uploadProgress: Object.fromEntries(
-              Object.entries(state.uploadProgress).filter(
-                ([id]) => id !== tempId
-              )
-            ),
-            error: error instanceof Error ? error.message : 'Upload failed',
-          }));
-          throw error;
+          // User cancelled or error
+          if (error instanceof Error && error.name !== 'AbortError') {
+            set({ error: error.message });
+          }
+          return [];
         }
       },
 
-      // Upload multiple files in batch (v3: project-scoped)
-      uploadMediaBatch: async (files: File[]) => {
+      // Import media from file handles (for drag-drop)
+      importHandles: async (handles: FileSystemFileHandle[]) => {
         const { currentProjectId } = get();
-        set({ isLoading: true, error: null });
+        console.log('[importHandles] Starting import for', handles.length, 'handles');
 
-        try {
-          // v3: Upload with project association
-          const results = currentProjectId
-            ? await mediaLibraryService.uploadMediaBatchToProject(
-                files,
-                currentProjectId,
-                (current, total, fileName) => {
-                  console.log(`Uploading ${current}/${total}: ${fileName}`);
-                }
-              )
-            : await mediaLibraryService.uploadMediaBatch(
-                files,
-                (current, total, fileName) => {
-                  console.log(`Uploading ${current}/${total}: ${fileName}`);
-                }
-              );
+        if (!currentProjectId) {
+          set({ error: 'No project selected' });
+          return [];
+        }
 
-          // Add all successfully uploaded items
+        const results: MediaMetadata[] = [];
+        const duplicateNames: string[] = [];
+
+        for (let i = 0; i < handles.length; i++) {
+          const handle = handles[i];
+          console.log(`[importHandles] Processing handle ${i + 1}/${handles.length}:`, handle.name);
+          const tempId = crypto.randomUUID();
+          const file = await handle.getFile();
+
+          // Create temporary placeholder with 'handle' storage type
+          const tempItem: MediaMetadata = {
+            id: tempId,
+            storageType: 'handle',
+            fileHandle: handle,
+            fileName: file.name,
+            fileSize: file.size,
+            mimeType: file.type,
+            duration: 0,
+            width: 0,
+            height: 0,
+            fps: 30,
+            codec: 'importing...',
+            bitrate: 0,
+            tags: [],
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+          };
+
+          // Optimistic add with importing state
           set((state) => ({
-            mediaItems: [...results, ...state.mediaItems],
-            isLoading: false,
+            mediaItems: [tempItem, ...state.mediaItems],
+            importingIds: [...state.importingIds, tempId],
+            error: null,
           }));
 
-          // Refresh storage quota
-          get().refreshStorageQuota();
-        } catch (error) {
-          const errorMessage =
-            error instanceof Error ? error.message : 'Batch upload failed';
-          set({ error: errorMessage, isLoading: false });
-          throw error;
+          try {
+            console.log(`[importHandles] Calling importMediaWithHandle for ${file.name} (${file.size} bytes)`);
+            const metadata = await mediaLibraryService.importMediaWithHandle(
+              handle,
+              currentProjectId
+            );
+            console.log(`[importHandles] Result for ${file.name}:`, { isDuplicate: metadata.isDuplicate, id: metadata.id });
+
+            if (metadata.isDuplicate) {
+              // File already exists - remove temp item and collect for batch notification
+              console.log(`[importHandles] ${file.name} is duplicate, removing temp item`);
+              set((state) => ({
+                mediaItems: state.mediaItems.filter((item) => item.id !== tempId),
+                importingIds: state.importingIds.filter((id) => id !== tempId),
+              }));
+              duplicateNames.push(file.name);
+            } else {
+              // Replace temp with actual metadata and clear importing state
+              console.log(`[importHandles] ${file.name} imported successfully with id ${metadata.id}`);
+              set((state) => ({
+                mediaItems: state.mediaItems.map((item) =>
+                  item.id === tempId ? metadata : item
+                ),
+                importingIds: state.importingIds.filter((id) => id !== tempId),
+              }));
+              results.push(metadata);
+            }
+          } catch (error) {
+            // Rollback this item
+            console.error(`[importHandles] Failed to import ${file.name}:`, error);
+            set((state) => ({
+              mediaItems: state.mediaItems.filter((item) => item.id !== tempId),
+              importingIds: state.importingIds.filter((id) => id !== tempId),
+            }));
+          }
         }
+
+        console.log(`[importHandles] Import complete. Results: ${results.length}, Duplicates: ${duplicateNames.length}`);
+
+        // Show batched notification for duplicates
+        if (duplicateNames.length > 0) {
+          const message = duplicateNames.length === 1
+            ? `"${duplicateNames[0]}" already exists in library`
+            : `${duplicateNames.length} files already exist in library`;
+          get().showNotification({ type: 'info', message });
+        }
+
+        return results;
       },
 
       // Delete a media item (v3: project-scoped with reference counting)
@@ -220,8 +305,6 @@ export const useMediaLibraryStore = create<
             await mediaLibraryService.deleteMedia(id);
           }
 
-          // Refresh storage quota
-          get().refreshStorageQuota();
         } catch (error) {
           // Rollback on error
           set({
@@ -255,8 +338,6 @@ export const useMediaLibraryStore = create<
             await mediaLibraryService.deleteMediaBatch(ids);
           }
 
-          // Refresh storage quota
-          get().refreshStorageQuota();
         } catch (error) {
           // Rollback on error
           set({
@@ -287,16 +368,19 @@ export const useMediaLibraryStore = create<
       setViewMode: (viewMode) => set({ viewMode }),
 
       // Utility actions
-      refreshStorageQuota: async () => {
-        try {
-          const { used, quota } = await mediaLibraryService.getStorageUsage();
-          set({ storageUsed: used, storageQuota: quota });
-        } catch (error) {
-          console.error('Failed to refresh storage quota:', error);
-        }
+      clearError: () => set({ error: null }),
+
+      showNotification: (notification: MediaLibraryNotification) => {
+        set({ notification });
+        // Auto-clear after 4 seconds
+        setTimeout(() => {
+          set((state) =>
+            state.notification === notification ? { notification: null } : state
+          );
+        }, 4000);
       },
 
-      clearError: () => set({ error: null }),
+      clearNotification: () => set({ notification: null }),
     }),
     {
       name: 'MediaLibraryStore',
@@ -345,12 +429,4 @@ export const useFilteredMediaItems = () => {
   });
 
   return sorted;
-};
-
-export const useStorageQuotaPercent = () => {
-  const storageUsed = useMediaLibraryStore((s) => s.storageUsed);
-  const storageQuota = useMediaLibraryStore((s) => s.storageQuota);
-
-  if (storageQuota === 0) return 0;
-  return (storageUsed / storageQuota) * 100;
 };
