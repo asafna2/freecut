@@ -7,6 +7,7 @@ export interface ZoomState {
 
 export interface ZoomActions {
   setZoomLevel: (level: number) => void;
+  setZoomLevelImmediate: (level: number) => void; // Bypasses throttle for smooth momentum zoom
   zoomIn: () => void;
   zoomOut: () => void;
   zoomToFit: (containerWidth: number, contentDurationSeconds: number) => void;
@@ -56,14 +57,26 @@ export const useZoomStore = create<ZoomState & ZoomActions>((set) => ({
       }, ZOOM_THROTTLE_MS - (now - lastZoomUpdate));
     }
   },
+
+  // Immediate zoom update - bypasses throttle for synchronized scroll calculations
+  setZoomLevelImmediate: (level) => {
+    // Clear any pending throttled update
+    if (zoomThrottleTimeout) {
+      clearTimeout(zoomThrottleTimeout);
+      zoomThrottleTimeout = null;
+    }
+    pendingZoomLevel = null;
+    lastZoomUpdate = performance.now();
+    set({ level, pixelsPerSecond: level * 100 });
+  },
   zoomIn: () =>
     set((state) => {
-      const newLevel = Math.min(state.level * 1.2, 50); // Increased from 10 to 50 for finer detail
+      const newLevel = Math.min(state.level * 1.1, 50); // 10% per step for finer control
       return { level: newLevel, pixelsPerSecond: newLevel * 100 };
     }),
   zoomOut: () =>
     set((state) => {
-      const newLevel = Math.max(state.level / 1.2, 0.01);
+      const newLevel = Math.max(state.level / 1.1, 0.01);
       return { level: newLevel, pixelsPerSecond: newLevel * 100 };
     }),
   zoomToFit: (containerWidth, contentDurationSeconds) => {

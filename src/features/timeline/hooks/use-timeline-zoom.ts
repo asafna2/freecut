@@ -22,6 +22,7 @@ export function useTimelineZoom(options: UseTimelineZoomOptions = {}) {
   // Use granular selectors - Zustand v5 best practice
   const zoomLevel = useZoomStore((s) => s.level);
   const setZoomLevel = useZoomStore((s) => s.setZoomLevel);
+  const setZoomLevelImmediate = useZoomStore((s) => s.setZoomLevelImmediate);
   const zoomInAction = useZoomStore((s) => s.zoomIn);
   const zoomOutAction = useZoomStore((s) => s.zoomOut);
   const pixelsPerSecond = useZoomStore((s) => s.pixelsPerSecond);
@@ -91,5 +92,6 @@ export function useTimelineZoom(options: UseTimelineZoomOptions = {}) {
     zoomOut: zoomOutAction, // Direct reference - store actions are stable
     resetZoom,
     setZoom: (level: number) => setZoomLevel(Math.max(minZoom, Math.min(maxZoom, level))),
+    setZoomImmediate: (level: number) => setZoomLevelImmediate(Math.max(minZoom, Math.min(maxZoom, level))),
   };
 }

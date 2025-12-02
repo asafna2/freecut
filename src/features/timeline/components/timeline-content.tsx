@@ -1,4 +1,4 @@
-import { useMemo, useRef, useEffect, useState, useCallback } from 'react';
+import { useMemo, useRef, useEffect, useLayoutEffect, useState, useCallback } from 'react';
 
 // Stores and selectors
 import { useTimelineStore } from '../stores/timeline-store';
@@ -57,7 +57,7 @@ export function TimelineContent({ duration, scrollRef, onZoomHandlersReady }: Ti
   const tracks = useTimelineStore((s) => s.tracks);
   const items = useTimelineStore((s) => s.items);
   const fps = useTimelineStore((s) => s.fps);
-  const { timeToPixels, pixelsToTime, frameToPixels, setZoom, zoomLevel } = useTimelineZoom({
+  const { timeToPixels, pixelsToTime, frameToPixels, setZoom, setZoomImmediate, zoomLevel } = useTimelineZoom({
     minZoom: 0.01,
     maxZoom: 2, // Match slider range
   });
@@ -155,6 +155,9 @@ export function TimelineContent({ duration, scrollRef, onZoomHandlersReady }: Ti
   const velocityZoomRef = useRef(0);
   const momentumIdRef = useRef<number | null>(null);
   const lastWheelTimeRef = useRef(0);
+  const zoomCursorXRef = useRef(0); // Cursor X position (relative to container) for zoom anchor
+  const lastZoomWheelTimeRef = useRef(0); // Track zoom gesture separately
+  const pendingScrollRef = useRef<number | null>(null); // Queued scroll to apply after render
 
   // Merge external scrollRef with internal containerRef
   const mergedRef = useCallback((node: HTMLDivElement | null) => {
@@ -227,6 +230,15 @@ export function TimelineContent({ duration, scrollRef, onZoomHandlersReady }: Ti
       }
     };
   }, []);
+
+  // Apply pending scroll AFTER render when DOM has updated width
+  // This ensures zoom anchor works correctly even when timeline extends beyond content
+  useLayoutEffect(() => {
+    if (pendingScrollRef.current !== null && containerRef.current) {
+      containerRef.current.scrollLeft = pendingScrollRef.current;
+      pendingScrollRef.current = null;
+    }
+  });
 
   // Marquee selection - create items array for getBoundingRect lookups
   const marqueeItems = useMemo(
@@ -382,14 +394,22 @@ export function TimelineContent({ duration, scrollRef, onZoomHandlersReady }: Ti
     const effectiveContainerWidth = containerWidth > 0 ? containerWidth : 1920;
     const contentWidth = timeToPixels(contentDuration);
 
+    // Use the most up-to-date scroll position (ref is updated immediately, state is throttled)
+    // This ensures timeline doesn't shrink during zoom before state updates
+    const currentScroll = Math.max(scrollLeft, scrollLeftRef.current);
+    const currentViewEnd = currentScroll + effectiveContainerWidth;
+
     // Only add buffer when content is wider than viewport (for smooth scroll to end)
     // When content fits, use exact viewport width to avoid unnecessary scrollbar
-    const width = contentWidth > effectiveContainerWidth
+    const baseWidth = contentWidth > effectiveContainerWidth
       ? contentWidth + 50
       : effectiveContainerWidth;
 
+    // Timeline must be at least as wide as current view to maintain zoom anchor
+    const width = Math.max(baseWidth, currentViewEnd);
+
     return { actualDuration: contentDuration, timelineWidth: width };
-  }, [items, fps, timeToPixels, containerWidth]);
+  }, [items, fps, timeToPixels, containerWidth, scrollLeft]);
 
   // Pre-filter items by track to avoid passing all items to all tracks
   // This prevents cascade re-renders when only one track's items change
@@ -408,8 +428,8 @@ export function TimelineContent({ duration, scrollRef, onZoomHandlersReady }: Ti
   }, [items, tracks]);
 
   /**
-   * Adjusts scroll position to center the playhead when zoom changes
-   * @param newZoomLevel - The new zoom level to apply
+   * Adjusts scroll position to keep cursor position stable when zoom changes
+   * (Anchor zooming - cursor stays visually fixed, content scales around it)
    *
    * Uses refs for dynamic values to avoid callback recreation on every render
    */
@@ -417,48 +437,54 @@ export function TimelineContent({ duration, scrollRef, onZoomHandlersReady }: Ti
     const container = containerRef.current;
     if (!container) return;
 
-    const currentFrame = currentFrameRef.current;
     const fps = fpsRef.current;
+    const currentZoom = zoomLevelRef.current;
 
-    // IMPORTANT: Clamp the zoom level to valid range BEFORE calculations
-    // setZoom will clamp it, so we need to use the same clamped value for scroll calculations
+    // Clamp zoom to valid range
     const clampedZoom = Math.max(0.01, Math.min(2, newZoomLevel));
+    if (clampedZoom === currentZoom) return;
 
-    // Early return if zoom hasn't changed (already at min/max limit)
-    // This prevents scroll position from jumping when Ctrl+scrolling at limits
-    if (clampedZoom === zoomLevelRef.current) return;
+    // Cursor's screen position (relative to container's visible left edge)
+    const cursorScreenX = zoomCursorXRef.current;
 
-    // Calculate what the content duration will be (same logic as useMemo)
-    const contentDuration = Math.max(10, itemsRef.current.reduce((max, item) => {
-      const itemEnd = (item.from + item.durationInFrames) / fps;
-      return Math.max(max, itemEnd);
-    }, 0));
+    // Calculate cursor's position in CONTENT coordinates (timeline space)
+    const cursorContentX = container.scrollLeft + cursorScreenX;
 
-    // If playhead is beyond content, move it back to last valid frame
-    const maxValidFrame = Math.floor(contentDuration * fps);
-    const frameToUse = currentFrame > maxValidFrame
-      ? (usePlaybackStore.getState().setCurrentFrame(maxValidFrame), maxValidFrame)
-      : currentFrame;
+    // Convert to time using current zoom
+    const currentPixelsPerSecond = currentZoom * 100;
+    const cursorTime = cursorContentX / currentPixelsPerSecond;
 
-    // Calculate playhead position AFTER zoom
-    const timeInSeconds = frameToUse / fps;
-    const pixelsPerSecondAfter = 100 * clampedZoom;
-    const playheadPixelsAfter = timeInSeconds * pixelsPerSecondAfter;
+    // Calculate where that same time point will be at the new zoom
+    const newPixelsPerSecond = clampedZoom * 100;
+    const newCursorContentX = cursorTime * newPixelsPerSecond;
 
-    // Get viewport dimensions
-    const viewportWidth = container.clientWidth;
-    const viewportCenter = viewportWidth / 2;
+    // Calculate scroll needed to keep cursor at same screen position
+    // cursor should stay at cursorScreenX, so:
+    // newScrollLeft + cursorScreenX = newCursorContentX
+    // newScrollLeft = newCursorContentX - cursorScreenX
+    const newScrollLeft = newCursorContentX - cursorScreenX;
 
-    // Calculate desired scroll position to center the playhead
-    const desiredScrollLeft = playheadPixelsAfter - viewportCenter;
+    // Only clamp to prevent negative scroll (left boundary)
+    const clampedScrollLeft = Math.max(0, newScrollLeft);
 
-    // Apply zoom (this updates the store synchronously, also clamping it)
-    setZoom(clampedZoom);
+    console.log('Zoom:', {
+      cursorScreenX: cursorScreenX.toFixed(0),
+      cursorContentX: cursorContentX.toFixed(0),
+      cursorTime: cursorTime.toFixed(2) + 's',
+      newCursorContentX: newCursorContentX.toFixed(0),
+      scrollBefore: container.scrollLeft.toFixed(0),
+      scrollTarget: clampedScrollLeft.toFixed(0),
+      zoom: `${currentZoom.toFixed(3)} → ${clampedZoom.toFixed(3)}`,
+    });
 
-    // Set scroll immediately - we'll clamp it, and browser will handle invalid values
-    // The key is to set it BEFORE React renders, so both updates happen together
-    container.scrollLeft = Math.max(0, desiredScrollLeft);
-  }, [setZoom]); // Only setZoom as dependency, which should be stable
+    // Queue scroll to be applied AFTER render (so DOM has correct width)
+    // Update ref immediately so timelineWidth calculation can use it
+    pendingScrollRef.current = clampedScrollLeft;
+    scrollLeftRef.current = clampedScrollLeft;
+
+    // Apply zoom - this triggers re-render, after which useLayoutEffect applies scroll
+    setZoomImmediate(clampedZoom);
+  }, [setZoomImmediate]);
 
   // Create zoom handlers that include playhead centering
   // These callbacks are stable and don't recreate on every render thanks to refs
@@ -553,10 +579,14 @@ export function TimelineContent({ duration, scrollRef, onZoomHandlersReady }: Ti
         velocityYRef.current = 0;
       }
 
-      // Apply velocity to zoom
+      // Apply velocity to zoom using logarithmic scale for symmetric feel
+      // This makes zoom in and zoom out feel equally fast
       if (Math.abs(velocityZoomRef.current) > ZOOM_MIN_VELOCITY) {
-        const zoomFactor = 1 - velocityZoomRef.current;
-        const newZoomLevel = zoomLevelRef.current * zoomFactor;
+        const currentZoom = zoomLevelRef.current;
+        // Work in log space: add velocity to log(zoom), then exponentiate
+        const logZoom = Math.log(currentZoom);
+        const newLogZoom = logZoom - velocityZoomRef.current * 1.2; // Scale factor for feel
+        const newZoomLevel = Math.exp(newLogZoom);
         applyZoomWithPlayheadCentering(newZoomLevel);
         velocityZoomRef.current *= ZOOM_FRICTION;
         hasZoomMomentum = true;
@@ -605,10 +635,21 @@ export function TimelineContent({ duration, scrollRef, onZoomHandlersReady }: Ti
         velocityZoomRef.current = 0;
       }
 
-      // Ctrl/Cmd + scroll = zoom with momentum
+      // Ctrl/Cmd + scroll = zoom with momentum (anchored to cursor position)
       if (event.ctrlKey || event.metaKey) {
         velocityXRef.current = 0;
         velocityYRef.current = 0;
+
+        // Only capture cursor position at START of zoom gesture (not during continuous zoom)
+        // Use longer timeout (500ms) to avoid anchor jumping during natural gesture pauses
+        const zoomTimeDelta = now - lastZoomWheelTimeRef.current;
+        const isNewZoomGesture = zoomTimeDelta > 500;
+        if (isNewZoomGesture) {
+          const rect = container.getBoundingClientRect();
+          zoomCursorXRef.current = event.clientX - rect.left;
+        }
+        lastZoomWheelTimeRef.current = now;
+
         const zoomSmoothingFactor = 1 - ZOOM_SMOOTHING;
         const delta = event.deltaY * ZOOM_SENSITIVITY;
         velocityZoomRef.current = velocityZoomRef.current * zoomSmoothingFactor + delta * ZOOM_SMOOTHING;
@@ -659,7 +700,7 @@ export function TimelineContent({ duration, scrollRef, onZoomHandlersReady }: Ti
       {/* Time Ruler - sticky at top */}
       <div className="sticky top-0 z-30 timeline-ruler bg-background" style={{ width: `${timelineWidth}px` }}>
         <TimelineMarkers duration={actualDuration} width={timelineWidth} />
-        <TimelinePlayhead inRuler />
+        <TimelinePlayhead inRuler maxFrame={Math.floor(actualDuration * fps)} />
       </div>
 
       {/* Track lanes */}
@@ -696,7 +737,7 @@ export function TimelineContent({ duration, scrollRef, onZoomHandlersReady }: Ti
         )}
 
         {/* Playhead line through all tracks */}
-        <TimelinePlayhead />
+        <TimelinePlayhead maxFrame={Math.floor(actualDuration * fps)} />
       </div>
     </div>
   );

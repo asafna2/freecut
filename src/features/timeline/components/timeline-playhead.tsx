@@ -10,6 +10,7 @@ import { useTimelineZoom } from '../hooks/use-timeline-zoom';
 
 export interface TimelinePlayheadProps {
   inRuler?: boolean; // If true, shows diamond indicator for ruler
+  maxFrame?: number; // Maximum frame the playhead can be dragged to (content duration)
 }
 
 /**
@@ -21,7 +22,7 @@ export interface TimelinePlayheadProps {
  * - Synchronized with playback store
  * - Draggable for scrubbing through timeline
  */
-export function TimelinePlayhead({ inRuler = false }: TimelinePlayheadProps) {
+export function TimelinePlayhead({ inRuler = false, maxFrame }: TimelinePlayheadProps) {
   const currentFrame = usePlaybackStore((s) => s.currentFrame);
   const setCurrentFrame = usePlaybackStore((s) => s.setCurrentFrame);
   const { frameToPixels, pixelsToFrame } = useTimelineZoom();
@@ -42,6 +43,7 @@ export function TimelinePlayhead({ inRuler = false }: TimelinePlayheadProps) {
   // Use refs to avoid stale closures
   const pixelsToFrameRef = useRef(pixelsToFrame);
   const setCurrentFrameRef = useRef(setCurrentFrame);
+  const maxFrameRef = useRef(maxFrame);
 
   // RAF throttling refs for smooth scrubbing without excessive state updates
   const pendingFrameRef = useRef<number | null>(null);
@@ -51,7 +53,8 @@ export function TimelinePlayhead({ inRuler = false }: TimelinePlayheadProps) {
   useEffect(() => {
     pixelsToFrameRef.current = pixelsToFrame;
     setCurrentFrameRef.current = setCurrentFrame;
-  }, [pixelsToFrame, setCurrentFrame]);
+    maxFrameRef.current = maxFrame;
+  }, [pixelsToFrame, setCurrentFrame, maxFrame]);
 
   // Track external drag operations to disable pointer events on hit areas
   useEffect(() => {
@@ -69,7 +72,7 @@ export function TimelinePlayhead({ inRuler = false }: TimelinePlayheadProps) {
     };
   }, []);
 
-  const leftPosition = frameToPixels(currentFrame);
+  const leftPosition = Math.round(frameToPixels(currentFrame));
 
   // Handle drag start
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
@@ -100,7 +103,12 @@ export function TimelinePlayhead({ inRuler = false }: TimelinePlayheadProps) {
       const x = e.clientX - rect.left;
 
       // Convert pixel position to frame number using ref to avoid stale closure
-      const frame = Math.max(0, pixelsToFrameRef.current(x));
+      // Round to whole frames for pixel-perfect positioning
+      // Clamp to [0, maxFrame] to keep playhead within content duration
+      let frame = Math.max(0, Math.round(pixelsToFrameRef.current(x)));
+      if (maxFrameRef.current !== undefined) {
+        frame = Math.min(frame, maxFrameRef.current);
+      }
 
       // RAF throttling: batch frame updates to max 60fps to reduce state updates
       pendingFrameRef.current = frame;
