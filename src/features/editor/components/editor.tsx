@@ -10,7 +10,6 @@ import { PropertiesSidebar } from './properties-sidebar';
 import { PreviewArea } from './preview-area';
 import { Timeline } from '@/features/timeline/components/timeline';
 import { ExportDialog } from '@/features/export/components/export-dialog';
-import { useTimelineShortcuts } from '@/features/timeline/hooks/use-timeline-shortcuts';
 import { useEditorHotkeys } from '@/hooks/use-editor-hotkeys';
 import { useTimelineStore } from '@/features/timeline/stores/timeline-store';
 import { usePlaybackStore } from '@/features/preview/stores/playback-store';
@@ -208,14 +207,6 @@ export function Editor({ projectId, project }: EditorProps) {
     onExport: handleExport,
   });
 
-  useTimelineShortcuts({
-    onPlay: () => console.log('Playing'),
-    onPause: () => console.log('Paused'),
-    onSplit: () => console.log('Split item'),
-    onDelete: () => console.log('Delete items'),
-    onUndo: () => console.log('Undo'),
-    onRedo: () => console.log('Redo'),
-  });
 
   // TODO: Get actual timeline duration from project/timeline store
   const timelineDuration = 30; // 30 seconds placeholder

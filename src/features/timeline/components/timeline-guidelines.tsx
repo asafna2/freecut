@@ -18,8 +18,6 @@ export interface TimelineGuidelinesProps {
 export function TimelineGuidelines({ activeSnapTarget }: TimelineGuidelinesProps) {
   const { frameToPixels } = useTimelineZoom();
 
-  console.log('[Guidelines] activeSnapTarget:', activeSnapTarget);
-
   // Only show when there's an active snap target
   if (!activeSnapTarget) {
     return null;
