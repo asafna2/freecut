@@ -145,6 +145,8 @@ export function TimelineContent({ duration, scrollRef, onZoomHandlersReady }: Ti
   const zoomLevelRef = useRef(zoomLevel);
   zoomLevelRef.current = zoomLevel;
 
+  const actualDurationRef = useRef(10); // Initialize with minimum duration
+
   const itemsRef = useRef(items);
   itemsRef.current = items;
 
@@ -411,6 +413,8 @@ export function TimelineContent({ duration, scrollRef, onZoomHandlersReady }: Ti
     return { actualDuration: contentDuration, timelineWidth: width };
   }, [items, fps, timeToPixels, containerWidth, scrollLeft]);
 
+  actualDurationRef.current = actualDuration;
+
   // Pre-filter items by track to avoid passing all items to all tracks
   // This prevents cascade re-renders when only one track's items change
   const itemsByTrack = useMemo(() => {
@@ -450,9 +454,12 @@ export function TimelineContent({ duration, scrollRef, onZoomHandlersReady }: Ti
     // Calculate cursor's position in CONTENT coordinates (timeline space)
     const cursorContentX = container.scrollLeft + cursorScreenX;
 
-    // Convert to time using current zoom
+    // Convert to time using current zoom, clamped to actual content duration
     const currentPixelsPerSecond = currentZoom * 100;
-    const cursorTime = cursorContentX / currentPixelsPerSecond;
+    const cursorTime = Math.min(
+      cursorContentX / currentPixelsPerSecond,
+      actualDurationRef.current
+    );
 
     // Calculate where that same time point will be at the new zoom
     const newPixelsPerSecond = clampedZoom * 100;
