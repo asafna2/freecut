@@ -10,7 +10,8 @@
       "WebFetch(domain:raw.githubusercontent.com)",
       "Bash(curl:*)",
       "WebFetch(domain:mediabunny.dev)",
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "mcp__ide__getDiagnostics"
     ],
     "deny": [],
     "ask": []

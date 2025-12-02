@@ -28,8 +28,11 @@ interface PitchCorrectedAudioProps {
  * Note: We use Audio from 'remotion' directly instead of '@remotion/media' Audio because:
  * - @remotion/media Audio shows "Unknown container format" warnings for MP3 files
  * - The standard Audio component works reliably with all formats
+ *
+ * Wrapped in React.memo to prevent re-renders when parent composition updates
+ * but audio props haven't changed (e.g., when moving other items in timeline).
  */
-export const PitchCorrectedAudio: React.FC<PitchCorrectedAudioProps> = ({
+export const PitchCorrectedAudio: React.FC<PitchCorrectedAudioProps> = React.memo(({
   src,
   itemId,
   volume = 0,
@@ -46,7 +49,12 @@ export const PitchCorrectedAudio: React.FC<PitchCorrectedAudioProps> = ({
   const [playing] = Internals.Timeline.usePlayingState();
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const lastSyncTimeRef = useRef<number>(0);
+  // Track when we last synced - initialized to current time
+  const lastSyncTimeRef = useRef<number>(Date.now());
+  // Track if this is the very first sync (component just mounted)
+  const needsInitialSyncRef = useRef<boolean>(true);
+  // Track last frame for scrub detection (only seek on pause if frame changed)
+  const lastFrameRef = useRef<number>(-1);
 
   // Read preview values from gizmo store
   const itemPropertiesPreview = useGizmoStore((s) => s.itemPropertiesPreview);
@@ -182,15 +190,33 @@ export const PitchCorrectedAudio: React.FC<PitchCorrectedAudioProps> = ({
     const compositionTimeSeconds = frame / fps;
     const sourceTimeSeconds = (trimBefore / fps) + (compositionTimeSeconds * playbackRate);
 
-    if (playing) {
-      // Check if we need to seek
-      const currentTime = audio.currentTime;
-      const timeDiff = Math.abs(currentTime - sourceTimeSeconds);
+    // Detect if frame actually changed (for scrub detection)
+    const frameChanged = frame !== lastFrameRef.current;
+    lastFrameRef.current = frame;
 
-      // Seek if drift is more than 0.15 seconds (acceptable sync threshold)
-      if (timeDiff > 0.15 || lastSyncTimeRef.current === 0) {
+    if (playing) {
+      const currentTime = audio.currentTime;
+      const now = Date.now();
+
+      // Calculate drift direction: positive = audio ahead, negative = audio behind
+      const drift = currentTime - sourceTimeSeconds;
+      const timeSinceLastSync = now - lastSyncTimeRef.current;
+
+      // Determine if we need to seek:
+      // 1. Initial sync when component first plays
+      // 2. Audio is BEHIND by more than threshold (needs to catch up)
+      //
+      // IMPORTANT: Never seek backwards when audio is ahead!
+      // During heavy renders (drag operations), frame updates lag behind real-time
+      // audio playback. The frame will catch up naturally. Seeking backwards causes
+      // the audible "rewind" glitch that disrupts playback.
+      const audioBehind = drift < -0.2;
+      const needsSync = needsInitialSyncRef.current || (audioBehind && timeSinceLastSync > 500);
+
+      if (needsSync) {
         audio.currentTime = sourceTimeSeconds;
-        lastSyncTimeRef.current = Date.now();
+        lastSyncTimeRef.current = now;
+        needsInitialSyncRef.current = false;
       }
 
       // Play if paused
@@ -200,15 +226,17 @@ export const PitchCorrectedAudio: React.FC<PitchCorrectedAudioProps> = ({
         });
       }
     } else {
-      // Pause and seek to current position
+      // Pause audio when not playing
       if (!audio.paused) {
         audio.pause();
       }
-      audio.currentTime = sourceTimeSeconds;
-      lastSyncTimeRef.current = 0;
+      // Only seek when paused if frame actually changed (user is scrubbing)
+      if (frameChanged) {
+        audio.currentTime = sourceTimeSeconds;
+      }
     }
   }, [frame, fps, playing, playbackRate, trimBefore]);
 
   // This component renders nothing visually
   return null;
-};
+});

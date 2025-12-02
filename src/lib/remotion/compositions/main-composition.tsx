@@ -272,23 +272,44 @@ const StableMaskedGroup: React.FC<{
 export const MainComposition: React.FC<RemotionInputProps> = ({ tracks, backgroundColor = '#000000' }) => {
   const { fps, width: canvasWidth, height: canvasHeight } = useVideoConfig();
   const currentFrame = useCurrentFrame();
-  const hasSoloTracks = tracks.some((track) => track.solo);
+  const hasSoloTracks = useMemo(() => tracks.some((track) => track.solo), [tracks]);
+  const maxOrder = useMemo(() => Math.max(...tracks.map((t) => t.order ?? 0), 0), [tracks]);
 
-  const maxOrder = Math.max(...tracks.map((t) => t.order ?? 0), 0);
+  const visibleTracks = useMemo(() =>
+    tracks.filter((track) => {
+      if (hasSoloTracks) return track.solo;
+      return track.visible !== false;
+    }),
+    [tracks, hasSoloTracks]
+  );
 
-  const visibleTracks = tracks.filter((track) => {
-    if (hasSoloTracks) return track.solo;
-    return track.visible !== false;
-  });
+  // Separate video and audio items - audio doesn't need masking and should be isolated
+  // from visual layer changes to prevent unnecessary re-renders
+  const videoItems = useMemo(() =>
+    visibleTracks.flatMap((track) =>
+      track.items
+        .filter((item) => item.type === 'video')
+        .map((item) => ({
+          ...item,
+          zIndex: maxOrder - (track.order ?? 0),
+          muted: track.muted,
+        }))
+    ),
+    [visibleTracks, maxOrder]
+  );
 
-  const mediaItems = visibleTracks.flatMap((track) =>
-    track.items
-      .filter((item) => item.type === 'video' || item.type === 'audio')
-      .map((item) => ({
-        ...item,
-        zIndex: maxOrder - (track.order ?? 0),
-        muted: track.muted,
-      }))
+  // Audio items are memoized separately and rendered outside mask groups
+  // This prevents audio from being affected by visual layer changes (mask add/delete, item moves)
+  const audioItems = useMemo(() =>
+    visibleTracks.flatMap((track) =>
+      track.items
+        .filter((item) => item.type === 'audio')
+        .map((item) => ({
+          ...item,
+          muted: track.muted,
+        }))
+    ),
+    [visibleTracks]
   );
 
   // Active masks: shapes with isMask: true
@@ -343,9 +364,8 @@ export const MainComposition: React.FC<RemotionInputProps> = ({ tracks, backgrou
     if (fontFamilies.length > 0) loadFonts(fontFamilies);
   }, [visibleTracks]);
 
-  const hasActiveVideo = mediaItems.some(
+  const hasActiveVideo = videoItems.some(
     (item) =>
-      item.type === 'video' &&
       currentFrame >= item.from &&
       currentFrame < item.from + item.durationInFrames
   );
@@ -370,12 +390,24 @@ export const MainComposition: React.FC<RemotionInputProps> = ({ tracks, backgrou
       {/* BACKGROUND LAYER */}
       <AbsoluteFill style={{ backgroundColor, zIndex: -1 }} />
 
-      {/* ADJUSTMENT WRAPPER - applies effects from adjustment layers to all content */}
+      {/* AUDIO LAYER - rendered outside visual layers to prevent re-renders from mask/visual changes */}
+      {/* Audio uses item.id as key (not generateStableKey) to prevent remounts on speed changes */}
+      {audioItems.map((item) => (
+        <Sequence
+          key={item.id}
+          from={item.from}
+          durationInFrames={item.durationInFrames}
+        >
+          <Item item={item} muted={item.muted} masks={[]} />
+        </Sequence>
+      ))}
+
+      {/* ADJUSTMENT WRAPPER - applies effects from adjustment layers to visual content */}
       <AdjustmentWrapper adjustmentLayers={hasAdjustmentLayers ? allAdjustmentLayers : []}>
-        {/* ALL MEDIA - single consistent DOM structure, mask applied uniformly */}
+        {/* VIDEO LAYER - single consistent DOM structure, mask applied uniformly */}
         {/* StableMaskedGroup always renders same div; mask effect controlled via SVG opacity */}
         <StableMaskedGroup hasMasks={hasActiveMasks}>
-          {mediaItems.map((item) => {
+          {videoItems.map((item) => {
             const premountFrames = Math.round(fps * 2);
             return (
               <Sequence
