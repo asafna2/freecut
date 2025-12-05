@@ -27,7 +27,7 @@ export function PropertyRow({
   );
 
   return (
-    <div className={cn('flex items-center justify-between gap-2 min-w-0', className)}>
+    <div className={cn('flex items-center justify-between gap-2 min-w-0 py-1', className)}>
       {tooltip ? (
         <Tooltip>
           <TooltipTrigger asChild>{labelContent}</TooltipTrigger>

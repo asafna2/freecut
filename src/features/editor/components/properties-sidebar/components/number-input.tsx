@@ -18,6 +18,8 @@ interface NumberInputProps {
   scrubEnabled?: boolean;
   placeholder?: string;
   className?: string;
+  /** Width of the unit suffix area - use consistent value across inputs for alignment */
+  unitWidth?: number;
 }
 
 /**
@@ -41,6 +43,7 @@ export function NumberInput({
   scrubEnabled = true,
   placeholder,
   className,
+  unitWidth = 20,
 }: NumberInputProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [localValue, setLocalValue] = useState(
@@ -184,12 +187,13 @@ export function NumberInput({
         )}
       />
 
-      {/* Unit suffix */}
-      {unit && (
-        <span className="pr-2 text-[10px] text-muted-foreground select-none pointer-events-none">
-          {unit}
-        </span>
-      )}
+      {/* Unit suffix - fixed width for alignment across different units */}
+      <span
+        className="pr-2 text-[10px] text-muted-foreground select-none pointer-events-none text-right"
+        style={{ minWidth: unitWidth }}
+      >
+        {unit}
+      </span>
     </div>
   );
 }
