@@ -37,31 +37,70 @@ interface VideoGroup {
 }
 
 /**
- * Groups video items by their origin key (mediaId-originId-speed)
+ * Groups video items by their origin key (mediaId-originId-speed) AND adjacency.
+ * Only adjacent clips (one ends where another begins) are grouped together.
+ * Clips that have been dragged apart are placed in separate groups.
  */
 function groupByOrigin(items: EnrichedVideoItem[]): VideoGroup[] {
-  const groups = new Map<string, VideoGroup>();
+  // First, collect items by their origin key
+  const byOriginKey = new Map<string, EnrichedVideoItem[]>();
 
   for (const item of items) {
     const originId = item.originId || item.id;
     const key = `${item.mediaId}-${originId}-${item.speed || 1}`;
 
-    const existing = groups.get(key);
+    const existing = byOriginKey.get(key);
     if (existing) {
-      existing.items.push(item);
-      existing.minFrom = Math.min(existing.minFrom, item.from);
-      existing.maxEnd = Math.max(existing.maxEnd, item.from + item.durationInFrames);
+      existing.push(item);
     } else {
-      groups.set(key, {
-        originKey: key,
-        items: [item],
-        minFrom: item.from,
-        maxEnd: item.from + item.durationInFrames,
-      });
+      byOriginKey.set(key, [item]);
     }
   }
 
-  return Array.from(groups.values());
+  // Now split each origin group into contiguous sub-groups
+  const groups: VideoGroup[] = [];
+
+  for (const [originKey, originItems] of byOriginKey) {
+    // Sort by position
+    const sorted = [...originItems].sort((a, b) => a.from - b.from);
+
+    // Build contiguous groups - clips must be adjacent (no gap)
+    let currentGroup: EnrichedVideoItem[] = [sorted[0]!];
+    let currentEnd = sorted[0]!.from + sorted[0]!.durationInFrames;
+
+    for (let i = 1; i < sorted.length; i++) {
+      const item = sorted[i]!;
+      // Adjacent if this item starts where previous ends (allow 1 frame tolerance for rounding)
+      if (item.from <= currentEnd + 1) {
+        currentGroup.push(item);
+        currentEnd = Math.max(currentEnd, item.from + item.durationInFrames);
+      } else {
+        // Gap detected - finalize current group and start new one
+        const minFrom = Math.min(...currentGroup.map((i) => i.from));
+        const maxEnd = Math.max(...currentGroup.map((i) => i.from + i.durationInFrames));
+        groups.push({
+          originKey: `${originKey}-${minFrom}`, // Make key unique per sub-group
+          items: currentGroup,
+          minFrom,
+          maxEnd,
+        });
+        currentGroup = [item];
+        currentEnd = item.from + item.durationInFrames;
+      }
+    }
+
+    // Finalize last group
+    const minFrom = Math.min(...currentGroup.map((i) => i.from));
+    const maxEnd = Math.max(...currentGroup.map((i) => i.from + i.durationInFrames));
+    groups.push({
+      originKey: `${originKey}-${minFrom}`,
+      items: currentGroup,
+      minFrom,
+      maxEnd,
+    });
+  }
+
+  return groups;
 }
 
 /**
