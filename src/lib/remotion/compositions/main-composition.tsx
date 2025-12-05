@@ -8,7 +8,10 @@ import { loadFonts } from '../utils/fonts';
 import { resolveTransform } from '../utils/transform-resolver';
 import { getShapePath, rotatePath } from '../utils/shape-path';
 import { useGizmoStore } from '@/features/preview/stores/gizmo-store';
-import { AdjustmentWrapper, type AdjustmentLayerWithTrackOrder } from '../components/adjustment-wrapper';
+import { ItemEffectWrapper, type AdjustmentLayerWithTrackOrder } from '../components/item-effect-wrapper';
+import { AdjustmentPostProcessor } from '@/features/effects/components/adjustment-post-processor';
+import type { PostProcessingEffect } from '@/features/effects/utils/post-processing-pipeline';
+import { getHalftoneEffect } from '@/features/effects/utils/effect-to-css';
 
 /** Mask shape with its track order for scope calculation */
 interface MaskWithTrackOrder {
@@ -307,13 +310,76 @@ const StableMaskedGroup: React.FC<{
 };
 
 /**
+ * Global Halftone Wrapper - applies halftone post-processing to all visual content.
+ *
+ * Halftone requires canvas-based capture of the entire rendered frame, so it can't
+ * be applied per-item like CSS filters. This wrapper applies halftone globally
+ * when any active adjustment layer has a halftone effect.
+ *
+ * Always renders the same DOM structure (AdjustmentPostProcessor handles enabled/disabled).
+ * Uses its own useCurrentFrame() to isolate per-frame re-renders.
+ */
+const GlobalHalftoneWrapper: React.FC<{
+  children: React.ReactNode;
+  adjustmentLayers: AdjustmentLayerWithTrackOrder[];
+}> = ({ children, adjustmentLayers }) => {
+  const frame = useCurrentFrame();
+
+  // Find active halftone effect from any adjustment layer at current frame
+  const halftoneEffect = useMemo((): PostProcessingEffect | null => {
+    if (adjustmentLayers.length === 0) return null;
+
+    for (const { layer } of adjustmentLayers) {
+      // Check if layer is active at current frame
+      if (frame < layer.from || frame >= layer.from + layer.durationInFrames) continue;
+
+      // Check for halftone effect in this layer
+      const effects = layer.effects ?? [];
+      const halftone = getHalftoneEffect(effects);
+      if (halftone) {
+        return {
+          type: 'halftone',
+          options: {
+            dotSize: halftone.dotSize,
+            spacing: halftone.spacing,
+            angle: halftone.angle,
+            intensity: halftone.intensity,
+            backgroundColor: halftone.backgroundColor,
+            dotColor: halftone.dotColor,
+          },
+        };
+      }
+    }
+    return null;
+  }, [adjustmentLayers, frame]);
+
+  // Always render AdjustmentPostProcessor to maintain stable DOM structure
+  return (
+    <AdjustmentPostProcessor
+      effect={halftoneEffect}
+      enabled={!!halftoneEffect}
+    >
+      {children}
+    </AdjustmentPostProcessor>
+  );
+};
+
+/**
  * Main Remotion Composition
  *
- * MASKING ARCHITECTURE (prevents re-render on item add/delete):
+ * ARCHITECTURE FOR STABLE DOM (prevents re-renders on item/adjustment layer add/delete):
+ *
+ * MASKING:
  * 1. ALL content rendered through single StableMaskedGroup wrapper
  * 2. MaskDefinitions: SVG mask defs with OPACITY-CONTROLLED activation
  * 3. Mask effect toggled via SVG internal opacity, not DOM structure changes
  * 4. Deleting/adding masks doesn't move items between DOM parents → no remount
+ *
+ * ADJUSTMENT LAYER EFFECTS:
+ * 1. CSS filter/glitch effects applied PER-ITEM via ItemEffectWrapper
+ * 2. Each item checks if it should have effects based on track order
+ * 3. Adding/removing adjustment layers doesn't change DOM structure
+ * 4. Halftone (canvas-based) applied globally via GlobalHalftoneWrapper
  */
 export const MainComposition: React.FC<RemotionInputProps> = ({ tracks, backgroundColor = '#000000' }) => {
   const { fps, width: canvasWidth, height: canvasHeight } = useVideoConfig();
@@ -381,6 +447,7 @@ export const MainComposition: React.FC<RemotionInputProps> = ({ tracks, backgrou
   }, [visibleTracks]);
 
   // Collect adjustment layers from VISIBLE tracks (for effect application)
+  // Effects from hidden tracks should not be applied
   const visibleAdjustmentLayers: AdjustmentLayerWithTrackOrder[] = useMemo(() => {
     const layers: AdjustmentLayerWithTrackOrder[] = [];
     visibleTracks.forEach((track) => {
@@ -393,21 +460,8 @@ export const MainComposition: React.FC<RemotionInputProps> = ({ tracks, backgrou
     return layers;
   }, [visibleTracks]);
 
-  // Collect adjustment layers from ALL tracks (for stable DOM structure)
-  // This ensures toggling track visibility doesn't change DOM structure
-  const allAdjustmentLayers: AdjustmentLayerWithTrackOrder[] = useMemo(() => {
-    const layers: AdjustmentLayerWithTrackOrder[] = [];
-    tracks.forEach((track) => {
-      track.items.forEach((item) => {
-        if (item.type === 'adjustment') {
-          layers.push({ layer: item as AdjustmentItem, trackOrder: track.order ?? 0 });
-        }
-      });
-    });
-    return layers;
-  }, [tracks]);
-
   // Use ALL tracks for stable DOM structure, with visibility flag for CSS-based hiding
+  // No longer split into above/below groups - effects applied per-item via ItemEffectWrapper
   const nonMediaByTrack = useMemo(() =>
     tracks.map((track) => ({
       ...track,
@@ -423,50 +477,10 @@ export const MainComposition: React.FC<RemotionInputProps> = ({ tracks, backgrou
     [tracks, visibleTrackIds]
   );
 
-  // Find the HIGHEST track order among adjustment layers
-  // Higher track order = lower zIndex = visually behind
-  // Adjustment layers affect items BEHIND them (higher track order = lower zIndex)
-  const highestAdjustmentTrackOrder = useMemo(() => {
-    if (allAdjustmentLayers.length === 0) return null;
-    return Math.max(...allAdjustmentLayers.map((a) => a.trackOrder));
-  }, [allAdjustmentLayers]);
-
-  // Split non-media items into two groups based on visual stacking:
-  // - Higher track order = lower zIndex = visually BEHIND adjustment = AFFECTED
-  // - Lower/equal track order = higher zIndex = visually IN FRONT = NOT affected
-  const { belowAdjustmentTracks, aboveAdjustmentTracks } = useMemo(() => {
-    if (highestAdjustmentTrackOrder === null) {
-      // No adjustment layers - all items are "above" (unaffected)
-      return { belowAdjustmentTracks: [], aboveAdjustmentTracks: nonMediaByTrack };
-    }
-
-    // Items with higher track order are visually BEHIND (lower zIndex) = affected
-    const below = nonMediaByTrack.filter((track) => (track.order ?? 0) > highestAdjustmentTrackOrder);
-    // Items with lower/equal track order are visually IN FRONT = not affected
-    const above = nonMediaByTrack.filter((track) => (track.order ?? 0) <= highestAdjustmentTrackOrder);
-
-    return { belowAdjustmentTracks: below, aboveAdjustmentTracks: above };
-  }, [nonMediaByTrack, highestAdjustmentTrackOrder]);
-
-  // Split video items by adjustment layer scope
-  const { belowAdjustmentVideos, aboveAdjustmentVideos } = useMemo(() => {
-    if (highestAdjustmentTrackOrder === null) {
-      // No adjustment layers - all videos are "above" (unaffected)
-      return { belowAdjustmentVideos: [], aboveAdjustmentVideos: videoItems };
-    }
-
-    // Videos with higher track order are visually BEHIND = affected
-    const below = videoItems.filter((item) => item.trackOrder > highestAdjustmentTrackOrder);
-    // Videos with lower/equal track order are visually IN FRONT = not affected
-    const above = videoItems.filter((item) => item.trackOrder <= highestAdjustmentTrackOrder);
-
-    return { belowAdjustmentVideos: below, aboveAdjustmentVideos: above };
-  }, [videoItems, highestAdjustmentTrackOrder]);
-
-  // NOTE: We no longer split items between masked/unmasked groups.
-  // Previously, deleting a shape caused items to move between groups → remounts.
-  // Now ALL content goes through a single StableMaskedGroup wrapper.
-  // The SVG mask handles show/hide via opacity, keeping DOM structure stable.
+  // NOTE: DOM structure is now fully stable regardless of adjustment layer changes.
+  // Previously, items would split between above/below adjustment groups → remounts.
+  // Now ALL items stay in the same DOM location with per-item effect application
+  // via ItemEffectWrapper. This prevents remounts when adjustment layers are added/removed.
 
   useMemo(() => {
     const textItems = visibleTracks
@@ -484,6 +498,7 @@ export const MainComposition: React.FC<RemotionInputProps> = ({ tracks, backgrou
   // Stable render function for video items - prevents re-renders on every frame
   // useCallback ensures the function reference stays stable between renders
   // Uses CSS visibility for hidden tracks to avoid DOM changes
+  // Now uses ItemEffectWrapper for per-item adjustment effects (no DOM restructuring)
   const renderVideoItem = useCallback((item: typeof videoItems[number]) => (
     <AbsoluteFill
       style={{
@@ -492,9 +507,14 @@ export const MainComposition: React.FC<RemotionInputProps> = ({ tracks, backgrou
         visibility: item.trackVisible ? 'visible' : 'hidden',
       }}
     >
-      <Item item={item} muted={item.muted || !item.trackVisible} masks={[]} />
+      <ItemEffectWrapper
+        itemTrackOrder={item.trackOrder}
+        adjustmentLayers={visibleAdjustmentLayers}
+      >
+        <Item item={item} muted={item.muted || !item.trackVisible} masks={[]} />
+      </ItemEffectWrapper>
     </AbsoluteFill>
-  ), []);
+  ), [visibleAdjustmentLayers]);
 
   return (
     <AbsoluteFill>
@@ -524,16 +544,16 @@ export const MainComposition: React.FC<RemotionInputProps> = ({ tracks, backgrou
         </Sequence>
       ))}
 
-      {/* ADJUSTMENT WRAPPER - applies effects from adjustment layers to visual content */}
-      {/* Only wraps items on tracks BELOW the adjustment layer(s) */}
-      {/* Uses visibleAdjustmentLayers so hidden tracks don't apply effects */}
-      {/* DOM structure based on allAdjustmentLayers to prevent re-renders on visibility toggle */}
-      <AdjustmentWrapper adjustmentLayers={visibleAdjustmentLayers}>
-        {/* VIDEO LAYER BELOW ADJUSTMENT - affected by adjustment layer effects */}
-        {/* StableMaskedGroup always renders same div; mask effect controlled via SVG opacity */}
+      {/* GLOBAL HALFTONE WRAPPER - applies halftone canvas post-processing globally */}
+      {/* Halftone requires full-frame capture so can't be per-item like CSS filters */}
+      {/* Always renders same DOM structure - enabled/disabled handled internally */}
+      <GlobalHalftoneWrapper adjustmentLayers={visibleAdjustmentLayers}>
+        {/* VIDEO LAYER - all videos in single StableVideoSequence for DOM stability */}
+        {/* Per-item CSS/glitch effects applied via ItemEffectWrapper in renderVideoItem */}
+        {/* No more above/below split - items never move between DOM parents */}
         <StableMaskedGroup hasMasks={hasActiveMasks}>
           <StableVideoSequence
-            items={belowAdjustmentVideos}
+            items={videoItems}
             premountFor={Math.round(fps * 2)}
             renderItem={renderVideoItem}
           />
@@ -542,9 +562,10 @@ export const MainComposition: React.FC<RemotionInputProps> = ({ tracks, backgrou
         {/* CLEARING LAYER - uses its own useCurrentFrame() to isolate per-frame re-renders */}
         <ClearingLayer videoItems={videoItems} backgroundColor={backgroundColor} />
 
-        {/* NON-MEDIA LAYERS BELOW ADJUSTMENT - affected by adjustment layer effects */}
+        {/* NON-MEDIA LAYERS - all in single structure, per-item effects via ItemEffectWrapper */}
+        {/* No more above/below split - items never move between DOM parents */}
         <StableMaskedGroup hasMasks={hasActiveMasks}>
-          {belowAdjustmentTracks
+          {nonMediaByTrack
             .filter((track) => track.items.length > 0)
             .map((track) => {
               const trackOrder = track.order ?? 0;
@@ -558,47 +579,19 @@ export const MainComposition: React.FC<RemotionInputProps> = ({ tracks, backgrou
                 >
                   {track.items.map((item) => (
                     <Sequence key={item.id} from={item.from} durationInFrames={item.durationInFrames}>
-                      <Item item={item} muted={false} masks={[]} />
+                      <ItemEffectWrapper
+                        itemTrackOrder={trackOrder}
+                        adjustmentLayers={visibleAdjustmentLayers}
+                      >
+                        <Item item={item} muted={false} masks={[]} />
+                      </ItemEffectWrapper>
                     </Sequence>
                   ))}
                 </AbsoluteFill>
               );
             })}
         </StableMaskedGroup>
-      </AdjustmentWrapper>
-
-      {/* VIDEO LAYER ABOVE/AT ADJUSTMENT - NOT affected by adjustment layer effects */}
-      <StableMaskedGroup hasMasks={hasActiveMasks}>
-        <StableVideoSequence
-          items={aboveAdjustmentVideos}
-          premountFor={Math.round(fps * 2)}
-          renderItem={renderVideoItem}
-        />
-      </StableMaskedGroup>
-
-      {/* NON-MEDIA LAYERS ABOVE/AT ADJUSTMENT - NOT affected by adjustment layer effects */}
-      <StableMaskedGroup hasMasks={hasActiveMasks}>
-        {aboveAdjustmentTracks
-          .filter((track) => track.items.length > 0)
-          .map((track) => {
-            const trackOrder = track.order ?? 0;
-            return (
-              <AbsoluteFill
-                key={track.id}
-                style={{
-                  zIndex: 1001 + (maxOrder - trackOrder),
-                  visibility: track.trackVisible ? 'visible' : 'hidden',
-                }}
-              >
-                {track.items.map((item) => (
-                  <Sequence key={item.id} from={item.from} durationInFrames={item.durationInFrames}>
-                    <Item item={item} muted={false} masks={[]} />
-                  </Sequence>
-                ))}
-              </AbsoluteFill>
-            );
-          })}
-      </StableMaskedGroup>
+      </GlobalHalftoneWrapper>
     </AbsoluteFill>
   );
 };
