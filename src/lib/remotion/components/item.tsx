@@ -1051,8 +1051,10 @@ const EffectWrapper: React.FC<{
  * - Shape: Renders solid colors or shapes
  * - Respects mute state for audio/video items (reads directly from store for reactivity)
  * - Supports trimStart/trimEnd for media trimming (uses trimStart as trimBefore)
+ *
+ * Memoized to prevent unnecessary re-renders when parent (MainComposition) updates.
  */
-export const Item: React.FC<ItemProps> = ({ item, muted = false, masks = [] }) => {
+export const Item = React.memo<ItemProps>(({ item, muted = false, masks = [] }) => {
   // Use muted prop directly - MainComposition already passes track.muted
   // Avoiding store subscription here prevents re-render issues with @remotion/media Audio
 
@@ -1282,4 +1284,4 @@ export const Item: React.FC<ItemProps> = ({ item, muted = false, masks = [] }) =
   }
 
   throw new Error(`Unknown item type: ${JSON.stringify(item)}`);
-};
+});

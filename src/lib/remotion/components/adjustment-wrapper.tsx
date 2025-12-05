@@ -17,6 +17,11 @@ export interface AdjustmentWrapperProps {
   children: React.ReactNode;
 }
 
+/** Internal props including frame for memoization */
+interface AdjustmentWrapperInternalProps extends AdjustmentWrapperProps {
+  frame: number;
+}
+
 /**
  * AdjustmentWrapper applies combined effects from all active adjustment layers.
  * Effects are applied at the group level, wrapping affected items.
@@ -24,12 +29,15 @@ export interface AdjustmentWrapperProps {
  * Effect stacking:
  * 1. Per-clip effects apply FIRST (inside individual items via EffectWrapper)
  * 2. Adjustment layer effects apply SECOND (via this component)
+ *
+ * Memoized to prevent unnecessary re-renders. Frame is passed as prop
+ * from FrameAwareAdjustmentWrapper to isolate per-frame updates.
  */
-export const AdjustmentWrapper: React.FC<AdjustmentWrapperProps> = ({
+const AdjustmentWrapperInternal = React.memo<AdjustmentWrapperInternalProps>(({
   adjustmentLayers,
   children,
+  frame,
 }) => {
-  const frame = useCurrentFrame();
 
   // Read effects preview from gizmo store for real-time slider updates
   const effectsPreview = useGizmoStore((s) => s.effectsPreview);
@@ -193,4 +201,17 @@ export const AdjustmentWrapper: React.FC<AdjustmentWrapperProps> = ({
       )}
     </div>
   );
+});
+
+/**
+ * Frame-aware wrapper for AdjustmentWrapper.
+ * Isolates useCurrentFrame() to this component so that parent components
+ * don't re-render on every frame. Only this component and its children
+ * will re-render per frame.
+ *
+ * Exported as AdjustmentWrapper for backward compatibility.
+ */
+export const AdjustmentWrapper: React.FC<AdjustmentWrapperProps> = (props) => {
+  const frame = useCurrentFrame();
+  return <AdjustmentWrapperInternal {...props} frame={frame} />;
 };

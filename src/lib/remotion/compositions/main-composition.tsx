@@ -16,6 +16,16 @@ interface MaskWithTrackOrder {
   trackOrder: number;
 }
 
+/** Props for MaskDefinitions component */
+interface MaskDefinitionsProps {
+  masks: MaskWithTrackOrder[];
+  hasPotentialMasks: boolean;
+  currentFrame: number;
+  canvasWidth: number;
+  canvasHeight: number;
+  fps: number;
+}
+
 /**
  * SVG Mask Definitions Component
  *
@@ -26,15 +36,10 @@ interface MaskWithTrackOrder {
  * IMPORTANT: When hasPotentialMasks is true but masks is empty, we render an
  * "empty" mask (just the base white rect) that shows everything. This ensures
  * the mask reference is always valid when StableMaskedGroup applies it.
+ *
+ * Memoized to prevent re-renders when props haven't changed.
  */
-const MaskDefinitions: React.FC<{
-  masks: MaskWithTrackOrder[];
-  hasPotentialMasks: boolean;
-  currentFrame: number;
-  canvasWidth: number;
-  canvasHeight: number;
-  fps: number;
-}> = ({ masks, hasPotentialMasks, currentFrame, canvasWidth, canvasHeight, fps }) => {
+const MaskDefinitions = React.memo<MaskDefinitionsProps>(({ masks, hasPotentialMasks, currentFrame, canvasWidth, canvasHeight, fps }) => {
   const canvas = { width: canvasWidth, height: canvasHeight, fps };
 
   // Read gizmo store for real-time mask preview during drag operations
@@ -234,6 +239,45 @@ const MaskDefinitions: React.FC<{
       </defs>
     </svg>
   );
+});
+
+/**
+ * Frame-aware wrapper for MaskDefinitions.
+ * Isolates useCurrentFrame() to this component so that MainComposition
+ * doesn't re-render on every frame. Only this component and its children
+ * will re-render per frame.
+ */
+const FrameAwareMaskDefinitions: React.FC<{
+  masks: MaskWithTrackOrder[];
+  hasPotentialMasks: boolean;
+  canvasWidth: number;
+  canvasHeight: number;
+  fps: number;
+}> = (props) => {
+  const currentFrame = useCurrentFrame();
+  return <MaskDefinitions {...props} currentFrame={currentFrame} />;
+};
+
+/**
+ * Clearing Layer Component
+ *
+ * Renders a background fill when no video is currently active.
+ * Uses its own useCurrentFrame() hook to isolate per-frame re-renders
+ * from the parent MainComposition.
+ */
+const ClearingLayer: React.FC<{
+  videoItems: Array<{ from: number; durationInFrames: number }>;
+  backgroundColor: string;
+}> = ({ videoItems, backgroundColor }) => {
+  const currentFrame = useCurrentFrame();
+  const hasActiveVideo = videoItems.some(
+    (item) =>
+      currentFrame >= item.from &&
+      currentFrame < item.from + item.durationInFrames
+  );
+
+  if (hasActiveVideo) return null;
+  return <AbsoluteFill style={{ backgroundColor, zIndex: 1000 }} />;
 };
 
 /**
@@ -271,7 +315,8 @@ const StableMaskedGroup: React.FC<{
  */
 export const MainComposition: React.FC<RemotionInputProps> = ({ tracks, backgroundColor = '#000000' }) => {
   const { fps, width: canvasWidth, height: canvasHeight } = useVideoConfig();
-  const currentFrame = useCurrentFrame();
+  // NOTE: useCurrentFrame() removed from here to prevent per-frame re-renders.
+  // Frame-dependent logic is now isolated in FrameAwareMaskDefinitions and ClearingLayer.
   const hasSoloTracks = useMemo(() => tracks.some((track) => track.solo), [tracks]);
   const maxOrder = useMemo(() => Math.max(...tracks.map((t) => t.order ?? 0), 0), [tracks]);
 
@@ -364,12 +409,6 @@ export const MainComposition: React.FC<RemotionInputProps> = ({ tracks, backgrou
     if (fontFamilies.length > 0) loadFonts(fontFamilies);
   }, [visibleTracks]);
 
-  const hasActiveVideo = videoItems.some(
-    (item) =>
-      currentFrame >= item.from &&
-      currentFrame < item.from + item.durationInFrames
-  );
-
   // hasActiveMasks: shapes with isMask: true (for actual mask rendering)
   const hasActiveMasks = activeMasks.length > 0;
   const hasAdjustmentLayers = allAdjustmentLayers.length > 0;
@@ -377,11 +416,10 @@ export const MainComposition: React.FC<RemotionInputProps> = ({ tracks, backgrou
   return (
     <AbsoluteFill>
       {/* SVG MASK DEFINITIONS - opacity controls activation, no DOM changes */}
-      {/* Always render when there are active masks; mask shows everything when inactive */}
-      <MaskDefinitions
+      {/* Uses FrameAwareMaskDefinitions to isolate per-frame re-renders */}
+      <FrameAwareMaskDefinitions
         masks={activeMasks}
         hasPotentialMasks={hasActiveMasks}
-        currentFrame={currentFrame}
         canvasWidth={canvasWidth}
         canvasHeight={canvasHeight}
         fps={fps}
@@ -424,10 +462,8 @@ export const MainComposition: React.FC<RemotionInputProps> = ({ tracks, backgrou
           })}
         </StableMaskedGroup>
 
-        {/* CLEARING LAYER */}
-        {!hasActiveVideo && (
-          <AbsoluteFill style={{ backgroundColor, zIndex: 1000 }} />
-        )}
+        {/* CLEARING LAYER - uses its own useCurrentFrame() to isolate per-frame re-renders */}
+        <ClearingLayer videoItems={videoItems} backgroundColor={backgroundColor} />
 
         {/* ALL NON-MEDIA LAYERS - single consistent DOM structure */}
         <StableMaskedGroup hasMasks={hasActiveMasks}>
