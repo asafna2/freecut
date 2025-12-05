@@ -307,6 +307,38 @@ export const HalftoneWrapper: React.FC<HalftoneWrapperProps> = ({
       bitmap.close();
     };
 
+    // Helper to capture current frame immediately (for initial load and seeks)
+    const captureCurrentFrame = () => {
+      const video = videoElementRef.current;
+      if (!video || !halftoneWorker.getIsReady()) return;
+      if (video.readyState < 2 || halftoneWorker.isProcessing()) return;
+
+      createImageBitmap(video)
+        .then((bitmap) => {
+          const opts = lastOptionsRef.current;
+          halftoneWorker.processFrame(bitmap, {
+            dotSize: opts.dotSize,
+            spacing: opts.spacing,
+            angle: opts.angle,
+            intensity: opts.intensity,
+            backgroundColor: opts.backgroundColor,
+            dotColor: opts.dotColor,
+          }, processVideoFrame);
+        })
+        .catch(() => {});
+    };
+
+    // Capture initial frame immediately if video is ready
+    // This ensures the effect shows right away when clicking into a halftone clip
+    captureCurrentFrame();
+
+    // Listen for seek events to capture frame when seeking while paused
+    // requestVideoFrameCallback only fires during playback, so we need this for seeks
+    const handleSeeked = () => {
+      captureCurrentFrame();
+    };
+    videoElement.addEventListener('seeked', handleSeeked);
+
     // Check if requestVideoFrameCallback is supported
     if (!('requestVideoFrameCallback' in videoElement)) {
       // Fallback: use requestAnimationFrame
@@ -336,10 +368,13 @@ export const HalftoneWrapper: React.FC<HalftoneWrapperProps> = ({
       };
 
       rafId = requestAnimationFrame(rafLoop);
-      return () => cancelAnimationFrame(rafId);
+      return () => {
+        cancelAnimationFrame(rafId);
+        videoElement?.removeEventListener('seeked', handleSeeked);
+      };
     }
 
-    // Use requestVideoFrameCallback for optimal frame timing
+    // Use requestVideoFrameCallback for optimal frame timing during playback
     const captureFrame = () => {
       const video = videoElementRef.current;
       if (!video || !halftoneWorker.getIsReady()) return;
@@ -368,6 +403,7 @@ export const HalftoneWrapper: React.FC<HalftoneWrapperProps> = ({
     videoFrameCallbackId.current = videoElement.requestVideoFrameCallback(captureFrame);
 
     return () => {
+      videoElement?.removeEventListener('seeked', handleSeeked);
       if (videoFrameCallbackId.current !== null && videoElementRef.current) {
         try {
           videoElementRef.current.cancelVideoFrameCallback(videoFrameCallbackId.current);
