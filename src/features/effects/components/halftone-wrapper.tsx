@@ -1,3 +1,10 @@
+/**
+ * @deprecated UNUSED - Kept for reference only.
+ * Halftone effects now use pure CSS approach via getHalftoneStyles() in item.tsx,
+ * adjustment-wrapper.tsx, and item-effect-wrapper.tsx.
+ * The CSS approach avoids WebGL flickering issues during play/pause transitions.
+ */
+
 import React, { useRef, useLayoutEffect, useState, useEffect, useCallback } from 'react';
 import { useCurrentFrame, useVideoConfig, useRemotionEnvironment, OffthreadVideo, Img, interpolate } from 'remotion';
 import { HalftoneRenderer, type HalftoneGLOptions } from '../utils/halftone-shader';
@@ -153,8 +160,8 @@ export const HalftoneWrapper: React.FC<HalftoneWrapperProps> = ({
   // State for media loading
   const [rendererReady, setRendererReady] = useState(false);
   const [imageReady, setImageReady] = useState(false);
-  const [workerReady, setWorkerReady] = useState(false);
-  const [workerRendering, setWorkerRendering] = useState(false);
+  // Initialize workerReady from singleton - prevents flash on remount when worker already initialized
+  const [workerReady, setWorkerReady] = useState(() => effectsWorkerManager.halftone.getIsReady());
 
   // Initialize 2D context for receiving worker bitmaps
   useLayoutEffect(() => {
@@ -304,7 +311,6 @@ export const HalftoneWrapper: React.FC<HalftoneWrapperProps> = ({
         }, (resultBitmap) => {
           if (ctx) {
             ctx.drawImage(resultBitmap, 0, 0);
-            setWorkerRendering(true);
           }
           resultBitmap.close();
         });
@@ -334,7 +340,6 @@ export const HalftoneWrapper: React.FC<HalftoneWrapperProps> = ({
     const processVideoFrame = (bitmap: ImageBitmap) => {
       if (ctx) {
         ctx.drawImage(bitmap, 0, 0);
-        setWorkerRendering(true);
       }
       bitmap.close();
     };
@@ -371,6 +376,13 @@ export const HalftoneWrapper: React.FC<HalftoneWrapperProps> = ({
     };
     videoElement.addEventListener('seeked', handleSeeked);
 
+    // Listen for pause events to capture the exact paused frame
+    // This prevents showing a stale frame when playback stops
+    const handlePause = () => {
+      captureCurrentFrame();
+    };
+    videoElement.addEventListener('pause', handlePause);
+
     // Check if requestVideoFrameCallback is supported
     if (!('requestVideoFrameCallback' in videoElement)) {
       // Fallback: use requestAnimationFrame
@@ -402,7 +414,8 @@ export const HalftoneWrapper: React.FC<HalftoneWrapperProps> = ({
       rafId = requestAnimationFrame(rafLoop);
       return () => {
         cancelAnimationFrame(rafId);
-        videoElement?.removeEventListener('seeked', handleSeeked);
+        videoElementRef.current?.removeEventListener('seeked', handleSeeked);
+        videoElementRef.current?.removeEventListener('pause', handlePause);
       };
     }
 
@@ -436,6 +449,7 @@ export const HalftoneWrapper: React.FC<HalftoneWrapperProps> = ({
 
     return () => {
       videoElement?.removeEventListener('seeked', handleSeeked);
+      videoElement?.removeEventListener('pause', handlePause);
       if (videoFrameCallbackId.current !== null && videoElementRef.current) {
         try {
           videoElementRef.current.cancelVideoFrameCallback(videoFrameCallbackId.current);
@@ -494,8 +508,10 @@ export const HalftoneWrapper: React.FC<HalftoneWrapperProps> = ({
   // For video - ALWAYS render same structure to avoid DOM changes at boundaries
   if (itemType === 'video') {
     // Determine what should be visible
-    const showCanvas = enabled && (useWorker ? workerRendering : rendererReady);
-    const showChildren = !enabled || (useWorker && !workerRendering);
+    // Show canvas as soon as worker is ready (canvas may briefly be empty, but that's better than a flash)
+    // Hide children as soon as worker is ready to prevent showing both
+    const showCanvas = enabled && (useWorker ? workerReady : rendererReady);
+    const showChildren = !enabled || (useWorker && !workerReady);
 
     return (
       <div style={{ position: 'relative', width: '100%', height: '100%' }}>
@@ -537,11 +553,9 @@ export const HalftoneWrapper: React.FC<HalftoneWrapperProps> = ({
           />
         )}
 
-        {/* Output canvas - always rendered when enabled was ever true, visibility controlled by CSS */}
+        {/* Output canvas - dimensions set via useLayoutEffect to avoid clearing on re-render */}
         <canvas
           ref={canvasRef}
-          width={width}
-          height={height}
           style={{
             position: 'absolute',
             inset: 0,

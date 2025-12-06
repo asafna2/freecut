@@ -15,7 +15,8 @@
       "WebFetch(domain:www.remotion.dev)",
       "WebSearch",
       "Bash(grep:*)",
-      "Bash(E:)"
+      "Bash(E:)",
+      "Bash(cat:*)"
     ],
     "deny": [],
     "ask": []

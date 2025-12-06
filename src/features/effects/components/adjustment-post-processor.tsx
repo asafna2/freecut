@@ -1,4 +1,8 @@
 /**
+ * @deprecated UNUSED - Kept for reference only.
+ * Halftone effects now use pure CSS approach in adjustment-wrapper.tsx and item-effect-wrapper.tsx.
+ * The CSS approach avoids WebGL flickering issues during play/pause transitions.
+ *
  * AdjustmentPostProcessor - Canvas-based post-processing for adjustment layers
  *
  * Captures the rendered composition and applies WebGL effects like halftone.
@@ -12,7 +16,7 @@
  */
 
 import React, { useRef, useEffect, useState, useCallback, useLayoutEffect } from 'react';
-import { useCurrentFrame, useVideoConfig } from 'remotion';
+import { useVideoConfig } from 'remotion';
 import { adjustmentPostProcessingManager, type PostProcessingEffect } from '../utils/post-processing-pipeline';
 
 // Default effect for when post-processing is disabled (values won't be used but prevent null checks)
@@ -57,15 +61,17 @@ export const AdjustmentPostProcessor: React.FC<AdjustmentPostProcessorProps> = (
   const captureCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const captureCtxRef = useRef<CanvasRenderingContext2D | null>(null);
   const rafIdRef = useRef<number | null>(null);
+  const pauseCooldownRef = useRef(false); // Skip capture briefly after video pauses
 
   // Track latest effect options via ref so RAF loop always uses current values
   // This fixes live preview during slider drag when video is paused
   const effectRef = useRef(resolvedEffect);
   effectRef.current = resolvedEffect;
 
-  const [isProcessing, setIsProcessing] = useState(false);
+  // Initialize to true when enabled to prevent flash on mount
+  // Canvas may briefly be empty, but that's better than flashing children
+  const [isProcessing, setIsProcessing] = useState(enabled);
 
-  const frame = useCurrentFrame();
   const { width, height } = useVideoConfig();
 
   // Initialize capture canvas
@@ -99,6 +105,9 @@ export const AdjustmentPostProcessor: React.FC<AdjustmentPostProcessorProps> = (
   // Capture and process frame
   const captureAndProcess = useCallback(() => {
     if (!enabled || !containerRef.current || !outputCanvasRef.current) return;
+
+    // Skip capture during pause cooldown to prevent flicker
+    if (pauseCooldownRef.current) return;
 
     const captureCanvas = captureCanvasRef.current;
     const captureCtx = captureCtxRef.current;
@@ -204,7 +213,8 @@ export const AdjustmentPostProcessor: React.FC<AdjustmentPostProcessorProps> = (
     });
 
     if (!hasContent) {
-      setIsProcessing(false);
+      // Don't reset isProcessing - keep showing previous canvas content
+      // This prevents flash when video readyState temporarily drops on pause
       return;
     }
 
@@ -223,7 +233,35 @@ export const AdjustmentPostProcessor: React.FC<AdjustmentPostProcessorProps> = (
     }
   }, [enabled, width, height]);
 
-  // Process on every frame change
+  // Listen for video pause events - skip immediate captures then force refresh
+  useEffect(() => {
+    if (!enabled || !containerRef.current) return;
+
+    const handlePause = () => {
+      // Skip captures briefly while video stabilizes, then force a fresh capture
+      pauseCooldownRef.current = true;
+      setTimeout(() => {
+        pauseCooldownRef.current = false;
+        // Force a fresh capture after video has stabilized at paused frame
+        captureAndProcess();
+      }, 100); // Wait ~6 frames for video to fully stabilize
+    };
+
+    // Use event delegation on container to catch all video pause events
+    const container = containerRef.current;
+    const handleContainerPause = (e: Event) => {
+      if (e.target instanceof HTMLVideoElement) {
+        handlePause();
+      }
+    };
+    container.addEventListener('pause', handleContainerPause, true);
+
+    return () => {
+      container.removeEventListener('pause', handleContainerPause, true);
+    };
+  }, [enabled, captureAndProcess]);
+
+  // Start continuous capture loop - RAF handles frame updates, no need for frame dependency
   useLayoutEffect(() => {
     if (!enabled) {
       setIsProcessing(false);
@@ -248,7 +286,7 @@ export const AdjustmentPostProcessor: React.FC<AdjustmentPostProcessorProps> = (
         rafIdRef.current = null;
       }
     };
-  }, [enabled, captureAndProcess, frame]);
+  }, [enabled, captureAndProcess]);
 
   // NOTE: No separate useEffect for effect option changes needed
   // The RAF loop reads from effectRef.current which always has latest values

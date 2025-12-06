@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useCallback } from 'react';
 import { AbsoluteFill, OffthreadVideo, Img, useVideoConfig, useCurrentFrame, interpolate, useRemotionEnvironment } from 'remotion';
-import { Video } from '@remotion/media';
+// import { Video } from '@remotion/media'; // Unused - kept for future rendering improvements
 import { Rect, Circle, Triangle, Ellipse, Star, Polygon, Heart } from '@remotion/shapes';
 import { useGizmoStore } from '@/features/preview/stores/gizmo-store';
 import { usePlaybackStore } from '@/features/preview/stores/playback-store';
@@ -17,9 +17,8 @@ import {
 } from '../utils/transform-resolver';
 import { loadFont, FONT_WEIGHT_MAP } from '../utils/fonts';
 import { getShapePath, rotatePath } from '../utils/shape-path';
-import { effectsToCSSFilter, getGlitchEffects, getHalftoneEffect, getVignetteEffect, getVignetteStyle } from '@/features/effects/utils/effect-to-css';
+import { effectsToCSSFilter, getGlitchEffects, getHalftoneEffect, getHalftoneStyles, getVignetteEffect, getVignetteStyle } from '@/features/effects/utils/effect-to-css';
 import { getScanlinesStyle, getGlitchFilterString } from '@/features/effects/utils/glitch-algorithms';
-import { HalftoneWrapper } from '@/features/effects/components/halftone-wrapper';
 
 /** Mask information passed from composition to items */
 export interface MaskInfo {
@@ -854,7 +853,7 @@ const EffectWrapper: React.FC<{
   item: TimelineItem;
   children: React.ReactNode;
   muted?: boolean;
-}> = ({ item, children, muted = false }) => {
+}> = ({ item, children, muted: _muted = false }) => {
   const frame = useCurrentFrame();
 
   // Read effect preview from gizmo store (for live slider updates)
@@ -883,17 +882,10 @@ const EffectWrapper: React.FC<{
     return getHalftoneEffect(effects);
   }, [effects]);
 
-  // Memoize halftone options to prevent unnecessary re-renders in HalftoneWrapper
-  const halftoneOptions = useMemo(() => {
+  // Get CSS halftone styles (pure CSS approach - no WebGL flickering)
+  const halftoneStyles = useMemo(() => {
     if (!halftoneEffect) return null;
-    return {
-      dotSize: halftoneEffect.dotSize,
-      spacing: halftoneEffect.spacing,
-      angle: halftoneEffect.angle,
-      intensity: halftoneEffect.intensity,
-      backgroundColor: halftoneEffect.backgroundColor,
-      dotColor: halftoneEffect.dotColor,
-    };
+    return getHalftoneStyles(halftoneEffect);
   }, [halftoneEffect]);
 
   // Get vignette effect for overlay rendering
@@ -916,41 +908,21 @@ const EffectWrapper: React.FC<{
   // Check for scanlines effect (RGB split is now handled via CSS filter in glitchFilterString)
   const scanlinesEffect = glitchEffects.find((e) => e.variant === 'scanlines');
 
-  // Helper to wrap content with halftone effect
-  // ALWAYS wraps to maintain consistent DOM structure at clip boundaries (prevents stutter)
-  const wrapWithHalftone = (content: React.ReactNode): React.ReactNode => {
-    // Get trim and speed info for video items (needed for in/out point export)
-    const videoItem = item.type === 'video' ? (item as { sourceStart?: number; trimStart?: number; offset?: number; speed?: number; volume?: number; audioFadeIn?: number; audioFadeOut?: number }) : null;
-    const trimBefore = videoItem?.sourceStart ?? videoItem?.trimStart ?? videoItem?.offset ?? 0;
-    const playbackRate = videoItem?.speed ?? 1;
+  // Merge halftone container filter with other filters
+  const finalFilter = halftoneStyles
+    ? [combinedFilter, halftoneStyles.containerStyle.filter].filter(Boolean).join(' ')
+    : combinedFilter;
 
-    return (
-      <HalftoneWrapper
-        options={halftoneOptions}
-        enabled={!!halftoneEffect}
-        itemType={item.type}
-        mediaSrc={item.type === 'video' || item.type === 'image' ? (item as { src?: string }).src : undefined}
-        trimBefore={trimBefore}
-        playbackRate={playbackRate}
-        muted={muted}
-        volume={videoItem?.volume ?? 0}
-        audioFadeIn={videoItem?.audioFadeIn ?? 0}
-        audioFadeOut={videoItem?.audioFadeOut ?? 0}
-        durationInFrames={item.durationInFrames}
-      >
-        {content}
-      </HalftoneWrapper>
-    );
-  };
-
-  // Standard rendering with CSS filters (including RGB split via SVG filter) + optional scanlines
+  // Standard rendering with CSS filters (including RGB split via SVG filter) + optional scanlines + halftone
   const standardContent = (
     <div
       style={{
         width: '100%',
         height: '100%',
         position: 'relative',
-        filter: combinedFilter || undefined,
+        filter: finalFilter || undefined,
+        overflow: halftoneStyles ? 'hidden' : undefined,
+        backgroundColor: halftoneStyles?.containerStyle.backgroundColor,
       }}
     >
       {children}
@@ -964,13 +936,17 @@ const EffectWrapper: React.FC<{
           }}
         />
       )}
+      {/* CSS Halftone dot pattern overlay */}
+      {halftoneStyles && (
+        <div style={halftoneStyles.overlayStyle} />
+      )}
     </div>
   );
 
-  // Vignette renders OUTSIDE halftone so it overlays everything (including halftone canvas)
+  // Vignette renders OUTSIDE other effects so it overlays everything
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
-      {wrapWithHalftone(standardContent)}
+      {standardContent}
       {/* Vignette overlay - renders on top of all other effects */}
       {vignetteEffect && (
         <div style={getVignetteStyle(vignetteEffect)} />

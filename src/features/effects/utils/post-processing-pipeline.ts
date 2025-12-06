@@ -1,4 +1,8 @@
 /**
+ * @deprecated UNUSED - Kept for reference only.
+ * Halftone effects now use pure CSS approach in adjustment-wrapper.tsx and item-effect-wrapper.tsx.
+ * The CSS approach avoids WebGL flickering issues during play/pause transitions.
+ *
  * WebGL Post-Processing Pipeline for Adjustment Layers
  *
  * Provides an extensible system for applying GPU-accelerated effects

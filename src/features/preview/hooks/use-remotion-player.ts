@@ -235,9 +235,11 @@ export function useRemotionPlayer(playerRef: RefObject<PlayerRef>) {
     };
 
     const handlePlayerPause = () => {
-      // Only attempt resume if we think we're playing
+      // Only attempt resume if store says we should be playing
       // This handles Remotion's internal pause/play cycles during buffering/VFR correction
-      if (wasPlayingRef.current) {
+      // Read directly from store to avoid stale closure issues with wasPlayingRef
+      const storeIsPlaying = usePlaybackStore.getState().isPlaying;
+      if (storeIsPlaying) {
         setTimeout(async () => {
           const stillWantsToPlay = usePlaybackStore.getState().isPlaying;
           if (stillWantsToPlay && playerRef.current) {
@@ -271,7 +273,8 @@ export function useRemotionPlayer(playerRef: RefObject<PlayerRef>) {
 
     const handlePlayerError = (e: Event) => {
       console.error('[Remotion Sync] Player error:', e);
-      if (wasPlayingRef.current) {
+      // Read directly from store to avoid stale closure issues
+      if (usePlaybackStore.getState().isPlaying) {
         wasPlayingRef.current = false;
         pause();
       }

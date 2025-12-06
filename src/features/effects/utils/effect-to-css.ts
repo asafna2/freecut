@@ -173,3 +173,48 @@ function hexToRgba(hex: string, alpha: number): string {
 
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
+
+/**
+ * Generate CSS styles for halftone effect.
+ * Uses pure CSS technique: radial-gradient dots + mix-blend-mode + contrast filter.
+ *
+ * Returns styles for both the container (with contrast filter) and the overlay (dot pattern).
+ */
+export function getHalftoneStyles(effect: HalftoneEffect): {
+  containerStyle: React.CSSProperties;
+  overlayStyle: React.CSSProperties;
+} {
+  const { dotSize, spacing, angle, intensity, backgroundColor, dotColor } = effect;
+
+  // Calculate contrast value from intensity (0-1 maps to 1-50)
+  // Higher intensity = more contrast = sharper halftone dots
+  const contrastValue = 1 + intensity * 49;
+
+  // Calculate dot radius (soft edge for gradient)
+  const dotRadius = dotSize / 2;
+  const softEdge = dotRadius * 0.8; // Slightly smaller hard center
+
+  return {
+    containerStyle: {
+      position: 'relative' as const,
+      filter: `contrast(${contrastValue})`,
+      backgroundColor: backgroundColor,
+      overflow: 'hidden',
+    },
+    overlayStyle: {
+      position: 'absolute' as const,
+      // Extend beyond container to handle rotation without gaps
+      top: '-50%',
+      left: '-50%',
+      width: '200%',
+      height: '200%',
+      // Use non-shorthand properties to avoid React warning about mixing shorthand/non-shorthand
+      backgroundImage: `radial-gradient(circle at center, ${dotColor} ${softEdge}px, ${backgroundColor} ${dotRadius}px)`,
+      backgroundSize: `${spacing}px ${spacing}px`,
+      backgroundRepeat: 'repeat',
+      transform: `rotate(${angle}deg)`,
+      mixBlendMode: 'multiply' as const,
+      pointerEvents: 'none' as const,
+    },
+  };
+}

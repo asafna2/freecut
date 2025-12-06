@@ -2,11 +2,9 @@ import React, { useMemo } from 'react';
 import { useCurrentFrame } from 'remotion';
 import type { AdjustmentItem } from '@/types/timeline';
 import type { ItemEffect, GlitchEffect } from '@/types/effects';
-import { effectsToCSSFilter, getGlitchEffects, getHalftoneEffect } from '@/features/effects/utils/effect-to-css';
+import { effectsToCSSFilter, getGlitchEffects, getHalftoneEffect, getHalftoneStyles } from '@/features/effects/utils/effect-to-css';
 import { getScanlinesStyle, getGlitchFilterString } from '@/features/effects/utils/glitch-algorithms';
 import { useGizmoStore } from '@/features/preview/stores/gizmo-store';
-import { AdjustmentPostProcessor } from '@/features/effects/components/adjustment-post-processor';
-import type { PostProcessingEffect } from '@/features/effects/utils/post-processing-pipeline';
 
 /** Adjustment layer with its track order for scope calculation */
 export interface AdjustmentLayerWithTrackOrder {
@@ -81,26 +79,16 @@ const AdjustmentWrapperInternal = React.memo<AdjustmentWrapperInternalProps>(({
     return getGlitchEffects(activeEffects) as Array<GlitchEffect & { id: string }>;
   }, [activeEffects]);
 
-  // Get halftone effect for canvas-based rendering
+  // Get halftone effect for CSS-based rendering
   const halftoneEffect = useMemo(() => {
     if (activeEffects.length === 0) return null;
     return getHalftoneEffect(activeEffects);
   }, [activeEffects]);
 
-  // Build post-processing effect config for halftone
-  const postProcessingEffect = useMemo((): PostProcessingEffect | null => {
+  // Get CSS halftone styles (pure CSS approach - no WebGL flickering)
+  const halftoneStyles = useMemo(() => {
     if (!halftoneEffect) return null;
-    return {
-      type: 'halftone',
-      options: {
-        dotSize: halftoneEffect.dotSize,
-        spacing: halftoneEffect.spacing,
-        angle: halftoneEffect.angle,
-        intensity: halftoneEffect.intensity,
-        backgroundColor: halftoneEffect.backgroundColor,
-        dotColor: halftoneEffect.dotColor,
-      },
-    };
+    return getHalftoneStyles(halftoneEffect);
   }, [halftoneEffect]);
 
   // Calculate glitch-based filters (color glitch adds hue-rotate)
@@ -117,14 +105,21 @@ const AdjustmentWrapperInternal = React.memo<AdjustmentWrapperInternalProps>(({
   // Check for scanlines effect (needs overlay div, not just CSS filter)
   const scanlinesEffect = glitchEffects.find((e) => e.variant === 'scanlines');
 
-  // Standard rendering with CSS filters (including RGB split via SVG) + optional scanlines + optional halftone
-  const standardContent = (
+  // Merge halftone container filter with other filters
+  const finalFilter = halftoneStyles
+    ? [combinedFilter, halftoneStyles.containerStyle.filter].filter(Boolean).join(' ')
+    : combinedFilter;
+
+  // Render with CSS-based halftone (no WebGL flickering on pause)
+  return (
     <div
       style={{
         width: '100%',
         height: '100%',
         position: 'relative',
-        filter: combinedFilter || undefined,
+        filter: finalFilter || undefined,
+        overflow: halftoneStyles ? 'hidden' : undefined,
+        backgroundColor: halftoneStyles?.containerStyle.backgroundColor,
       }}
     >
       {children}
@@ -138,18 +133,11 @@ const AdjustmentWrapperInternal = React.memo<AdjustmentWrapperInternalProps>(({
           }}
         />
       )}
+      {/* CSS Halftone dot pattern overlay */}
+      {halftoneStyles && (
+        <div style={halftoneStyles.overlayStyle} />
+      )}
     </div>
-  );
-
-  // Always wrap with post-processor to maintain consistent DOM structure
-  // (prevents stutter when entering/exiting halftone adjustment layer regions)
-  return (
-    <AdjustmentPostProcessor
-      effect={postProcessingEffect}
-      enabled={!!postProcessingEffect}
-    >
-      {standardContent}
-    </AdjustmentPostProcessor>
   );
 });
 
