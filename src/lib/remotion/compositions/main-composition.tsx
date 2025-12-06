@@ -446,16 +446,12 @@ const ClearingLayer: React.FC<{
   );
 
   // Check clips in transition chains
-  // A chain is active if the current frame is within any of its clips' range
-  // Note: TransitionSeries handles overlaps, but the visual range is from first clip start to last clip end
+  // A chain is active if the current frame is within its rendered duration
+  // Use pre-computed renderedDuration to avoid reduce() on every frame
   const hasActiveChainClip = chains.some((chain) => {
     if (!chain.clips[0]?.trackVisible) return false;
-    const chainStart = chain.startFrame;
-    // Calculate chain end: sum of all clip durations minus transition overlaps
-    const totalTransitionDuration = chain.transitions.reduce((sum, t) => sum + t.durationInFrames, 0);
-    const totalClipDuration = chain.clips.reduce((sum, c) => sum + c.durationInFrames, 0);
-    const chainEnd = chainStart + totalClipDuration - totalTransitionDuration;
-    return currentFrame >= chainStart && currentFrame < chainEnd;
+    const chainEnd = chain.startFrame + chain.renderedDuration;
+    return currentFrame >= chain.startFrame && currentFrame < chainEnd;
   });
 
   if (hasActiveStandaloneVideo || hasActiveChainClip) return null;
@@ -466,105 +462,119 @@ const ClearingLayer: React.FC<{
  * Audio renderer for clips in transition chains.
  * Handles crossfade between clips during transition overlaps.
  * This is separate from TransitionSeries which only handles video.
+ *
+ * Memoized to prevent re-renders when unrelated composition updates occur.
  */
-const ChainAudioRenderer: React.FC<{
+const ChainAudioRenderer = React.memo<{
   chains: ClipChain[];
   tracks: RemotionInputProps['tracks'];
   visibleTrackIds: Set<string>;
-}> = ({ chains, tracks, visibleTrackIds }) => {
-  // Render audio for each clip in each chain with crossfade
+}>(function ChainAudioRenderer({ chains, tracks, visibleTrackIds }) {
+  // Pre-compute track info for stability
+  const trackInfo = useMemo(() => {
+    const info = new Map<string, { muted: boolean }>();
+    tracks.forEach((t) => info.set(t.id, { muted: t.muted ?? false }));
+    return info;
+  }, [tracks]);
+
+  // Pre-compute audio clip data for each chain to avoid recalculating during render
+  const chainAudioData = useMemo(() => {
+    return chains.map((chain) => {
+      const trackData = trackInfo.get(chain.trackId);
+      const trackMuted = trackData?.muted ?? false;
+      const trackVisible = visibleTrackIds.has(chain.trackId);
+
+      // Calculate positions for each audio clip
+      let runningFrame = chain.startFrame;
+      const clipData: Array<{
+        clip: VideoItem;
+        clipStart: number;
+        fadeInDuration: number;
+        fadeOutDuration: number;
+        muted: boolean;
+      }> = [];
+
+      chain.clips.forEach((clip, clipIndex) => {
+        const clipStart = runningFrame;
+        const transitionBefore = clipIndex > 0 ? chain.transitions[clipIndex - 1] : null;
+        const transitionAfter = chain.transitions[clipIndex];
+
+        // Update running frame for next iteration
+        runningFrame += clip.durationInFrames - (transitionAfter?.durationInFrames ?? 0);
+
+        // Only include video clips (images don't have audio)
+        if (clip.type === 'video') {
+          clipData.push({
+            clip: clip as VideoItem,
+            clipStart,
+            fadeInDuration: transitionBefore?.durationInFrames ?? 0,
+            fadeOutDuration: transitionAfter?.durationInFrames ?? 0,
+            muted: trackMuted || !trackVisible,
+          });
+        }
+      });
+
+      return clipData;
+    });
+  }, [chains, trackInfo, visibleTrackIds]);
+
+  // Flatten and render all audio clips
   return (
     <>
-      {chains.map((chain) => {
-        const track = tracks.find((t) => t.id === chain.trackId);
-        const trackMuted = track?.muted ?? false;
-        const trackVisible = visibleTrackIds.has(chain.trackId);
-
-        // Calculate running position for each clip in the chain
-        // Each clip starts at its own position, but transitions compress the chain
-        let runningFrame = chain.startFrame;
-
-        return chain.clips.map((clip, clipIndex) => {
-          // Only render audio for video clips (images don't have audio)
-          if (clip.type !== 'video') {
-            runningFrame += clip.durationInFrames - (chain.transitions[clipIndex]?.durationInFrames ?? 0);
-            return null;
-          }
-
-          const clipStart = runningFrame;
-
-          // Get transition before and after this clip
-          const transitionBefore = clipIndex > 0 ? chain.transitions[clipIndex - 1] : null;
-          const transitionAfter = chain.transitions[clipIndex];
-
-          // Calculate fade regions for crossfade
-          const fadeInDuration = transitionBefore?.durationInFrames ?? 0;
-          const fadeOutDuration = transitionAfter?.durationInFrames ?? 0;
-
-          // Update running frame for next clip (account for transition overlap)
-          runningFrame += clip.durationInFrames - (transitionAfter?.durationInFrames ?? 0);
-
-          // Use Sequence for proper lifecycle and ChainClipAudio for crossfade
-          return (
-            <Sequence
-              key={`chain-audio-${clip.id}`}
-              from={clipStart}
-              durationInFrames={clip.durationInFrames}
-            >
-              <ChainClipAudio
-                clip={clip}
-                fadeInDuration={fadeInDuration}
-                fadeOutDuration={fadeOutDuration}
-                muted={trackMuted || !trackVisible}
-              />
-            </Sequence>
-          );
-        });
-      })}
+      {chainAudioData.flat().map((data) => (
+        <Sequence
+          key={`chain-audio-${data.clip.id}`}
+          from={data.clipStart}
+          durationInFrames={data.clip.durationInFrames}
+        >
+          <ChainClipAudio
+            clip={data.clip}
+            fadeInDuration={data.fadeInDuration}
+            fadeOutDuration={data.fadeOutDuration}
+            muted={data.muted}
+          />
+        </Sequence>
+      ))}
     </>
   );
-};
+});
 
 /**
  * Audio for a single clip in a chain with crossfade support.
  * Renders audio-only with volume interpolation for smooth transitions.
+ * Memoized to prevent unnecessary re-renders during playback.
  */
-const ChainClipAudio: React.FC<{
-  clip: EnrichedVisualItem;
+const ChainClipAudio = React.memo<{
+  clip: VideoItem;
   fadeInDuration: number;
   fadeOutDuration: number;
   muted: boolean;
-}> = ({ clip, fadeInDuration, fadeOutDuration, muted }) => {
-  // Only video clips have audio
-  if (clip.type !== 'video' || muted) return null;
-
-  // Guard against missing src
-  if (!('src' in clip) || !clip.src) return null;
-
-  const videoClip = clip as VideoItem;
+}>(function ChainClipAudio({ clip, fadeInDuration, fadeOutDuration, muted }) {
+  // Skip if muted or no source
+  if (muted || !clip.src) return null;
 
   // Get source position and playback rate
-  const trimBefore = videoClip.sourceStart ?? videoClip.trimStart ?? videoClip.offset ?? 0;
-  const playbackRate = videoClip.speed ?? 1;
+  const trimBefore = clip.sourceStart ?? clip.trimStart ?? clip.offset ?? 0;
+  const playbackRate = clip.speed ?? 1;
 
   // Render audio with crossfade support via PitchCorrectedAudio
   return (
     <PitchCorrectedAudio
-      src={videoClip.src}
-      itemId={videoClip.id}
+      src={clip.src}
+      itemId={clip.id}
       trimBefore={trimBefore}
-      volume={videoClip.volume ?? 0}
+      volume={clip.volume ?? 0}
       playbackRate={playbackRate}
       muted={false}
-      durationInFrames={videoClip.durationInFrames}
-      audioFadeIn={videoClip.audioFadeIn}
-      audioFadeOut={videoClip.audioFadeOut}
+      durationInFrames={clip.durationInFrames}
+      audioFadeIn={clip.audioFadeIn}
+      audioFadeOut={clip.audioFadeOut}
       // Crossfade overrides for transitions
       crossfadeFadeIn={fadeInDuration}
       crossfadeFadeOut={fadeOutDuration}
     />
   );
-};
+});
 
 /**
  * Stable wrapper that applies CSS mask reference.
@@ -860,6 +870,7 @@ export const MainComposition: React.FC<RemotionInputProps> = ({ tracks, transiti
               <Sequence
                 key={`chain-${chain.clips[0]!.id}`}
                 from={chain.startFrame}
+                durationInFrames={chain.renderedDuration}
               >
                 <AbsoluteFill
                   style={{

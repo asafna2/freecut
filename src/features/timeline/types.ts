@@ -1,7 +1,7 @@
 import type { TimelineTrack, TimelineItem, ProjectMarker } from '@/types/timeline';
 import type { TransformProperties } from '@/types/transform';
 import type { VisualEffect } from '@/types/effects';
-import type { Transition, TransitionType } from '@/types/transition';
+import type { Transition, TransitionType, TransitionPresentation, WipeDirection, SlideDirection, FlipDirection } from '@/types/transition';
 
 export interface TimelineState {
   tracks: TimelineTrack[];
@@ -52,7 +52,7 @@ export interface TimelineActions {
   removeEffect: (itemId: string, effectId: string) => void;
   toggleEffect: (itemId: string, effectId: string) => void;
   // Transition actions
-  addTransition: (leftClipId: string, rightClipId: string, type?: TransitionType, durationInFrames?: number) => boolean;
+  addTransition: (leftClipId: string, rightClipId: string, type?: TransitionType, durationInFrames?: number, presentation?: TransitionPresentation, direction?: WipeDirection | SlideDirection | FlipDirection) => boolean;
   updateTransition: (id: string, updates: Partial<Pick<Transition, 'durationInFrames' | 'type' | 'presentation' | 'direction' | 'timing'>>) => void;
   removeTransition: (id: string) => void;
   saveTimeline: (projectId: string) => Promise<void>;

@@ -3,6 +3,16 @@
  *
  * Functions for validating and calculating transition parameters
  * between adjacent clips.
+ *
+ * REMOTION TRANSITIONSERIES RULES:
+ * 1. Transition duration must be < min(leftClipDuration, rightClipDuration)
+ * 2. No two transitions can be adjacent (must have a sequence/clip between them)
+ * 3. Every transition must have a sequence/clip before AND after it
+ *
+ * Rules #2 and #3 are inherently satisfied by our data model:
+ * - Each transition requires both leftClipId and rightClipId
+ * - Transitions are stored separately and reference clips by ID
+ * - We validate clips exist and are adjacent before creating transitions
  */
 
 import type { TimelineItem } from '@/types/timeline';
@@ -10,7 +20,7 @@ import type { CanAddTransitionResult, Transition, TRANSITION_CONFIGS } from '@/t
 
 /**
  * Check if a transition can be added between two clips.
- * Validates: same track, adjacency, and handle availability.
+ * Validates: same track, adjacency, clip duration limits, and handle availability.
  */
 export function canAddTransition(
   leftClip: TimelineItem,
@@ -31,6 +41,16 @@ export function canAddTransition(
   const validTypes = ['video', 'image'];
   if (!validTypes.includes(leftClip.type) || !validTypes.includes(rightClip.type)) {
     return { canAdd: false, reason: 'Transitions only work with video and image clips' };
+  }
+
+  // Remotion constraint: transition duration cannot exceed either clip's duration
+  // TransitionSeries needs at least 1 frame from each clip outside the transition
+  const maxByClipDuration = Math.min(leftClip.durationInFrames, rightClip.durationInFrames) - 1;
+  if (durationInFrames > maxByClipDuration) {
+    return {
+      canAdd: false,
+      reason: `Transition too long. Max: ${maxByClipDuration} frames (shorter clip duration - 1)`,
+    };
   }
 
   // Calculate available handles
@@ -174,7 +194,8 @@ export function clipHasTransition(
 }
 
 /**
- * Calculate the maximum transition duration based on available handles.
+ * Calculate the maximum transition duration based on clip durations and available handles.
+ * Remotion requires transition < min(leftDuration, rightDuration)
  */
 export function getMaxTransitionDuration(
   leftClip: TimelineItem,
@@ -182,7 +203,9 @@ export function getMaxTransitionDuration(
 ): number {
   const leftHandle = getAvailableHandle(leftClip, 'end');
   const rightHandle = getAvailableHandle(rightClip, 'start');
-  return Math.min(leftHandle, rightHandle);
+  // Transition cannot exceed either clip's duration (minus 1 frame for safety)
+  const maxByClipDuration = Math.min(leftClip.durationInFrames, rightClip.durationInFrames) - 1;
+  return Math.min(leftHandle, rightHandle, maxByClipDuration);
 }
 
 /**

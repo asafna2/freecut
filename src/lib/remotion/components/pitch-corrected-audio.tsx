@@ -87,6 +87,9 @@ export const PitchCorrectedAudio: React.FC<PitchCorrectedAudioProps> = React.mem
     ? Math.min(crossfadeFadeOut, durationInFrames)
     : Math.min(effectiveFadeOut * fps, durationInFrames);
 
+  // Check if this is a transition crossfade (uses equal-power curve to avoid volume dip)
+  const isCrossfade = crossfadeFadeIn !== undefined || crossfadeFadeOut !== undefined;
+
   let fadeMultiplier = 1;
   const hasFadeIn = fadeInFrames > 0;
   const hasFadeOut = fadeOutFrames > 0;
@@ -94,39 +97,55 @@ export const PitchCorrectedAudio: React.FC<PitchCorrectedAudioProps> = React.mem
   if (hasFadeIn || hasFadeOut) {
     const fadeOutStart = durationInFrames - fadeOutFrames;
 
-    if (hasFadeIn && hasFadeOut) {
-      if (fadeInFrames >= fadeOutStart) {
-        // Overlapping fades
-        const midPoint = durationInFrames / 2;
-        const peakVolume = Math.min(1, midPoint / Math.max(fadeInFrames, 1));
+    if (isCrossfade) {
+      // Equal-power crossfade: uses sin/cos curves to maintain constant perceived loudness
+      // This prevents the volume dip that occurs with linear crossfades
+      // At midpoint: sin(45°)² + cos(45°)² = 0.5 + 0.5 = 1 (constant power)
+      if (hasFadeIn && frame < fadeInFrames) {
+        // Fade in: sin curve (0 to 1)
+        const progress = frame / fadeInFrames;
+        fadeMultiplier = Math.sin(progress * Math.PI / 2);
+      } else if (hasFadeOut && frame >= fadeOutStart) {
+        // Fade out: cos curve (1 to 0)
+        const progress = (frame - fadeOutStart) / fadeOutFrames;
+        fadeMultiplier = Math.cos(progress * Math.PI / 2);
+      }
+    } else {
+      // Regular linear fades for non-crossfade scenarios
+      if (hasFadeIn && hasFadeOut) {
+        if (fadeInFrames >= fadeOutStart) {
+          // Overlapping fades
+          const midPoint = durationInFrames / 2;
+          const peakVolume = Math.min(1, midPoint / Math.max(fadeInFrames, 1));
+          fadeMultiplier = interpolate(
+            frame,
+            [0, midPoint, durationInFrames],
+            [0, peakVolume, 0],
+            { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' }
+          );
+        } else {
+          fadeMultiplier = interpolate(
+            frame,
+            [0, fadeInFrames, fadeOutStart, durationInFrames],
+            [0, 1, 1, 0],
+            { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' }
+          );
+        }
+      } else if (hasFadeIn) {
         fadeMultiplier = interpolate(
           frame,
-          [0, midPoint, durationInFrames],
-          [0, peakVolume, 0],
+          [0, fadeInFrames],
+          [0, 1],
           { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' }
         );
       } else {
         fadeMultiplier = interpolate(
           frame,
-          [0, fadeInFrames, fadeOutStart, durationInFrames],
-          [0, 1, 1, 0],
+          [fadeOutStart, durationInFrames],
+          [1, 0],
           { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' }
         );
       }
-    } else if (hasFadeIn) {
-      fadeMultiplier = interpolate(
-        frame,
-        [0, fadeInFrames],
-        [0, 1],
-        { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' }
-      );
-    } else {
-      fadeMultiplier = interpolate(
-        frame,
-        [fadeOutStart, durationInFrames],
-        [1, 0],
-        { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' }
-      );
     }
   }
 
@@ -206,6 +225,10 @@ export const PitchCorrectedAudio: React.FC<PitchCorrectedAudioProps> = React.mem
     const frameChanged = frame !== lastFrameRef.current;
     lastFrameRef.current = frame;
 
+    // Guard: Only seek if audio has enough data loaded
+    // readyState: 0=HAVE_NOTHING, 1=HAVE_METADATA, 2=HAVE_CURRENT_DATA, 3=HAVE_FUTURE_DATA, 4=HAVE_ENOUGH_DATA
+    const canSeek = audio.readyState >= 1;
+
     if (playing) {
       const currentTime = audio.currentTime;
       const now = Date.now();
@@ -225,16 +248,20 @@ export const PitchCorrectedAudio: React.FC<PitchCorrectedAudioProps> = React.mem
       const audioBehind = drift < -0.2;
       const needsSync = needsInitialSyncRef.current || (audioBehind && timeSinceLastSync > 500);
 
-      if (needsSync) {
-        audio.currentTime = sourceTimeSeconds;
-        lastSyncTimeRef.current = now;
-        needsInitialSyncRef.current = false;
+      if (needsSync && canSeek) {
+        try {
+          audio.currentTime = sourceTimeSeconds;
+          lastSyncTimeRef.current = now;
+          needsInitialSyncRef.current = false;
+        } catch {
+          // Seek failed - audio may not be ready yet
+        }
       }
 
-      // Play if paused
-      if (audio.paused) {
+      // Play if paused and audio is ready
+      if (audio.paused && audio.readyState >= 2) {
         audio.play().catch(() => {
-          // Autoplay might be blocked
+          // Autoplay might be blocked - this is fine
         });
       }
     } else {
@@ -242,9 +269,13 @@ export const PitchCorrectedAudio: React.FC<PitchCorrectedAudioProps> = React.mem
       if (!audio.paused) {
         audio.pause();
       }
-      // Only seek when paused if frame actually changed (user is scrubbing)
-      if (frameChanged) {
-        audio.currentTime = sourceTimeSeconds;
+      // Only seek when paused if frame actually changed (user is scrubbing) and audio is ready
+      if (frameChanged && canSeek) {
+        try {
+          audio.currentTime = sourceTimeSeconds;
+        } catch {
+          // Seek failed - audio may not be ready yet
+        }
       }
     }
   }, [frame, fps, playing, playbackRate, trimBefore]);

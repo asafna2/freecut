@@ -94,13 +94,13 @@ export interface PresentationConfig {
   label: string;
   description: string;
   icon: string; // Icon name from lucide-react
-  category: 'basic' | 'directional' | 'special';
-  supportsDirection?: boolean;
-  directions?: Array<{ value: string; label: string }>;
+  category: 'basic' | 'wipe' | 'slide' | 'flip' | 'special';
+  direction?: WipeDirection | SlideDirection | FlipDirection;
 }
 
 /**
  * All available transition presentations with their configurations
+ * Each direction is a separate card for easy selection
  */
 export const PRESENTATION_CONFIGS: PresentationConfig[] = [
   // Basic transitions
@@ -118,48 +118,104 @@ export const PRESENTATION_CONFIGS: PresentationConfig[] = [
     icon: 'Scissors',
     category: 'basic',
   },
-  // Directional transitions
+  // Wipe transitions (each direction as separate card)
   {
     id: 'wipe',
-    label: 'Wipe',
-    description: 'Wipe from one clip to another',
+    label: 'Left',
+    description: 'Wipe from left to right',
     icon: 'ArrowRight',
-    category: 'directional',
-    supportsDirection: true,
-    directions: [
-      { value: 'from-left', label: 'From Left' },
-      { value: 'from-right', label: 'From Right' },
-      { value: 'from-top', label: 'From Top' },
-      { value: 'from-bottom', label: 'From Bottom' },
-    ],
+    category: 'wipe',
+    direction: 'from-left',
+  },
+  {
+    id: 'wipe',
+    label: 'Right',
+    description: 'Wipe from right to left',
+    icon: 'ArrowLeft',
+    category: 'wipe',
+    direction: 'from-right',
+  },
+  {
+    id: 'wipe',
+    label: 'Top',
+    description: 'Wipe from top to bottom',
+    icon: 'ArrowDown',
+    category: 'wipe',
+    direction: 'from-top',
+  },
+  {
+    id: 'wipe',
+    label: 'Bottom',
+    description: 'Wipe from bottom to top',
+    icon: 'ArrowUp',
+    category: 'wipe',
+    direction: 'from-bottom',
+  },
+  // Slide transitions (each direction as separate card)
+  {
+    id: 'slide',
+    label: 'Left',
+    description: 'Slide in from left',
+    icon: 'MoveRight',
+    category: 'slide',
+    direction: 'from-left',
   },
   {
     id: 'slide',
-    label: 'Slide',
-    description: 'Slide new clip over the old one',
-    icon: 'MoveRight',
-    category: 'directional',
-    supportsDirection: true,
-    directions: [
-      { value: 'from-left', label: 'From Left' },
-      { value: 'from-right', label: 'From Right' },
-      { value: 'from-top', label: 'From Top' },
-      { value: 'from-bottom', label: 'From Bottom' },
-    ],
+    label: 'Right',
+    description: 'Slide in from right',
+    icon: 'MoveLeft',
+    category: 'slide',
+    direction: 'from-right',
+  },
+  {
+    id: 'slide',
+    label: 'Top',
+    description: 'Slide in from top',
+    icon: 'MoveDown',
+    category: 'slide',
+    direction: 'from-top',
+  },
+  {
+    id: 'slide',
+    label: 'Bottom',
+    description: 'Slide in from bottom',
+    icon: 'MoveUp',
+    category: 'slide',
+    direction: 'from-bottom',
+  },
+  // Flip transitions (each direction as separate card)
+  {
+    id: 'flip',
+    label: 'Left',
+    description: '3D flip from left',
+    icon: 'FlipHorizontal',
+    category: 'flip',
+    direction: 'from-left',
   },
   {
     id: 'flip',
-    label: 'Flip',
-    description: '3D flip transition',
-    icon: 'FlipHorizontal',
-    category: 'directional',
-    supportsDirection: true,
-    directions: [
-      { value: 'from-left', label: 'From Left' },
-      { value: 'from-right', label: 'From Right' },
-      { value: 'from-top', label: 'From Top' },
-      { value: 'from-bottom', label: 'From Bottom' },
-    ],
+    label: 'Right',
+    description: '3D flip from right',
+    icon: 'FlipHorizontal2',
+    category: 'flip',
+    direction: 'from-right',
+  },
+  {
+    id: 'flip',
+    label: 'Top',
+    description: '3D flip from top',
+    icon: 'FlipVertical',
+    category: 'flip',
+    direction: 'from-top',
+  },
+  {
+    id: 'flip',
+    label: 'Bottom',
+    description: '3D flip from bottom',
+    icon: 'FlipVertical2',
+    category: 'flip',
+    direction: 'from-bottom',
   },
   // Special transitions
   {

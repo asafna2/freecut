@@ -835,7 +835,7 @@ export const useTimelineStore = create<TimelineState & TimelineActions>()(
   // Add a transition between two adjacent clips
   // Clips stay at their original positions - TransitionSeries handles overlap at render time
   // Returns true if transition was added successfully
-  addTransition: (leftClipId, rightClipId, type = 'crossfade', durationInFrames) => {
+  addTransition: (leftClipId, rightClipId, type = 'crossfade', durationInFrames, presentation = 'fade', direction) => {
     const state = useTimelineStore.getState();
     const leftClip = state.items.find((i) => i.id === leftClipId);
     const rightClip = state.items.find((i) => i.id === rightClipId);
@@ -864,17 +864,18 @@ export const useTimelineStore = create<TimelineState & TimelineActions>()(
       return false;
     }
 
-    // Create the transition
+    // Create the transition with all properties in a single operation
     // Clips stay at their original positions - TransitionSeries handles overlap at render time
     const transition: Transition = {
       id: crypto.randomUUID(),
       type,
-      presentation: 'fade', // Default to fade presentation
+      presentation, // Use provided presentation
       timing: 'linear', // Default to linear timing
       leftClipId,
       rightClipId,
       trackId: leftClip.trackId,
       durationInFrames: duration,
+      direction, // Include direction if provided
     };
 
     useTimelineStore.setState((state) => ({
@@ -886,12 +887,42 @@ export const useTimelineStore = create<TimelineState & TimelineActions>()(
   },
 
   // Update a transition's properties
-  updateTransition: (id, updates) => set((state) => ({
-    transitions: state.transitions.map((t) =>
-      t.id === id ? { ...t, ...updates } : t
-    ),
-    isDirty: true,
-  })),
+  updateTransition: (id, updates) => set((state) => {
+    const transition = state.transitions.find((t) => t.id === id);
+    if (!transition) return state;
+
+    let validatedUpdates = { ...updates };
+
+    // If duration is being updated, validate against Remotion constraints
+    if (validatedUpdates.durationInFrames !== undefined) {
+      const leftClip = state.items.find((i) => i.id === transition.leftClipId);
+      const rightClip = state.items.find((i) => i.id === transition.rightClipId);
+
+      if (leftClip && rightClip) {
+        // Remotion rule: transition duration must be < min(leftDuration, rightDuration)
+        const maxDuration = Math.min(leftClip.durationInFrames, rightClip.durationInFrames) - 1;
+        let duration = validatedUpdates.durationInFrames;
+
+        if (duration > maxDuration) {
+          console.warn(`[updateTransition] Duration ${duration} exceeds max ${maxDuration}`);
+          duration = maxDuration;
+        }
+        // Ensure minimum of 1 frame
+        if (duration < 1) {
+          duration = 1;
+        }
+
+        validatedUpdates.durationInFrames = duration;
+      }
+    }
+
+    return {
+      transitions: state.transitions.map((t) =>
+        t.id === id ? { ...t, ...validatedUpdates } : t
+      ),
+      isDirty: true,
+    };
+  }),
 
   // Remove a transition
   removeTransition: (id) => set((state) => ({

@@ -1,267 +1,303 @@
-import { memo, useCallback, useState } from 'react';
+import { memo, useCallback, useMemo } from 'react';
 import {
   Blend,
   Scissors,
   ArrowRight,
+  ArrowLeft,
+  ArrowUp,
+  ArrowDown,
   MoveRight,
+  MoveLeft,
+  MoveUp,
+  MoveDown,
   FlipHorizontal,
+  FlipVertical,
   Clock,
   Circle,
-  ChevronDown,
-  ChevronUp,
   Info,
+  type LucideIcon,
 } from 'lucide-react';
 import { useTimelineStore } from '@/features/timeline/stores/timeline-store';
 import { useSelectionStore } from '../stores/selection-store';
 import {
   PRESENTATION_CONFIGS,
-  type TransitionPresentation,
   type WipeDirection,
   type SlideDirection,
   type FlipDirection,
+  type PresentationConfig,
 } from '@/types/transition';
 import { cn } from '@/lib/utils';
 
 // Icon mapping for presentations
-const ICON_MAP: Record<string, typeof Blend> = {
+const ICON_MAP: Record<string, LucideIcon> = {
   Blend,
   Scissors,
   ArrowRight,
+  ArrowLeft,
+  ArrowUp,
+  ArrowDown,
   MoveRight,
+  MoveLeft,
+  MoveUp,
+  MoveDown,
   FlipHorizontal,
+  FlipHorizontal2: FlipHorizontal,
+  FlipVertical,
+  FlipVertical2: FlipVertical,
   Clock,
   Circle,
 };
 
-// Color classes for each category
-const CATEGORY_COLORS: Record<string, { bg: string; border: string; icon: string; hoverBg: string }> = {
-  basic: {
-    bg: 'bg-blue-500/20',
-    border: 'border-blue-500/50',
-    icon: 'text-blue-400',
-    hoverBg: 'group-hover:bg-blue-500/30',
-  },
-  directional: {
-    bg: 'bg-purple-500/20',
-    border: 'border-purple-500/50',
-    icon: 'text-purple-400',
-    hoverBg: 'group-hover:bg-purple-500/30',
-  },
-  special: {
-    bg: 'bg-amber-500/20',
-    border: 'border-amber-500/50',
-    icon: 'text-amber-400',
-    hoverBg: 'group-hover:bg-amber-500/30',
-  },
+// Category display info
+const CATEGORY_INFO: Record<string, { title: string; color: string }> = {
+  basic: { title: 'Basic', color: 'text-blue-400' },
+  wipe: { title: 'Wipe', color: 'text-purple-400' },
+  slide: { title: 'Slide', color: 'text-green-400' },
+  flip: { title: 'Flip', color: 'text-orange-400' },
+  special: { title: 'Special', color: 'text-amber-400' },
 };
 
-interface TransitionCardProps {
-  presentation: TransitionPresentation;
-  label: string;
-  description: string;
-  icon: string;
-  category: 'basic' | 'directional' | 'special';
-  supportsDirection?: boolean;
-  directions?: Array<{ value: string; label: string }>;
-  onApply: (presentation: TransitionPresentation, direction?: string) => void;
+// Pre-computed categories (static data)
+const CATEGORIES: Record<string, PresentationConfig[]> = {};
+for (const config of PRESENTATION_CONFIGS) {
+  if (!CATEGORIES[config.category]) {
+    CATEGORIES[config.category] = [];
+  }
+  CATEGORIES[config.category].push(config);
+}
+const CATEGORY_ORDER = ['basic', 'wipe', 'slide', 'flip', 'special'];
+
+// Pre-compute start indices for each category (static)
+const CATEGORY_START_INDICES: Record<string, number> = {};
+let _runningIndex = 0;
+for (const category of CATEGORY_ORDER) {
+  CATEGORY_START_INDICES[category] = _runningIndex;
+  _runningIndex += (CATEGORIES[category]?.length || 0);
 }
 
+interface TransitionCardProps {
+  config: PresentationConfig;
+  configIndex: number;
+  onApply: (index: number) => void;
+  disabled?: boolean;
+}
+
+/**
+ * Compact transition card - displays as a small clickable tile
+ */
 const TransitionCard = memo(function TransitionCard({
-  presentation,
-  label,
-  description,
-  icon,
-  category,
-  supportsDirection,
-  directions,
+  config,
+  configIndex,
   onApply,
+  disabled,
 }: TransitionCardProps) {
-  const [expanded, setExpanded] = useState(false);
-  const [selectedDirection, setSelectedDirection] = useState<string>(directions?.[0]?.value ?? '');
-  const Icon = ICON_MAP[icon] ?? Blend;
-  const colors = CATEGORY_COLORS[category] || CATEGORY_COLORS.basic!;
+  const Icon = ICON_MAP[config.icon] ?? Blend;
 
   const handleClick = useCallback(() => {
-    if (supportsDirection && directions) {
-      // Toggle expansion for directional transitions
-      setExpanded(!expanded);
-    } else {
-      // Apply directly for non-directional transitions
-      onApply(presentation);
-    }
-  }, [presentation, supportsDirection, directions, expanded, onApply]);
-
-  const handleDirectionSelect = useCallback((direction: string) => {
-    setSelectedDirection(direction);
-    onApply(presentation, direction);
-    setExpanded(false);
-  }, [presentation, onApply]);
+    onApply(configIndex);
+  }, [configIndex, onApply]);
 
   return (
-    <div className="flex flex-col">
-      <button
-        onClick={handleClick}
-        className={cn(
-          'flex items-center gap-2 p-2 rounded-lg border border-border',
-          'bg-secondary/30 hover:bg-secondary/50 hover:border-primary/50',
-          'transition-colors group text-left w-full',
-          expanded && 'border-primary/50 bg-secondary/50'
-        )}
-        title={description}
-      >
-        <div
-          className={cn(
-            'w-8 h-8 rounded flex items-center justify-center flex-shrink-0 border',
-            colors.bg,
-            colors.border,
-            colors.hoverBg
-          )}
-        >
-          <Icon className={cn('w-4 h-4', colors.icon)} />
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="text-xs font-medium text-foreground truncate">{label}</div>
-          <div className="text-[10px] text-muted-foreground truncate">{description}</div>
-        </div>
-        {supportsDirection && directions && (
-          <div className="flex-shrink-0">
-            {expanded ? (
-              <ChevronUp className="w-3.5 h-3.5 text-muted-foreground" />
-            ) : (
-              <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
-            )}
-          </div>
-        )}
-      </button>
-
-      {/* Direction options (expanded) */}
-      {expanded && supportsDirection && directions && (
-        <div className="mt-1 ml-4 pl-4 border-l border-border space-y-1">
-          {directions.map((dir) => (
-            <button
-              key={dir.value}
-              onClick={() => handleDirectionSelect(dir.value)}
-              className={cn(
-                'w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs',
-                'hover:bg-secondary/50 transition-colors',
-                selectedDirection === dir.value && 'bg-primary/10 text-primary'
-              )}
-            >
-              <div className="w-1.5 h-1.5 rounded-full bg-current opacity-50" />
-              {dir.label}
-            </button>
-          ))}
-        </div>
+    <button
+      onClick={handleClick}
+      disabled={disabled}
+      className={cn(
+        'flex flex-col items-center justify-center gap-1 p-2 rounded-lg',
+        'border border-border bg-secondary/30',
+        'hover:bg-secondary/50 hover:border-primary/50',
+        'transition-colors group text-center',
+        'min-w-[60px] h-[56px]',
+        disabled && 'opacity-50 cursor-not-allowed hover:bg-secondary/30 hover:border-border'
       )}
+      title={config.description}
+    >
+      <Icon className="w-4 h-4 text-muted-foreground group-hover:text-foreground" />
+      <span className="text-[10px] text-muted-foreground group-hover:text-foreground truncate w-full">
+        {config.label}
+      </span>
+    </button>
+  );
+});
+
+/**
+ * Category section with header and grid of cards
+ */
+interface CategorySectionProps {
+  category: string;
+  configs: PresentationConfig[];
+  startIndex: number;
+  onApply: (index: number) => void;
+  disabled?: boolean;
+}
+
+const CategorySection = memo(function CategorySection({
+  category,
+  configs,
+  startIndex,
+  onApply,
+  disabled,
+}: CategorySectionProps) {
+  const info = CATEGORY_INFO[category] || { title: category, color: 'text-muted-foreground' };
+
+  return (
+    <div className="space-y-2">
+      <div className={cn('text-[10px] font-medium uppercase tracking-wider', info.color)}>
+        {info.title}
+      </div>
+      <div className="grid grid-cols-4 gap-1.5">
+        {configs.map((config, index) => (
+          <TransitionCard
+            key={`${config.id}-${config.direction || index}`}
+            config={config}
+            configIndex={startIndex + index}
+            onApply={onApply}
+            disabled={disabled}
+          />
+        ))}
+      </div>
     </div>
   );
 });
 
+// Type for adjacent info result
+interface AdjacentInfo {
+  leftClipId: string;
+  rightClipId: string;
+  hasExisting: boolean;
+  existingTransitionId?: string;
+}
+
+/**
+ * Compute adjacent clip info for transition.
+ * This is called inside a selector to avoid re-renders.
+ */
+function computeAdjacentInfo(
+  selectedItemIds: string[],
+  items: typeof useTimelineStore.getState extends () => infer S ? S extends { items: infer I } ? I : never : never,
+  transitions: typeof useTimelineStore.getState extends () => infer S ? S extends { transitions: infer T } ? T : never : never
+): AdjacentInfo | null {
+  if (selectedItemIds.length !== 1) return null;
+
+  const selectedId = selectedItemIds[0];
+  const selectedItem = items.find((i) => i.id === selectedId);
+  if (!selectedItem) return null;
+
+  const validTypes = ['video', 'image'];
+  if (!validTypes.includes(selectedItem.type)) return null;
+
+  const trackItems = items
+    .filter((i) => i.trackId === selectedItem.trackId && validTypes.includes(i.type))
+    .sort((a, b) => a.from - b.from);
+
+  const selectedIndex = trackItems.findIndex((i) => i.id === selectedId);
+  if (selectedIndex === -1) return null;
+
+  const selectedEnd = selectedItem.from + selectedItem.durationInFrames;
+
+  // Check neighbors
+  const leftNeighbor = trackItems[selectedIndex - 1];
+  const rightNeighbor = trackItems[selectedIndex + 1];
+
+  let canAddLeft = false;
+  let leftClipId: string | undefined;
+  let hasTransitionLeft = false;
+
+  if (leftNeighbor) {
+    const leftEnd = leftNeighbor.from + leftNeighbor.durationInFrames;
+    canAddLeft = leftEnd === selectedItem.from;
+    leftClipId = leftNeighbor.id;
+    hasTransitionLeft = transitions.some(
+      (t) => t.leftClipId === leftNeighbor.id && t.rightClipId === selectedId
+    );
+  }
+
+  let canAddRight = false;
+  let rightClipId: string | undefined;
+  let hasTransitionRight = false;
+
+  if (rightNeighbor) {
+    canAddRight = selectedEnd === rightNeighbor.from;
+    rightClipId = rightNeighbor.id;
+    hasTransitionRight = transitions.some(
+      (t) => t.leftClipId === selectedId && t.rightClipId === rightNeighbor.id
+    );
+  }
+
+  // Prefer right neighbor
+  if (canAddRight && !hasTransitionRight) {
+    return { leftClipId: selectedId, rightClipId: rightClipId!, hasExisting: false };
+  } else if (canAddLeft && !hasTransitionLeft) {
+    return { leftClipId: leftClipId!, rightClipId: selectedId, hasExisting: false };
+  } else if (canAddRight && hasTransitionRight) {
+    return {
+      leftClipId: selectedId,
+      rightClipId: rightClipId!,
+      hasExisting: true,
+      existingTransitionId: transitions.find(
+        (t) => t.leftClipId === selectedId && t.rightClipId === rightClipId
+      )?.id,
+    };
+  } else if (canAddLeft && hasTransitionLeft) {
+    return {
+      leftClipId: leftClipId!,
+      rightClipId: selectedId,
+      hasExisting: true,
+      existingTransitionId: transitions.find(
+        (t) => t.leftClipId === leftClipId && t.rightClipId === selectedId
+      )?.id,
+    };
+  }
+
+  return null;
+}
+
 export const TransitionsPanel = memo(function TransitionsPanel() {
   const addTransition = useTimelineStore((s) => s.addTransition);
   const updateTransition = useTimelineStore((s) => s.updateTransition);
+  const items = useTimelineStore((s) => s.items);
+  const transitions = useTimelineStore((s) => s.transitions);
+
+  // Get selection
   const selectedItemIds = useSelectionStore((s) => s.selectedItemIds);
+  const selectionCount = selectedItemIds.length;
+  const selectedId = selectionCount === 1 ? selectedItemIds[0] : null;
 
-  // Group presentations by category
-  const basicTransitions = PRESENTATION_CONFIGS.filter((p) => p.category === 'basic');
-  const directionalTransitions = PRESENTATION_CONFIGS.filter((p) => p.category === 'directional');
-  const specialTransitions = PRESENTATION_CONFIGS.filter((p) => p.category === 'special');
+  // Compute adjacentInfo with useMemo (stable reference)
+  const adjacentInfo = useMemo(() => {
+    if (!selectedId) return null;
+    return computeAdjacentInfo([selectedId], items, transitions);
+  }, [selectedId, items, transitions]);
 
-  // Check if we can apply a transition between selected clips
-  const canApplyTransition = useCallback(() => {
-    if (selectedItemIds.length !== 2) return false;
+  // Apply a transition by config index - reads from store directly to avoid stale closure
+  const handleApplyByIndex = useCallback(
+    (configIndex: number) => {
+      const config = PRESENTATION_CONFIGS[configIndex];
+      if (!config) return;
 
-    const items = useTimelineStore.getState().items;
-    const transitions = useTimelineStore.getState().transitions;
-    const selectedItems = items.filter((i) => selectedItemIds.includes(i.id));
+      // Get fresh state at click time
+      const { items, transitions } = useTimelineStore.getState();
+      const currentSelectedIds = useSelectionStore.getState().selectedItemIds;
+      const info = computeAdjacentInfo(currentSelectedIds, items, transitions);
 
-    if (selectedItems.length !== 2) return false;
+      if (!info) return;
 
-    const item0 = selectedItems[0]!;
-    const item1 = selectedItems[1]!;
+      const { leftClipId, rightClipId, hasExisting, existingTransitionId } = info;
+      const presentation = config.id;
+      const direction = config.direction as WipeDirection | SlideDirection | FlipDirection | undefined;
 
-    // Both must be on the same track
-    if (item0.trackId !== item1.trackId) return false;
-
-    // Must be video or image
-    const validTypes = ['video', 'image'];
-    if (!validTypes.includes(item0.type) || !validTypes.includes(item1.type)) {
-      return false;
-    }
-
-    // Sort by position
-    const sorted = [...selectedItems].sort((a, b) => a.from - b.from);
-    const left = sorted[0]!;
-    const right = sorted[1]!;
-
-    const leftEnd = left.from + left.durationInFrames;
-    const rightStart = right.from;
-
-    // Check if adjacent (for new transition)
-    const isAdjacent = leftEnd === rightStart;
-
-    // Check if overlapping (transition already exists between them)
-    const existingTransition = transitions.find(
-      (t) => (t.leftClipId === left.id && t.rightClipId === right.id) ||
-             (t.leftClipId === right.id && t.rightClipId === left.id)
-    );
-    const hasExistingTransition = !!existingTransition;
-
-    // Valid if adjacent OR already has a transition (can update it)
-    return isAdjacent || hasExistingTransition;
-  }, [selectedItemIds]);
-
-  // Apply a transition to selected clips
-  const handleApplyTransition = useCallback(
-    (presentation: TransitionPresentation, direction?: string) => {
-      if (!canApplyTransition()) {
-        // Show info message - no valid selection
-        return;
-      }
-
-      const items = useTimelineStore.getState().items;
-      const selectedItems = items.filter((i) => selectedItemIds.includes(i.id));
-      const sorted = [...selectedItems].sort((a, b) => a.from - b.from);
-
-      const leftClip = sorted[0];
-      const rightClip = sorted[1];
-      if (!leftClip || !rightClip) return;
-
-      const leftClipId = leftClip.id;
-      const rightClipId = rightClip.id;
-
-      // Add or update transition
-      const transitions = useTimelineStore.getState().transitions;
-      const existingTransition = transitions.find(
-        (t) => t.leftClipId === leftClipId && t.rightClipId === rightClipId
-      );
-
-      if (existingTransition) {
+      if (hasExisting && existingTransitionId) {
         // Update existing transition
-        updateTransition(existingTransition.id, {
-          presentation,
-          direction: direction as WipeDirection | SlideDirection | FlipDirection | undefined,
-        });
+        updateTransition(existingTransitionId, { presentation, direction });
       } else {
-        // Add new transition
-        addTransition(leftClipId, rightClipId, 'crossfade');
-        // Then update the presentation
-        const newTransitions = useTimelineStore.getState().transitions;
-        const newTransition = newTransitions.find(
-          (t) => t.leftClipId === leftClipId && t.rightClipId === rightClipId
-        );
-        if (newTransition) {
-          updateTransition(newTransition.id, {
-            presentation,
-            direction: direction as WipeDirection | SlideDirection | FlipDirection | undefined,
-          });
-        }
+        // Add new transition with presentation and direction in a single operation
+        // This ensures undo/redo works as a single step
+        addTransition(leftClipId, rightClipId, 'crossfade', undefined, presentation, direction);
       }
     },
-    [selectedItemIds, canApplyTransition, addTransition, updateTransition]
+    [addTransition, updateTransition]
   );
 
-  const hasValidSelection = canApplyTransition();
+  const hasValidSelection = adjacentInfo !== null;
 
   return (
     <div className="h-full flex flex-col">
@@ -271,81 +307,33 @@ export const TransitionsPanel = memo(function TransitionsPanel() {
           <Info className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0 mt-0.5" />
           <div className="text-muted-foreground leading-relaxed">
             {hasValidSelection ? (
-              <span className="text-primary">Select a transition to apply between the two selected clips.</span>
+              <span className="text-primary">
+                Click a transition to apply it{' '}
+                {adjacentInfo?.hasExisting ? '(will update existing)' : 'between clips'}.
+              </span>
+            ) : selectionCount === 1 ? (
+              <span>No adjacent clip found. Place clips next to each other on the timeline.</span>
+            ) : selectionCount > 1 ? (
+              <span>Select a single video or image clip to add a transition.</span>
             ) : (
-              <span>Select two adjacent clips on the same track to apply a transition between them.</span>
+              <span>Select a video or image clip to add a transition to its neighbor.</span>
             )}
           </div>
         </div>
       </div>
 
-      {/* Transitions list */}
+      {/* Transitions grid by category */}
       <div className="flex-1 overflow-y-auto p-3 space-y-4">
-        {/* Basic transitions */}
-        <div>
-          <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-2">
-            Basic
-          </div>
-          <div className="space-y-1.5">
-            {basicTransitions.map((config) => (
-              <TransitionCard
-                key={config.id}
-                presentation={config.id}
-                label={config.label}
-                description={config.description}
-                icon={config.icon}
-                category={config.category}
-                supportsDirection={config.supportsDirection}
-                directions={config.directions}
-                onApply={handleApplyTransition}
-              />
-            ))}
-          </div>
-        </div>
-
-        {/* Directional transitions */}
-        <div>
-          <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-2">
-            Directional
-          </div>
-          <div className="space-y-1.5">
-            {directionalTransitions.map((config) => (
-              <TransitionCard
-                key={config.id}
-                presentation={config.id}
-                label={config.label}
-                description={config.description}
-                icon={config.icon}
-                category={config.category}
-                supportsDirection={config.supportsDirection}
-                directions={config.directions}
-                onApply={handleApplyTransition}
-              />
-            ))}
-          </div>
-        </div>
-
-        {/* Special transitions */}
-        <div>
-          <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-2">
-            Special
-          </div>
-          <div className="space-y-1.5">
-            {specialTransitions.map((config) => (
-              <TransitionCard
-                key={config.id}
-                presentation={config.id}
-                label={config.label}
-                description={config.description}
-                icon={config.icon}
-                category={config.category}
-                supportsDirection={config.supportsDirection}
-                directions={config.directions}
-                onApply={handleApplyTransition}
-              />
-            ))}
-          </div>
-        </div>
+        {CATEGORY_ORDER.map((category) => (
+          <CategorySection
+            key={category}
+            category={category}
+            configs={CATEGORIES[category] || []}
+            startIndex={CATEGORY_START_INDICES[category]!}
+            onApply={handleApplyByIndex}
+            disabled={!hasValidSelection}
+          />
+        ))}
       </div>
     </div>
   );

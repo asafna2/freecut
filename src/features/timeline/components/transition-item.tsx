@@ -56,7 +56,8 @@ export const TransitionItem = memo(function TransitionItem({
   const selectTransition = useSelectionStore((s) => s.selectTransition);
 
   // Calculate position and size for the transition region
-  // Always centered at the junction point between clips
+  // The transition happens BEFORE the junction (last N frames of left clip overlapping first N frames of right clip)
+  // So the indicator should END at the junction, not be centered on it
   const position = useMemo(() => {
     if (!leftClip || !rightClip) return null;
 
@@ -64,26 +65,15 @@ export const TransitionItem = memo(function TransitionItem({
     const junctionFrame = rightClip.from;
     const junctionPixel = frameToPixels(junctionFrame);
 
-    // Calculate the visual width based on transition duration
-    // Width spans from junction - duration to junction + duration
-    const transitionStart = junctionFrame - transition.durationInFrames;
-    const transitionEnd = junctionFrame + transition.durationInFrames;
+    // Transition region: ends at junction, spans transitionDuration frames before it
+    const transitionStart = Math.max(leftClip.from, junctionFrame - transition.durationInFrames);
+    const startPixel = frameToPixels(transitionStart);
+    const naturalWidth = junctionPixel - startPixel;
 
-    // Clamp to clip bounds
-    const clampedStart = Math.max(leftClip.from, transitionStart);
-    const clampedEnd = Math.min(rightClip.from + rightClip.durationInFrames, transitionEnd);
-
-    // Convert to pixels
-    const startPixel = frameToPixels(clampedStart);
-    const endPixel = frameToPixels(clampedEnd);
-    const width = endPixel - startPixel;
-
-    // Minimum width for visibility, but always centered at junction
+    // Minimum width for visibility, but keep right edge at junction
     const minWidth = 32;
-    const effectiveWidth = Math.max(width, minWidth);
-
-    // Calculate left position to keep centered at junction
-    const left = junctionPixel - effectiveWidth / 2;
+    const effectiveWidth = Math.max(naturalWidth, minWidth);
+    const left = junctionPixel - effectiveWidth;
 
     return { left, width: effectiveWidth, junctionPixel };
   }, [leftClip, rightClip, frameToPixels, transition.durationInFrames]);
