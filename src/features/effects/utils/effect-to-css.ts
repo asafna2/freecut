@@ -175,30 +175,95 @@ function hexToRgba(hex: string, alpha: number): string {
 }
 
 /**
+ * Generate the background-image pattern based on pattern type.
+ */
+function getPatternGradient(
+  patternType: HalftoneEffect['patternType'],
+  dotSize: number,
+  softness: number,
+  spacing: number,
+  fgColor: string,
+  bgColor: string
+): string {
+  // Calculate edge softness: 0 = sharp edge, 1 = very fuzzy
+  // Sharp: solid color up to edge, then instant transition
+  // Fuzzy: gradient from center to edge
+  const radius = dotSize / 2;
+  const hardEdge = radius * (1 - softness * 0.8); // How much is solid
+
+  switch (patternType) {
+    case 'dots':
+      return `radial-gradient(circle at center, ${fgColor} ${hardEdge}px, ${bgColor} ${radius}px)`;
+
+    case 'lines':
+      // Repeating linear gradient for parallel lines
+      // Line width is dotSize, gap is (spacing - dotSize)
+      const lineWidth = dotSize;
+      const lineHardEdge = lineWidth * (1 - softness * 0.5);
+      return `repeating-linear-gradient(0deg, ${fgColor} 0px, ${fgColor} ${lineHardEdge}px, ${bgColor} ${lineWidth}px, ${bgColor} ${spacing}px)`;
+
+    case 'rays':
+      // Repeating conic gradient for sunburst/ray pattern
+      // Each ray takes up a portion of the 360 degrees
+      const rayAngle = (dotSize / spacing) * 30; // Scale dot size to angle
+      const rayHardEdge = rayAngle * (1 - softness * 0.5);
+      return `repeating-conic-gradient(from 0deg, ${fgColor} 0deg, ${fgColor} ${rayHardEdge}deg, ${bgColor} ${rayAngle}deg)`;
+
+    case 'ripples':
+      // Repeating radial gradient for concentric circles
+      const rippleWidth = dotSize;
+      const rippleHardEdge = rippleWidth * (1 - softness * 0.5);
+      return `repeating-radial-gradient(circle at center, ${fgColor} 0px, ${fgColor} ${rippleHardEdge}px, ${bgColor} ${rippleWidth}px, ${bgColor} ${spacing}px)`;
+
+    default:
+      return `radial-gradient(circle at center, ${fgColor} ${hardEdge}px, ${bgColor} ${radius}px)`;
+  }
+}
+
+/**
  * Generate CSS styles for halftone effect.
- * Uses pure CSS technique: radial-gradient dots + mix-blend-mode + contrast filter.
+ * Uses pure CSS technique: pattern gradients + mix-blend-mode + contrast filter.
  *
- * Returns styles for both the container (with contrast filter) and the overlay (dot pattern).
+ * Supports multiple pattern types: dots, lines, rays, ripples.
+ * Returns styles for both the container (with contrast filter) and the overlay (pattern).
  */
 export function getHalftoneStyles(effect: HalftoneEffect): {
   containerStyle: React.CSSProperties;
   overlayStyle: React.CSSProperties;
 } {
-  const { dotSize, spacing, angle, intensity, backgroundColor, dotColor } = effect;
+  const {
+    patternType = 'dots',
+    dotSize,
+    spacing,
+    angle,
+    intensity,
+    softness = 0.2,
+    blendMode = 'multiply',
+    inverted = false,
+    backgroundColor,
+    dotColor,
+  } = effect;
+
+  // Swap colors if inverted
+  const fgColor = inverted ? backgroundColor : dotColor;
+  const bgColor = inverted ? dotColor : backgroundColor;
 
   // Calculate contrast value from intensity (0-1 maps to 1-50)
-  // Higher intensity = more contrast = sharper halftone dots
+  // Higher intensity = more contrast = sharper halftone effect
   const contrastValue = 1 + intensity * 49;
 
-  // Calculate dot radius (soft edge for gradient)
-  const dotRadius = dotSize / 2;
-  const softEdge = dotRadius * 0.8; // Slightly smaller hard center
+  // Generate pattern based on type
+  const patternGradient = getPatternGradient(patternType, dotSize, softness, spacing, fgColor, bgColor);
+
+  // For rays and ripples, we don't need to tile - they fill the space
+  // For dots and lines, we need background-size for tiling
+  const needsTiling = patternType === 'dots' || patternType === 'lines';
 
   return {
     containerStyle: {
       position: 'relative' as const,
       filter: `contrast(${contrastValue})`,
-      backgroundColor: backgroundColor,
+      backgroundColor: bgColor,
       overflow: 'hidden',
     },
     overlayStyle: {
@@ -208,12 +273,13 @@ export function getHalftoneStyles(effect: HalftoneEffect): {
       left: '-50%',
       width: '200%',
       height: '200%',
-      // Use non-shorthand properties to avoid React warning about mixing shorthand/non-shorthand
-      backgroundImage: `radial-gradient(circle at center, ${dotColor} ${softEdge}px, ${backgroundColor} ${dotRadius}px)`,
-      backgroundSize: `${spacing}px ${spacing}px`,
-      backgroundRepeat: 'repeat',
+      backgroundImage: patternGradient,
+      ...(needsTiling && {
+        backgroundSize: `${spacing}px ${spacing}px`,
+        backgroundRepeat: 'repeat',
+      }),
       transform: `rotate(${angle}deg)`,
-      mixBlendMode: 'multiply' as const,
+      mixBlendMode: blendMode,
       pointerEvents: 'none' as const,
     },
   };

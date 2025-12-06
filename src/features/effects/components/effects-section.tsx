@@ -17,9 +17,21 @@ import type {
   GlitchEffect,
   GlitchVariant,
   HalftoneEffect,
+  HalftonePatternType,
+  HalftoneBlendMode,
   VignetteEffect,
 } from '@/types/effects';
-import { CSS_FILTER_CONFIGS, GLITCH_CONFIGS, EFFECT_PRESETS, HALFTONE_CONFIG, CANVAS_EFFECT_CONFIGS, VIGNETTE_CONFIG, OVERLAY_EFFECT_CONFIGS } from '@/types/effects';
+import {
+  CSS_FILTER_CONFIGS,
+  GLITCH_CONFIGS,
+  EFFECT_PRESETS,
+  HALFTONE_CONFIG,
+  HALFTONE_PATTERN_LABELS,
+  HALFTONE_BLEND_MODE_LABELS,
+  CANVAS_EFFECT_CONFIGS,
+  VIGNETTE_CONFIG,
+  OVERLAY_EFFECT_CONFIGS,
+} from '@/types/effects';
 import { useTimelineStore } from '@/features/timeline/stores/timeline-store';
 import { useGizmoStore } from '@/features/preview/stores/gizmo-store';
 import {
@@ -169,10 +181,14 @@ export const EffectsSection = memo(function EffectsSection({ items }: EffectsSec
       addEffect(id, {
         type: 'canvas-effect',
         variant: 'halftone',
+        patternType: HALFTONE_CONFIG.patternType.default,
         dotSize: HALFTONE_CONFIG.dotSize.default,
         spacing: HALFTONE_CONFIG.spacing.default,
         angle: HALFTONE_CONFIG.angle.default,
         intensity: HALFTONE_CONFIG.intensity.default,
+        softness: HALFTONE_CONFIG.softness.default,
+        blendMode: HALFTONE_CONFIG.blendMode.default,
+        inverted: HALFTONE_CONFIG.inverted.default,
         backgroundColor: '#ffffff',
         dotColor: '#000000',
       } as HalftoneEffect);
@@ -234,7 +250,7 @@ export const EffectsSection = memo(function EffectsSection({ items }: EffectsSec
 
   // Update halftone effect property
   const handleHalftoneChange = useCallback(
-    (effectId: string, property: keyof HalftoneEffect, newValue: number | string) => {
+    (effectId: string, property: keyof HalftoneEffect, newValue: number | string | boolean) => {
       const effect = effects.find((e) => e.id === effectId);
       if (!effect || effect.effect.type !== 'canvas-effect') return;
 
@@ -276,7 +292,7 @@ export const EffectsSection = memo(function EffectsSection({ items }: EffectsSec
 
   // Live preview for halftone properties
   const handleHalftoneLiveChange = useCallback(
-    (effectId: string, property: keyof HalftoneEffect, newValue: number | string) => {
+    (effectId: string, property: keyof HalftoneEffect, newValue: number | string | boolean) => {
       const effect = effects.find((e) => e.id === effectId);
       if (!effect || effect.effect.type !== 'canvas-effect') return;
 
@@ -423,8 +439,11 @@ export const EffectsSection = memo(function EffectsSection({ items }: EffectsSec
       const effect = effects.find((e) => e.id === effectId);
       if (!effect || effect.effect.type !== 'canvas-effect') return;
 
-      let defaultValue: number | string;
+      let defaultValue: number | string | boolean;
       switch (property) {
+        case 'patternType':
+          defaultValue = HALFTONE_CONFIG.patternType.default;
+          break;
         case 'dotSize':
           defaultValue = HALFTONE_CONFIG.dotSize.default;
           break;
@@ -436,6 +455,15 @@ export const EffectsSection = memo(function EffectsSection({ items }: EffectsSec
           break;
         case 'intensity':
           defaultValue = HALFTONE_CONFIG.intensity.default;
+          break;
+        case 'softness':
+          defaultValue = HALFTONE_CONFIG.softness.default;
+          break;
+        case 'blendMode':
+          defaultValue = HALFTONE_CONFIG.blendMode.default;
+          break;
+        case 'inverted':
+          defaultValue = HALFTONE_CONFIG.inverted.default;
           break;
         case 'dotColor':
           defaultValue = '#000000';
@@ -727,6 +755,10 @@ export const EffectsSection = memo(function EffectsSection({ items }: EffectsSec
 
         if (effect.effect.type === 'canvas-effect' && effect.effect.variant === 'halftone') {
           const halftone = effect.effect as HalftoneEffect;
+          const patternType = halftone.patternType ?? 'dots';
+          const softness = halftone.softness ?? HALFTONE_CONFIG.softness.default;
+          const blendMode = halftone.blendMode ?? 'multiply';
+          const inverted = halftone.inverted ?? false;
           return (
             <div key={effect.id} className="border-b border-border/50 pb-2 mb-2">
               {/* Header row with toggle and delete */}
@@ -757,7 +789,45 @@ export const EffectsSection = memo(function EffectsSection({ items }: EffectsSec
                 </div>
               </PropertyRow>
 
-              {/* Dot Size */}
+              {/* Pattern Type */}
+              <PropertyRow label={HALFTONE_CONFIG.patternType.label}>
+                <div className="flex items-center gap-1 min-w-0">
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 flex-1 min-w-0 justify-between text-xs"
+                        disabled={!effect.enabled}
+                      >
+                        <span className="truncate">{HALFTONE_PATTERN_LABELS[patternType]}</span>
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-32">
+                      {(Object.keys(HALFTONE_PATTERN_LABELS) as HalftonePatternType[]).map((type) => (
+                        <DropdownMenuItem
+                          key={type}
+                          onClick={() => handleHalftoneChange(effect.id, 'patternType', type)}
+                        >
+                          {HALFTONE_PATTERN_LABELS[type]}
+                        </DropdownMenuItem>
+                      ))}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className={`h-6 w-6 flex-shrink-0 ${patternType === HALFTONE_CONFIG.patternType.default ? 'opacity-30' : ''}`}
+                    onClick={() => handleResetHalftone(effect.id, 'patternType')}
+                    title="Reset to default"
+                    disabled={patternType === HALFTONE_CONFIG.patternType.default}
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                  </Button>
+                </div>
+              </PropertyRow>
+
+              {/* Size (renamed from Dot Size for clarity with other patterns) */}
               <PropertyRow label={HALFTONE_CONFIG.dotSize.label}>
                 <div className="flex items-center gap-1 min-w-0">
                   <NumberInput
@@ -865,11 +935,101 @@ export const EffectsSection = memo(function EffectsSection({ items }: EffectsSec
                 </div>
               </PropertyRow>
 
+              {/* Softness */}
+              <PropertyRow label={HALFTONE_CONFIG.softness.label}>
+                <div className="flex items-center gap-1 min-w-0">
+                  <NumberInput
+                    value={Math.round(softness * 100)}
+                    onChange={(v) => handleHalftoneChange(effect.id, 'softness', v / 100)}
+                    onLiveChange={(v) => handleHalftoneLiveChange(effect.id, 'softness', v / 100)}
+                    min={0}
+                    max={100}
+                    step={1}
+                    unit="%"
+                    disabled={!effect.enabled}
+                    className="flex-1 min-w-0"
+                  />
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className={`h-6 w-6 flex-shrink-0 ${softness === HALFTONE_CONFIG.softness.default ? 'opacity-30' : ''}`}
+                    onClick={() => handleResetHalftone(effect.id, 'softness')}
+                    title="Reset to default"
+                    disabled={softness === HALFTONE_CONFIG.softness.default}
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                  </Button>
+                </div>
+              </PropertyRow>
+
+              {/* Blend Mode */}
+              <PropertyRow label={HALFTONE_CONFIG.blendMode.label}>
+                <div className="flex items-center gap-1 min-w-0">
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 flex-1 min-w-0 justify-between text-xs"
+                        disabled={!effect.enabled}
+                      >
+                        <span className="truncate">{HALFTONE_BLEND_MODE_LABELS[blendMode]}</span>
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-32">
+                      {(Object.keys(HALFTONE_BLEND_MODE_LABELS) as HalftoneBlendMode[]).map((mode) => (
+                        <DropdownMenuItem
+                          key={mode}
+                          onClick={() => handleHalftoneChange(effect.id, 'blendMode', mode)}
+                        >
+                          {HALFTONE_BLEND_MODE_LABELS[mode]}
+                        </DropdownMenuItem>
+                      ))}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className={`h-6 w-6 flex-shrink-0 ${blendMode === HALFTONE_CONFIG.blendMode.default ? 'opacity-30' : ''}`}
+                    onClick={() => handleResetHalftone(effect.id, 'blendMode')}
+                    title="Reset to default"
+                    disabled={blendMode === HALFTONE_CONFIG.blendMode.default}
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                  </Button>
+                </div>
+              </PropertyRow>
+
+              {/* Inverted toggle */}
+              <PropertyRow label={HALFTONE_CONFIG.inverted.label}>
+                <div className="flex items-center gap-1 min-w-0">
+                  <Button
+                    variant={inverted ? 'default' : 'outline'}
+                    size="sm"
+                    className="h-7 flex-1 min-w-0 text-xs"
+                    onClick={() => handleHalftoneChange(effect.id, 'inverted', !inverted)}
+                    disabled={!effect.enabled}
+                  >
+                    {inverted ? 'On' : 'Off'}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className={`h-6 w-6 flex-shrink-0 ${inverted === HALFTONE_CONFIG.inverted.default ? 'opacity-30' : ''}`}
+                    onClick={() => handleResetHalftone(effect.id, 'inverted')}
+                    title="Reset to default"
+                    disabled={inverted === HALFTONE_CONFIG.inverted.default}
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                  </Button>
+                </div>
+              </PropertyRow>
+
               {/* Colors */}
               <PropertyRow label="Colors">
                 <div className="flex items-center gap-2">
                   <EffectColorPicker
-                    label="Dot"
+                    label="Fg"
                     color={halftone.dotColor}
                     onChange={(c) => handleHalftoneChange(effect.id, 'dotColor', c)}
                     onLiveChange={(c) => handleHalftoneLiveChange(effect.id, 'dotColor', c)}
@@ -880,7 +1040,7 @@ export const EffectsSection = memo(function EffectsSection({ items }: EffectsSec
                     size="icon"
                     className={`h-6 w-6 flex-shrink-0 ${halftone.dotColor === '#000000' ? 'opacity-30' : ''}`}
                     onClick={() => handleResetHalftone(effect.id, 'dotColor')}
-                    title="Reset dot color"
+                    title="Reset foreground color"
                     disabled={halftone.dotColor === '#000000'}
                   >
                     <RotateCcw className="w-3 h-3" />

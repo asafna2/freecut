@@ -15,6 +15,12 @@ export type GlitchVariant = 'rgb-split' | 'scanlines' | 'color-glitch';
 // Canvas-based effect variants (require pixel-level processing)
 export type CanvasEffectVariant = 'halftone';
 
+// Halftone pattern types
+export type HalftonePatternType = 'dots' | 'lines' | 'rays' | 'ripples';
+
+// Halftone blend modes
+export type HalftoneBlendMode = 'multiply' | 'screen' | 'overlay' | 'soft-light';
+
 // Overlay effect variants (CSS-based overlays)
 export type OverlayEffectVariant = 'vignette';
 
@@ -34,16 +40,20 @@ export interface GlitchEffect {
   seed: number; // Random seed for deterministic rendering during export
 }
 
-// Halftone effect configuration (canvas-based luminance dot pattern)
+// Halftone effect configuration (CSS-based pattern effect)
 export interface HalftoneEffect {
   type: 'canvas-effect';
   variant: 'halftone';
-  dotSize: number; // Base dot size in pixels (2-20)
-  spacing: number; // Dot spacing in pixels (4-40)
-  angle: number; // Grid rotation in degrees (0-90)
-  intensity: number; // Effect strength 0-1
+  patternType: HalftonePatternType; // Pattern style: dots, lines, rays, ripples
+  dotSize: number; // Base dot/line size in pixels (2-20)
+  spacing: number; // Pattern spacing in pixels (4-40)
+  angle: number; // Grid rotation in degrees (0-360)
+  intensity: number; // Effect strength 0-1 (controls contrast)
+  softness: number; // Edge softness 0-1 (0 = sharp, 1 = fuzzy)
+  blendMode: HalftoneBlendMode; // How pattern blends with content
+  inverted: boolean; // Swap foreground/background
   backgroundColor: string; // Background color hex
-  dotColor: string; // Dot color hex
+  dotColor: string; // Foreground/dot color hex
 }
 
 // Vignette effect configuration (CSS radial gradient overlay)
@@ -96,12 +106,32 @@ export const GLITCH_CONFIGS: Record<GlitchVariant, { label: string; description:
   'color-glitch': { label: 'Color Glitch', description: 'Random hue shifts' },
 };
 
+// Halftone pattern type labels
+export const HALFTONE_PATTERN_LABELS: Record<HalftonePatternType, string> = {
+  dots: 'Dots',
+  lines: 'Lines',
+  rays: 'Rays',
+  ripples: 'Ripples',
+};
+
+// Halftone blend mode labels
+export const HALFTONE_BLEND_MODE_LABELS: Record<HalftoneBlendMode, string> = {
+  multiply: 'Multiply',
+  screen: 'Screen',
+  overlay: 'Overlay',
+  'soft-light': 'Soft Light',
+};
+
 // Halftone effect configuration metadata
 export const HALFTONE_CONFIG = {
-  dotSize: { label: 'Dot Size', min: 2, max: 20, default: 6, step: 1, unit: 'px' },
+  patternType: { label: 'Pattern', default: 'dots' as HalftonePatternType },
+  dotSize: { label: 'Size', min: 2, max: 20, default: 6, step: 1, unit: 'px' },
   spacing: { label: 'Spacing', min: 4, max: 40, default: 8, step: 1, unit: 'px' },
-  angle: { label: 'Angle', min: 0, max: 90, default: 45, step: 1, unit: '°' },
+  angle: { label: 'Angle', min: 0, max: 360, default: 45, step: 1, unit: '°' },
   intensity: { label: 'Intensity', min: 0, max: 1, default: 1, step: 0.01, unit: '' },
+  softness: { label: 'Softness', min: 0, max: 1, default: 0.2, step: 0.01, unit: '' },
+  blendMode: { label: 'Blend', default: 'multiply' as HalftoneBlendMode },
+  inverted: { label: 'Inverted', default: false },
 };
 
 // Canvas effect configuration metadata

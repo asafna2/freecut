@@ -16,7 +16,10 @@
       "WebSearch",
       "Bash(grep:*)",
       "Bash(E:)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "WebFetch(domain:css-irl.info)",
+      "WebFetch(domain:leanrada.com)",
+      "WebFetch(domain:frontendmasters.com)"
     ],
     "deny": [],
     "ask": []

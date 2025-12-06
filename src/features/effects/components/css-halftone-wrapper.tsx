@@ -30,10 +30,14 @@ export const CSSHalftoneWrapper: React.FC<CSSHalftoneWrapperProps> = ({
   const defaultEffect: HalftoneEffect = {
     type: 'canvas-effect',
     variant: 'halftone',
+    patternType: 'dots',
     dotSize: 8,
     spacing: 10,
     angle: 45,
     intensity: 1,
+    softness: 0.2,
+    blendMode: 'multiply',
+    inverted: false,
     backgroundColor: '#ffffff',
     dotColor: '#000000',
   };
