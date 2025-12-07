@@ -2,12 +2,14 @@ import type { TimelineTrack, TimelineItem, ProjectMarker } from '@/types/timelin
 import type { TransformProperties } from '@/types/transform';
 import type { VisualEffect } from '@/types/effects';
 import type { Transition, TransitionType, TransitionPresentation, WipeDirection, SlideDirection, FlipDirection } from '@/types/transition';
+import type { ItemKeyframes, AnimatableProperty, Keyframe, EasingType } from '@/types/keyframe';
 
 export interface TimelineState {
   tracks: TimelineTrack[];
   items: TimelineItem[];
   markers: ProjectMarker[];
   transitions: Transition[];
+  keyframes: ItemKeyframes[];
   fps: number;
   scrollPosition: number;
   snapEnabled: boolean;
@@ -56,6 +58,14 @@ export interface TimelineActions {
   addTransition: (leftClipId: string, rightClipId: string, type?: TransitionType, durationInFrames?: number, presentation?: TransitionPresentation, direction?: WipeDirection | SlideDirection | FlipDirection) => boolean;
   updateTransition: (id: string, updates: Partial<Pick<Transition, 'durationInFrames' | 'type' | 'presentation' | 'direction' | 'timing'>>) => void;
   removeTransition: (id: string) => void;
+  // Keyframe actions
+  addKeyframe: (itemId: string, property: AnimatableProperty, frame: number, value: number, easing?: EasingType) => string;
+  updateKeyframe: (itemId: string, property: AnimatableProperty, keyframeId: string, updates: Partial<Omit<Keyframe, 'id'>>) => void;
+  removeKeyframe: (itemId: string, property: AnimatableProperty, keyframeId: string) => void;
+  removeKeyframesForItem: (itemId: string) => void;
+  removeKeyframesForProperty: (itemId: string, property: AnimatableProperty) => void;
+  getKeyframesForItem: (itemId: string) => ItemKeyframes | undefined;
+  hasKeyframesAtFrame: (itemId: string, property: AnimatableProperty, frame: number) => boolean;
   saveTimeline: (projectId: string) => Promise<void>;
   loadTimeline: (projectId: string) => Promise<void>;
   clearTimeline: () => void;

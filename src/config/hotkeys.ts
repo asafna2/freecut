@@ -65,6 +65,9 @@ export const HOTKEYS = {
   ADD_MARKER: 'm',
   PREVIOUS_MARKER: '[',
   NEXT_MARKER: ']',
+
+  // Keyframes
+  ADD_KEYFRAME: 'k',
 } as const;
 
 export type HotkeyKey = keyof typeof HOTKEYS;
@@ -133,6 +136,9 @@ export const HOTKEY_DESCRIPTIONS: Record<HotkeyKey, string> = {
   ADD_MARKER: 'Add marker at playhead',
   PREVIOUS_MARKER: 'Jump to previous marker',
   NEXT_MARKER: 'Jump to next marker',
+
+  // Keyframes
+  ADD_KEYFRAME: 'Add keyframe at playhead',
 };
 
 /**

@@ -36,6 +36,8 @@ export interface SelectionState {
     activeSnapTarget?: { frame: number; type: 'grid' | 'item-start' | 'item-end' | 'playhead'; itemId?: string } | null;
     isAltDrag?: boolean; // Whether Alt key is held (triggers duplication)
   } | null;
+  // Keyframe lanes expansion state
+  expandedKeyframeLanes: Set<string>; // Set of item IDs with expanded keyframe lanes
 }
 
 export interface SelectionActions {
@@ -50,4 +52,7 @@ export interface SelectionActions {
   clearItemSelection: () => void; // Clears only items, preserves track selection
   setDragState: (dragState: SelectionState['dragState']) => void;
   setActiveTool: (tool: SelectionState['activeTool']) => void;
+  // Keyframe lanes expansion
+  toggleKeyframeLanes: (itemId: string) => void;
+  setKeyframeLanesExpanded: (itemId: string, expanded: boolean) => void;
 }

@@ -2,10 +2,7 @@ import { useMemo, useCallback, useEffect } from 'react';
 import type { TimelineItem } from '@/types/timeline';
 import type { GizmoHandle, Transform, CoordinateParams } from '../types/gizmo';
 import { useGizmoStore } from '../stores/gizmo-store';
-import {
-  resolveTransform,
-  getSourceDimensions,
-} from '@/lib/remotion/utils/transform-resolver';
+import { useAnimatedTransform } from '@/features/keyframes/hooks/use-animated-transform';
 import {
   transformToScreenBounds,
   screenToCanvas,
@@ -52,6 +49,9 @@ export function TransformGizmo({
 
   const isInteracting = activeGizmo?.itemId === item.id;
 
+  // Get animated transform using centralized hook
+  const { transform: animatedTransform } = useAnimatedTransform(item, coordParams.projectSize);
+
   // Get current transform (use preview during interaction, or properties panel preview)
   const currentTransform = useMemo((): Transform => {
     // If gizmo is being dragged, use its preview
@@ -59,22 +59,14 @@ export function TransformGizmo({
       return previewTransform;
     }
 
-    // Resolve base transform from item
-    const sourceDimensions = getSourceDimensions(item);
-    const resolved = resolveTransform(
-      item,
-      { width: coordParams.projectSize.width, height: coordParams.projectSize.height, fps: 30 },
-      sourceDimensions
-    );
-
     const baseTransform: Transform = {
-      x: resolved.x,
-      y: resolved.y,
-      width: resolved.width,
-      height: resolved.height,
-      rotation: resolved.rotation,
-      opacity: resolved.opacity,
-      cornerRadius: resolved.cornerRadius,
+      x: animatedTransform.x,
+      y: animatedTransform.y,
+      width: animatedTransform.width,
+      height: animatedTransform.height,
+      rotation: animatedTransform.rotation,
+      opacity: animatedTransform.opacity,
+      cornerRadius: animatedTransform.cornerRadius,
     };
 
     // If properties panel is previewing this item, merge its values
@@ -84,7 +76,7 @@ export function TransformGizmo({
     }
 
     return baseTransform;
-  }, [item, coordParams, isInteracting, previewTransform, propertiesPreview]);
+  }, [animatedTransform, isInteracting, previewTransform, propertiesPreview, item.id]);
 
   // Convert to screen bounds, expanding for stroke width on shapes
   const screenBounds = useMemo(() => {

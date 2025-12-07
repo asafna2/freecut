@@ -23,7 +23,7 @@ import { TRANSITION_CONFIGS } from '@/types/transition';
 import { cn } from '@/lib/utils';
 import { ClipFilmstrip } from '../clip-filmstrip';
 import { ClipWaveform } from '../clip-waveform';
-import { Link2Off, X } from 'lucide-react';
+import { Link2Off, X, Diamond } from 'lucide-react';
 import {
   CLIP_HEIGHT,
   CLIP_LABEL_HEIGHT,
@@ -72,6 +72,17 @@ export const TimelineItem = memo(function TimelineItem({ item, timelineDuration 
     useCallback(
       (s) => (item.mediaId ? s.brokenMediaIds.includes(item.mediaId) : false),
       [item.mediaId]
+    )
+  );
+
+  // Granular selector: check if this item has keyframes
+  const hasKeyframes = useTimelineStore(
+    useCallback(
+      (s) => {
+        const itemKeyframes = s.keyframes.find((k) => k.itemId === item.id);
+        return itemKeyframes ? itemKeyframes.properties.some((p) => p.keyframes.length > 0) : false;
+      },
+      [item.id]
     )
   );
 
@@ -607,6 +618,16 @@ export const TimelineItem = memo(function TimelineItem({ item, timelineDuration 
         <div
           className="absolute inset-0 rounded pointer-events-none z-20 ring-2 ring-inset ring-primary"
         />
+      )}
+
+      {/* Keyframe indicator - shows when item has keyframe animations */}
+      {hasKeyframes && (
+        <div
+          className="absolute top-1 right-1 z-10 pointer-events-none"
+          title="Has keyframe animations"
+        >
+          <Diamond className="w-3 h-3 text-amber-500 fill-amber-500/50" />
+        </div>
       )}
 
       {/* Video clip 2-row layout: filmstrip (with overlayed label) | waveform */}

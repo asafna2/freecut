@@ -1,10 +1,7 @@
 import { useMemo, useState, useCallback } from 'react';
 import type { TimelineItem } from '@/types/timeline';
 import type { CoordinateParams, Transform } from '../types/gizmo';
-import {
-  resolveTransform,
-  getSourceDimensions,
-} from '@/lib/remotion/utils/transform-resolver';
+import { useAnimatedTransform } from '@/features/keyframes/hooks/use-animated-transform';
 import { transformToScreenBounds } from '../utils/coordinate-transform';
 
 interface SelectableItemProps {
@@ -30,25 +27,21 @@ export function SelectableItem({
 }: SelectableItemProps) {
   const [isHovered, setIsHovered] = useState(false);
 
-  // Resolve item transform to canvas coordinates
-  const currentTransform = useMemo((): Transform => {
-    const sourceDimensions = getSourceDimensions(item);
-    const resolved = resolveTransform(
-      item,
-      { width: coordParams.projectSize.width, height: coordParams.projectSize.height, fps: 30 },
-      sourceDimensions
-    );
+  // Get animated transform using centralized hook
+  const { transform: animatedTransform } = useAnimatedTransform(item, coordParams.projectSize);
 
+  // Convert to Transform type for gizmo system
+  const currentTransform = useMemo((): Transform => {
     return {
-      x: resolved.x,
-      y: resolved.y,
-      width: resolved.width,
-      height: resolved.height,
-      rotation: resolved.rotation,
-      opacity: resolved.opacity,
-      cornerRadius: resolved.cornerRadius,
+      x: animatedTransform.x,
+      y: animatedTransform.y,
+      width: animatedTransform.width,
+      height: animatedTransform.height,
+      rotation: animatedTransform.rotation,
+      opacity: animatedTransform.opacity,
+      cornerRadius: animatedTransform.cornerRadius,
     };
-  }, [item, coordParams]);
+  }, [animatedTransform]);
 
   // Convert to screen bounds for positioning, expanding for stroke width on shapes
   const screenBounds = useMemo(() => {

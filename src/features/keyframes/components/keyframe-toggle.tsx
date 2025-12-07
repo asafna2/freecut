@@ -1,0 +1,258 @@
+/**
+ * Keyframe toggle button component.
+ * Diamond-shaped button that appears next to animatable properties.
+ * - Hollow diamond: No keyframe at current frame (click to add)
+ * - Filled diamond: Keyframe exists at current frame (click to remove)
+ */
+
+import { useCallback, useMemo } from 'react';
+import { Diamond } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { useTimelineStore } from '@/features/timeline/stores/timeline-store';
+import { usePlaybackStore } from '@/features/preview/stores/playback-store';
+import type { AnimatableProperty } from '@/types/keyframe';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
+
+interface KeyframeToggleProps {
+  /** The item ID(s) to toggle keyframes for */
+  itemIds: string[];
+  /** The property to animate */
+  property: AnimatableProperty;
+  /** Current value of the property (used when adding keyframe) */
+  currentValue: number;
+  /** Optional class name for the button */
+  className?: string;
+  /** Disabled state */
+  disabled?: boolean;
+}
+
+/**
+ * Keyframe toggle button for property panels.
+ * Adds or removes a keyframe at the current playhead position.
+ */
+export function KeyframeToggle({
+  itemIds,
+  property,
+  currentValue,
+  className,
+  disabled = false,
+}: KeyframeToggleProps) {
+  // Get current frame from playback store
+  const currentFrame = usePlaybackStore((s) => s.currentFrame);
+
+  // Get keyframes for the first item (for multi-select, we show state of first item)
+  const firstItemId = itemIds[0];
+  const itemKeyframes = useTimelineStore(
+    useCallback(
+      (s) => (firstItemId ? s.keyframes.find((k) => k.itemId === firstItemId) : undefined),
+      [firstItemId]
+    )
+  );
+
+  // Get store actions
+  const addKeyframe = useTimelineStore((s) => s.addKeyframe);
+  const removeKeyframe = useTimelineStore((s) => s.removeKeyframe);
+
+  // Get the first item to calculate relative frame
+  const firstItem = useTimelineStore(
+    useCallback(
+      (s) => (firstItemId ? s.items.find((i) => i.id === firstItemId) : undefined),
+      [firstItemId]
+    )
+  );
+
+  // Calculate frame relative to item start
+  const relativeFrame = useMemo(() => {
+    if (!firstItem) return 0;
+    return currentFrame - firstItem.from;
+  }, [currentFrame, firstItem]);
+
+  // Check if keyframe exists at current frame
+  const keyframeAtFrame = useMemo(() => {
+    if (!itemKeyframes) return undefined;
+    const propKeyframes = itemKeyframes.properties.find((p) => p.property === property);
+    if (!propKeyframes) return undefined;
+    return propKeyframes.keyframes.find((k) => k.frame === relativeFrame);
+  }, [itemKeyframes, property, relativeFrame]);
+
+  const hasKeyframe = keyframeAtFrame !== undefined;
+
+  // Check if property has any keyframes at all
+  const hasAnyKeyframes = useMemo(() => {
+    if (!itemKeyframes) return false;
+    const propKeyframes = itemKeyframes.properties.find((p) => p.property === property);
+    return propKeyframes ? propKeyframes.keyframes.length > 0 : false;
+  }, [itemKeyframes, property]);
+
+  // Handle toggle click
+  const handleToggle = useCallback(() => {
+    if (disabled || !firstItemId || relativeFrame < 0) return;
+
+    if (hasKeyframe && keyframeAtFrame) {
+      // Remove keyframe
+      removeKeyframe(firstItemId, property, keyframeAtFrame.id);
+    } else {
+      // Add keyframe at current frame with current value
+      addKeyframe(firstItemId, property, relativeFrame, currentValue);
+    }
+  }, [
+    disabled,
+    firstItemId,
+    relativeFrame,
+    hasKeyframe,
+    keyframeAtFrame,
+    removeKeyframe,
+    addKeyframe,
+    property,
+    currentValue,
+  ]);
+
+  // Don't render if outside item bounds
+  if (!firstItem || relativeFrame < 0 || relativeFrame > firstItem.durationInFrames) {
+    return null;
+  }
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          onClick={handleToggle}
+          disabled={disabled}
+          className={cn(
+            'flex items-center justify-center w-5 h-5 rounded-sm transition-colors',
+            'hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
+            disabled && 'opacity-50 cursor-not-allowed',
+            hasKeyframe && 'text-amber-500',
+            !hasKeyframe && hasAnyKeyframes && 'text-amber-500/50',
+            !hasKeyframe && !hasAnyKeyframes && 'text-muted-foreground',
+            className
+          )}
+          aria-label={hasKeyframe ? 'Remove keyframe' : 'Add keyframe'}
+        >
+          <Diamond
+            className={cn(
+              'w-3 h-3 rotate-0 transition-transform',
+              hasKeyframe && 'fill-current'
+            )}
+          />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="top" className="text-xs">
+        {hasKeyframe ? (
+          <>Remove keyframe at frame {relativeFrame}</>
+        ) : (
+          <>Add keyframe at frame {relativeFrame}</>
+        )}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+/**
+ * Keyframe navigation buttons for jumping between keyframes.
+ */
+interface KeyframeNavProps {
+  itemIds: string[];
+  property: AnimatableProperty;
+  className?: string;
+}
+
+export function KeyframeNav({ itemIds, property, className }: KeyframeNavProps) {
+  const currentFrame = usePlaybackStore((s) => s.currentFrame);
+  const setCurrentFrame = usePlaybackStore((s) => s.setCurrentFrame);
+
+  const firstItemId = itemIds[0];
+  const itemKeyframes = useTimelineStore(
+    useCallback(
+      (s) => (firstItemId ? s.keyframes.find((k) => k.itemId === firstItemId) : undefined),
+      [firstItemId]
+    )
+  );
+
+  const firstItem = useTimelineStore(
+    useCallback(
+      (s) => (firstItemId ? s.items.find((i) => i.id === firstItemId) : undefined),
+      [firstItemId]
+    )
+  );
+
+  // Get sorted keyframes for this property
+  const keyframes = useMemo(() => {
+    if (!itemKeyframes) return [];
+    const propKeyframes = itemKeyframes.properties.find((p) => p.property === property);
+    return propKeyframes?.keyframes ?? [];
+  }, [itemKeyframes, property]);
+
+  // Calculate relative frame
+  const relativeFrame = useMemo(() => {
+    if (!firstItem) return 0;
+    return currentFrame - firstItem.from;
+  }, [currentFrame, firstItem]);
+
+  // Find previous and next keyframes
+  const { prevKeyframe, nextKeyframe } = useMemo(() => {
+    let prev: typeof keyframes[0] | undefined;
+    let next: typeof keyframes[0] | undefined;
+
+    for (const kf of keyframes) {
+      if (kf.frame < relativeFrame) {
+        prev = kf;
+      } else if (kf.frame > relativeFrame && !next) {
+        next = kf;
+        break;
+      }
+    }
+
+    return { prevKeyframe: prev, nextKeyframe: next };
+  }, [keyframes, relativeFrame]);
+
+  const goToPrevious = useCallback(() => {
+    if (prevKeyframe && firstItem) {
+      setCurrentFrame(firstItem.from + prevKeyframe.frame);
+    }
+  }, [prevKeyframe, firstItem, setCurrentFrame]);
+
+  const goToNext = useCallback(() => {
+    if (nextKeyframe && firstItem) {
+      setCurrentFrame(firstItem.from + nextKeyframe.frame);
+    }
+  }, [nextKeyframe, firstItem, setCurrentFrame]);
+
+  if (keyframes.length === 0) return null;
+
+  return (
+    <div className={cn('flex items-center gap-0.5', className)}>
+      <button
+        type="button"
+        onClick={goToPrevious}
+        disabled={!prevKeyframe}
+        className={cn(
+          'flex items-center justify-center w-4 h-4 rounded-sm transition-colors',
+          'hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
+          !prevKeyframe && 'opacity-30 cursor-not-allowed'
+        )}
+        aria-label="Previous keyframe"
+      >
+        <span className="text-[10px]">{'<'}</span>
+      </button>
+      <button
+        type="button"
+        onClick={goToNext}
+        disabled={!nextKeyframe}
+        className={cn(
+          'flex items-center justify-center w-4 h-4 rounded-sm transition-colors',
+          'hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
+          !nextKeyframe && 'opacity-30 cursor-not-allowed'
+        )}
+        aria-label="Next keyframe"
+      >
+        <span className="text-[10px]">{'>'}</span>
+      </button>
+    </div>
+  );
+}

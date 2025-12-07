@@ -11,7 +11,9 @@ import { SelectableItem } from './selectable-item';
 import { SnapGuides } from './snap-guides';
 import { screenToCanvas, transformToScreenBounds } from '../utils/coordinate-transform';
 import { useMarqueeSelection, isMarqueeJustFinished, type Rect } from '@/hooks/use-marquee-selection';
-import { resolveTransform, getSourceDimensions } from '@/lib/remotion/utils/transform-resolver';
+import { useAnimatedTransforms } from '@/features/keyframes/hooks/use-animated-transform';
+import { autoKeyframeProperty, GIZMO_ANIMATABLE_PROPS } from '@/features/keyframes/utils/auto-keyframe';
+import type { AnimatableProperty } from '@/types/keyframe';
 import type { CoordinateParams, Transform, Point } from '../types/gizmo';
 import type { TransformProperties } from '@/types/transform';
 import type { TimelineItem } from '@/types/timeline';
@@ -62,8 +64,11 @@ export function GizmoOverlay({
     )
   );
   const tracks = useTimelineStore((s) => s.tracks);
+  const keyframes = useTimelineStore((s) => s.keyframes);
   const updateItemTransform = useTimelineStore((s) => s.updateItemTransform);
   const updateItemsTransformMap = useTimelineStore((s) => s.updateItemsTransformMap);
+  const addKeyframe = useTimelineStore((s) => s.addKeyframe);
+  const updateKeyframe = useTimelineStore((s) => s.updateKeyframe);
 
   // Ref to track if we just finished a drag (to prevent background click from deselecting)
   const justFinishedDragRef = useRef(false);
@@ -193,15 +198,18 @@ export function GizmoOverlay({
     };
   }, [containerRect, playerSize, projectSize, zoom]);
 
+  // Get animated transforms for all visible items using centralized hook
+  const animatedTransformsMap = useAnimatedTransforms(visibleItems, projectSize);
 
   // Create marquee items with pre-computed bounding rects for collision detection
   // Rects are calculated once when items/coords change, not on every mouse move
   const marqueeItems = useMemo(() => {
     if (!coordParams || !containerRect) return [];
     return visibleItems.map((item) => {
-      // Pre-compute the bounding rect
-      const sourceDims = getSourceDimensions(item);
-      const resolved = resolveTransform(item, { ...projectSize, fps: 30 }, sourceDims);
+      // Get pre-computed animated transform from the hook
+      const resolved = animatedTransformsMap.get(item.id);
+      if (!resolved) return { id: item.id, getBoundingRect: () => ({ left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 }) };
+
       const screenBounds = transformToScreenBounds(
         {
           x: resolved.x,
@@ -227,7 +235,7 @@ export function GizmoOverlay({
         getBoundingRect: () => rect,
       };
     });
-  }, [visibleItems, coordParams, projectSize, containerRect]);
+  }, [visibleItems, coordParams, containerRect, animatedTransformsMap]);
 
   // Marquee selection hook
   // Use hitAreaRef for bounds checking (fills container), overlayRef for coordinate display
@@ -251,32 +259,66 @@ export function GizmoOverlay({
     // Optionally: could pause playback here
   }, []);
 
-  // Handle transform end - commit the transform to the timeline
+  // Handle transform end - commit the transform to the timeline with auto-keyframing
   const handleTransformEnd = useCallback(
     (itemId: string, transform: Transform) => {
-      // Convert gizmo transform to TransformProperties
-      // Include cornerRadius to preserve it during transform operations
-      const transformProps: Partial<TransformProperties> = {
+      const currentFrame = usePlaybackStore.getState().currentFrame;
+      const item = visualItems.find((i) => i.id === itemId);
+      if (!item) return;
+
+      const itemKeyframes = keyframes.find((k) => k.itemId === itemId);
+
+      // Map of property to value for gizmo-animatable properties
+      const propValues: Record<AnimatableProperty, number> = {
         x: transform.x,
         y: transform.y,
         width: transform.width,
         height: transform.height,
         rotation: transform.rotation,
         opacity: transform.opacity,
-        cornerRadius: transform.cornerRadius,
       };
 
-      updateItemTransform(itemId, transformProps);
+      // Track which properties were auto-keyframed
+      const autoKeyframedProps = new Set<AnimatableProperty>();
+
+      // Auto-keyframe properties that have existing keyframes
+      for (const prop of GIZMO_ANIMATABLE_PROPS) {
+        const wasAutoKeyframed = autoKeyframeProperty(
+          item,
+          itemKeyframes,
+          prop,
+          propValues[prop],
+          currentFrame,
+          addKeyframe,
+          updateKeyframe
+        );
+        if (wasAutoKeyframed) {
+          autoKeyframedProps.add(prop);
+        }
+      }
+
+      // Update base transform only for non-keyframed properties
+      const transformProps: Partial<TransformProperties> = {};
+      if (!autoKeyframedProps.has('x')) transformProps.x = transform.x;
+      if (!autoKeyframedProps.has('y')) transformProps.y = transform.y;
+      if (!autoKeyframedProps.has('width')) transformProps.width = transform.width;
+      if (!autoKeyframedProps.has('height')) transformProps.height = transform.height;
+      if (!autoKeyframedProps.has('rotation')) transformProps.rotation = transform.rotation;
+      // Always update cornerRadius (not keyframeable via gizmo)
+      transformProps.cornerRadius = transform.cornerRadius;
+
+      // Only call updateItemTransform if there are non-keyframed properties to update
+      if (Object.keys(transformProps).length > 1 || !autoKeyframedProps.size) {
+        updateItemTransform(itemId, transformProps);
+      }
 
       // Prevent background click from deselecting after drag
-      // Use setTimeout instead of requestAnimationFrame because click events
-      // may fire after the next animation frame
       justFinishedDragRef.current = true;
       setTimeout(() => {
         justFinishedDragRef.current = false;
       }, 100);
     },
-    [updateItemTransform]
+    [visualItems, keyframes, updateItemTransform, addKeyframe, updateKeyframe]
   );
 
   // Handle group transform end - commit transforms for all items as a single undo operation
@@ -363,8 +405,9 @@ export function GizmoOverlay({
       const result: TimelineItem[] = [];
 
       for (const item of visibleItems) {
-        const sourceDims = getSourceDimensions(item);
-        const resolved = resolveTransform(item, { ...projectSize, fps: 30 }, sourceDims);
+        // Get animated transform from the pre-computed map
+        const resolved = animatedTransformsMap.get(item.id);
+        if (!resolved) continue;
 
         // Convert transform position to absolute canvas coordinates
         const itemCenterX = canvasCenterX + resolved.x;
@@ -388,7 +431,7 @@ export function GizmoOverlay({
 
       return result;
     },
-    [visibleItems, projectSize]
+    [visibleItems, projectSize, animatedTransformsMap]
   );
 
   // Handle right-click to show context menu for overlapping items

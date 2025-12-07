@@ -4,8 +4,10 @@ import { AbsoluteFill, OffthreadVideo, Img, useVideoConfig, useCurrentFrame, int
 import { Rect, Circle, Triangle, Ellipse, Star, Polygon, Heart } from '@remotion/shapes';
 import { useGizmoStore } from '@/features/preview/stores/gizmo-store';
 import { usePlaybackStore } from '@/features/preview/stores/playback-store';
+import { useTimelineStore } from '@/features/timeline/stores/timeline-store';
 import type { TimelineItem, VideoItem, TextItem, ShapeItem } from '@/types/timeline';
 import type { TransformProperties } from '@/types/transform';
+import { resolveAnimatedTransform, hasKeyframeAnimation } from '@/features/keyframes/utils/animated-transform-resolver';
 import type { ItemEffect, GlitchEffect } from '@/types/effects';
 import { DebugOverlay } from './debug-overlay';
 import { PitchCorrectedAudio } from './pitch-corrected-audio';
@@ -752,6 +754,11 @@ const TransformWrapper: React.FC<{
   const itemPropertiesPreview = useGizmoStore((s) => s.itemPropertiesPreview);
   const groupPreviewTransforms = useGizmoStore((s) => s.groupPreviewTransforms);
 
+  // Get keyframes for this item (granular selector)
+  const itemKeyframes = useTimelineStore(
+    useCallback((s) => s.keyframes.find((k) => k.itemId === item.id), [item.id])
+  );
+
   // Check if this item has an active single-item gizmo preview transform
   const isGizmoPreviewActive = activeGizmo?.itemId === item.id && previewTransform !== null;
 
@@ -768,16 +775,26 @@ const TransformWrapper: React.FC<{
   // Resolve base transform from item
   const baseResolved = resolveTransform(item, canvas, getSourceDimensions(item));
 
-  // Priority: Group preview > Single gizmo preview > Properties preview > Base
-  let resolved = baseResolved;
+  // Apply keyframe animation to base transform
+  // `frame` from useCurrentFrame() is already relative to item start (due to Sequence wrapper)
+  const relativeFrame = frame;
+  const animatedResolved = useMemo(() => {
+    if (!itemKeyframes || !hasKeyframeAnimation(itemKeyframes)) {
+      return baseResolved;
+    }
+    return resolveAnimatedTransform(baseResolved, itemKeyframes, relativeFrame);
+  }, [baseResolved, itemKeyframes, relativeFrame]);
+
+  // Priority: Group preview > Single gizmo preview > Properties preview > Keyframe animation > Base
+  let resolved = animatedResolved;
   if (isGroupPreviewActive) {
     // Use group preview transform for multi-item drag/scale/rotate
     resolved = { ...groupPreviewForItem, cornerRadius: groupPreviewForItem.cornerRadius ?? 0 };
   } else if (isGizmoPreviewActive) {
     resolved = { ...previewTransform, cornerRadius: previewTransform.cornerRadius ?? 0 };
   } else if (propertiesPreviewForItem) {
-    // Merge properties preview on top of base resolved
-    resolved = { ...baseResolved, ...propertiesPreviewForItem };
+    // Merge properties preview on top of animated resolved
+    resolved = { ...animatedResolved, ...propertiesPreviewForItem };
   }
 
   // Calculate fade opacity based on fadeIn/fadeOut (in seconds)

@@ -1,10 +1,7 @@
 import { useMemo, useCallback, useEffect, useState, useRef } from 'react';
 import type { TimelineItem } from '@/types/timeline';
 import type { GizmoHandle, Transform, CoordinateParams, Point, GroupTransformState } from '../types/gizmo';
-import {
-  resolveTransform,
-  getSourceDimensions,
-} from '@/lib/remotion/utils/transform-resolver';
+import { useAnimatedTransforms } from '@/features/keyframes/hooks/use-animated-transform';
 import {
   screenToCanvas,
   getScaleCursor,
@@ -75,13 +72,14 @@ export function GroupGizmo({
   const { projectSize } = coordParams;
   const scale = getEffectiveScale(coordParams);
 
-  // Resolve transforms for all items
+  // Get animated transforms for all items using centralized hook
+  const animatedTransforms = useAnimatedTransforms(items, projectSize);
+
+  // Convert ResolvedTransform to Transform type for gizmo system
   const itemTransforms = useMemo(() => {
     const transforms = new Map<string, Transform>();
-    for (const item of items) {
-      const sourceDims = getSourceDimensions(item);
-      const resolved = resolveTransform(item, { ...projectSize, fps: 30 }, sourceDims);
-      transforms.set(item.id, {
+    for (const [id, resolved] of animatedTransforms) {
+      transforms.set(id, {
         x: resolved.x,
         y: resolved.y,
         width: resolved.width,
@@ -92,7 +90,7 @@ export function GroupGizmo({
       });
     }
     return transforms;
-  }, [items, projectSize]);
+  }, [animatedTransforms]);
 
   // Use preview transforms during interaction, otherwise use resolved transforms
   const currentTransforms = previewTransforms ?? itemTransforms;

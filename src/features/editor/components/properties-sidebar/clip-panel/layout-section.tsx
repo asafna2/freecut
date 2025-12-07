@@ -6,10 +6,14 @@ import type { TimelineItem } from '@/types/timeline';
 import type { TransformProperties, CanvasSettings } from '@/types/transform';
 import { useGizmoStore } from '@/features/preview/stores/gizmo-store';
 import { useMediaLibraryStore } from '@/features/media-library/stores/media-library-store';
+import { usePlaybackStore } from '@/features/preview/stores/playback-store';
+import { useTimelineStore } from '@/features/timeline/stores/timeline-store';
 import {
   resolveTransform,
   getSourceDimensions,
 } from '@/lib/remotion/utils/transform-resolver';
+import { resolveAnimatedTransform } from '@/features/keyframes/utils/animated-transform-resolver';
+import { autoKeyframeProperty as autoKeyframeProp } from '@/features/keyframes/utils/auto-keyframe';
 import {
   PropertySection,
   PropertyRow,
@@ -18,6 +22,7 @@ import {
   AlignmentButtons,
   type AlignmentType,
 } from '../components';
+import { KeyframeToggle } from '@/features/keyframes/components/keyframe-toggle';
 
 interface LayoutSectionProps {
   items: TimelineItem[];
@@ -51,6 +56,12 @@ export const LayoutSection = memo(function LayoutSection({
 }: LayoutSectionProps) {
   const itemIds = useMemo(() => items.map((item) => item.id), [items]);
 
+  // Get current playhead frame for keyframe animation
+  const currentFrame = usePlaybackStore((s) => s.currentFrame);
+
+  // Get keyframes for all selected items
+  const allKeyframes = useTimelineStore((s) => s.keyframes);
+
   // Gizmo store for live preview (both for properties panel and gizmo drag sync)
   const setPropertiesPreview = useGizmoStore((s) => s.setPropertiesPreview);
   const clearPropertiesPreview = useGizmoStore((s) => s.clearPropertiesPreview);
@@ -70,19 +81,30 @@ export const LayoutSection = memo(function LayoutSection({
 
   // Memoize all transform values at once to avoid 5 separate iterations
   // This resolves transforms once per render instead of 5 times
+  // Includes keyframe animation to show current animated values
   const { x, y, width, height, rotation } = useMemo(() => {
     if (items.length === 0) {
       return { x: 0, y: 0, width: 0, height: 0, rotation: 0 };
     }
 
-    // Resolve transforms once for all items
+    // Resolve transforms once for all items, applying keyframe animations
     const resolvedValues = items.map((item) => {
       // If gizmo is active for this item, use the preview transform
       if (gizmoPreview && gizmoPreview.itemId === item.id) {
         return gizmoPreview.transform;
       }
       const sourceDimensions = getSourceDimensions(item);
-      return resolveTransform(item, canvas, sourceDimensions);
+      const baseResolved = resolveTransform(item, canvas, sourceDimensions);
+
+      // Apply keyframe animation if item has keyframes
+      const itemKeyframes = allKeyframes.find((k) => k.itemId === item.id);
+      if (itemKeyframes) {
+        // Calculate frame relative to item start
+        const relativeFrame = currentFrame - item.from;
+        return resolveAnimatedTransform(baseResolved, itemKeyframes, relativeFrame);
+      }
+
+      return baseResolved;
     });
 
     // Helper to get mixed or single value
@@ -99,13 +121,30 @@ export const LayoutSection = memo(function LayoutSection({
       height: getValue((r) => r.height),
       rotation: getValue((r) => r.rotation),
     };
-  }, [items, canvas, gizmoPreview]);
+  }, [items, canvas, gizmoPreview, allKeyframes, currentFrame]);
 
   // Store current aspect ratio for linked dimensions
   const currentAspectRatio = useMemo(() => {
     if (width === 'mixed' || height === 'mixed') return 1;
     return height > 0 ? width / height : 1;
   }, [width, height]);
+
+  // Get keyframe actions for auto-keyframing
+  const addKeyframe = useTimelineStore((s) => s.addKeyframe);
+  const updateKeyframe = useTimelineStore((s) => s.updateKeyframe);
+
+  // Helper: Check if a property has keyframes and auto-keyframe on value change
+  // Returns true if keyframes were handled, false if base transform should be updated
+  const autoKeyframeProperty = useCallback(
+    (itemId: string, property: 'x' | 'y' | 'width' | 'height' | 'rotation' | 'opacity', value: number): boolean => {
+      const item = items.find((i) => i.id === itemId);
+      if (!item) return false;
+
+      const itemKeyframes = allKeyframes.find((k) => k.itemId === itemId);
+      return autoKeyframeProp(item, itemKeyframes, property, value, currentFrame, addKeyframe, updateKeyframe);
+    },
+    [items, allKeyframes, currentFrame, addKeyframe, updateKeyframe]
+  );
 
   // Live preview for X position (during scrub)
   const handleXLiveChange = useCallback(
@@ -119,13 +158,23 @@ export const LayoutSection = memo(function LayoutSection({
     [items, setPropertiesPreview]
   );
 
-  // Commit X position
+  // Commit X position (with auto-keyframe support)
   const handleXChange = useCallback(
     (value: number) => {
-      onTransformChange(itemIds, { x: value });
+      // Try auto-keyframe first for items with keyframes
+      let allHandled = true;
+      for (const itemId of itemIds) {
+        if (!autoKeyframeProperty(itemId, 'x', value)) {
+          allHandled = false;
+        }
+      }
+      // Fall back to base transform for items without keyframes
+      if (!allHandled) {
+        onTransformChange(itemIds, { x: value });
+      }
       queueMicrotask(() => clearPropertiesPreview());
     },
-    [itemIds, onTransformChange, clearPropertiesPreview]
+    [itemIds, onTransformChange, clearPropertiesPreview, autoKeyframeProperty]
   );
 
   // Live preview for Y position (during scrub)
@@ -140,13 +189,21 @@ export const LayoutSection = memo(function LayoutSection({
     [items, setPropertiesPreview]
   );
 
-  // Commit Y position
+  // Commit Y position (with auto-keyframe support)
   const handleYChange = useCallback(
     (value: number) => {
-      onTransformChange(itemIds, { y: value });
+      let allHandled = true;
+      for (const itemId of itemIds) {
+        if (!autoKeyframeProperty(itemId, 'y', value)) {
+          allHandled = false;
+        }
+      }
+      if (!allHandled) {
+        onTransformChange(itemIds, { y: value });
+      }
       queueMicrotask(() => clearPropertiesPreview());
     },
-    [itemIds, onTransformChange, clearPropertiesPreview]
+    [itemIds, onTransformChange, clearPropertiesPreview, autoKeyframeProperty]
   );
 
   // Live preview for width (during scrub)
@@ -166,18 +223,29 @@ export const LayoutSection = memo(function LayoutSection({
     [items, setPropertiesPreview, aspectLocked, height, currentAspectRatio]
   );
 
-  // Commit width
+  // Commit width (with auto-keyframe support)
   const handleWidthChange = useCallback(
     (value: number) => {
-      if (aspectLocked && height !== 'mixed') {
-        const newHeight = Math.round(value / currentAspectRatio);
-        onTransformChange(itemIds, { width: value, height: newHeight });
-      } else {
-        onTransformChange(itemIds, { width: value });
+      const newHeight = aspectLocked && height !== 'mixed' ? Math.round(value / currentAspectRatio) : null;
+
+      let allHandled = true;
+      for (const itemId of itemIds) {
+        const widthHandled = autoKeyframeProperty(itemId, 'width', value);
+        const heightHandled = newHeight !== null ? autoKeyframeProperty(itemId, 'height', newHeight) : true;
+        if (!widthHandled || !heightHandled) {
+          allHandled = false;
+        }
+      }
+      if (!allHandled) {
+        if (newHeight !== null) {
+          onTransformChange(itemIds, { width: value, height: newHeight });
+        } else {
+          onTransformChange(itemIds, { width: value });
+        }
       }
       queueMicrotask(() => clearPropertiesPreview());
     },
-    [itemIds, onTransformChange, clearPropertiesPreview, aspectLocked, height, currentAspectRatio]
+    [itemIds, onTransformChange, clearPropertiesPreview, aspectLocked, height, currentAspectRatio, autoKeyframeProperty]
   );
 
   // Live preview for height (during scrub)
@@ -197,18 +265,29 @@ export const LayoutSection = memo(function LayoutSection({
     [items, setPropertiesPreview, aspectLocked, width, currentAspectRatio]
   );
 
-  // Commit height
+  // Commit height (with auto-keyframe support)
   const handleHeightChange = useCallback(
     (value: number) => {
-      if (aspectLocked && width !== 'mixed') {
-        const newWidth = Math.round(value * currentAspectRatio);
-        onTransformChange(itemIds, { width: newWidth, height: value });
-      } else {
-        onTransformChange(itemIds, { height: value });
+      const newWidth = aspectLocked && width !== 'mixed' ? Math.round(value * currentAspectRatio) : null;
+
+      let allHandled = true;
+      for (const itemId of itemIds) {
+        const heightHandled = autoKeyframeProperty(itemId, 'height', value);
+        const widthHandled = newWidth !== null ? autoKeyframeProperty(itemId, 'width', newWidth) : true;
+        if (!heightHandled || !widthHandled) {
+          allHandled = false;
+        }
+      }
+      if (!allHandled) {
+        if (newWidth !== null) {
+          onTransformChange(itemIds, { width: newWidth, height: value });
+        } else {
+          onTransformChange(itemIds, { height: value });
+        }
       }
       queueMicrotask(() => clearPropertiesPreview());
     },
-    [itemIds, onTransformChange, clearPropertiesPreview, aspectLocked, width, currentAspectRatio]
+    [itemIds, onTransformChange, clearPropertiesPreview, aspectLocked, width, currentAspectRatio, autoKeyframeProperty]
   );
 
   // Live preview for rotation (during drag)
@@ -223,13 +302,21 @@ export const LayoutSection = memo(function LayoutSection({
     [items, setPropertiesPreview]
   );
 
-  // Commit rotation (on mouse up)
+  // Commit rotation (on mouse up, with auto-keyframe support)
   const handleRotationChange = useCallback(
     (value: number) => {
-      onTransformChange(itemIds, { rotation: value });
+      let allHandled = true;
+      for (const itemId of itemIds) {
+        if (!autoKeyframeProperty(itemId, 'rotation', value)) {
+          allHandled = false;
+        }
+      }
+      if (!allHandled) {
+        onTransformChange(itemIds, { rotation: value });
+      }
       queueMicrotask(() => clearPropertiesPreview());
     },
-    [itemIds, onTransformChange, clearPropertiesPreview]
+    [itemIds, onTransformChange, clearPropertiesPreview, autoKeyframeProperty]
   );
 
   // Get media items for fallback source dimensions lookup
@@ -382,22 +469,38 @@ export const LayoutSection = memo(function LayoutSection({
       <PropertyRow label="Position">
         <div className="flex items-start gap-1 w-full">
           <div className="grid grid-cols-2 gap-1 flex-1">
-            <NumberInput
-              value={x}
-              onChange={handleXChange}
-              onLiveChange={handleXLiveChange}
-              label="X"
-              unit="px"
-              step={1}
-            />
-            <NumberInput
-              value={y}
-              onChange={handleYChange}
-              onLiveChange={handleYLiveChange}
-              label="Y"
-              unit="px"
-              step={1}
-            />
+            <div className="flex items-center gap-0.5">
+              <KeyframeToggle
+                itemIds={itemIds}
+                property="x"
+                currentValue={x === 'mixed' ? 0 : x}
+              />
+              <NumberInput
+                value={x}
+                onChange={handleXChange}
+                onLiveChange={handleXLiveChange}
+                label="X"
+                unit="px"
+                step={1}
+                className="flex-1"
+              />
+            </div>
+            <div className="flex items-center gap-0.5">
+              <KeyframeToggle
+                itemIds={itemIds}
+                property="y"
+                currentValue={y === 'mixed' ? 0 : y}
+              />
+              <NumberInput
+                value={y}
+                onChange={handleYChange}
+                onLiveChange={handleYLiveChange}
+                label="Y"
+                unit="px"
+                step={1}
+                className="flex-1"
+              />
+            </div>
           </div>
           <Button
             variant="ghost"
@@ -414,6 +517,18 @@ export const LayoutSection = memo(function LayoutSection({
       {/* Dimensions */}
       <PropertyRow label="Size">
         <div className="flex items-start gap-1 w-full">
+          <div className="flex flex-col gap-0.5 flex-shrink-0">
+            <KeyframeToggle
+              itemIds={itemIds}
+              property="width"
+              currentValue={width === 'mixed' ? 100 : width}
+            />
+            <KeyframeToggle
+              itemIds={itemIds}
+              property="height"
+              currentValue={height === 'mixed' ? 100 : height}
+            />
+          </div>
           <LinkedDimensions
             width={width}
             height={height}
@@ -441,6 +556,11 @@ export const LayoutSection = memo(function LayoutSection({
       {/* Rotation */}
       <PropertyRow label="Rotation">
         <div className="flex items-center gap-1 w-full">
+          <KeyframeToggle
+            itemIds={itemIds}
+            property="rotation"
+            currentValue={rotation === 'mixed' ? 0 : rotation}
+          />
           <NumberInput
             value={rotation}
             onChange={handleRotationChange}

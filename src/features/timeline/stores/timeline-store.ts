@@ -7,6 +7,7 @@ import type { TimelineItem } from '@/types/timeline';
 import type { ItemEffect } from '@/types/effects';
 import type { Transition } from '@/types/transition';
 import { TRANSITION_CONFIGS } from '@/types/transition';
+import type { ItemKeyframes } from '@/types/keyframe';
 import { canAddTransition } from '../utils/transition-utils';
 import { usePlaybackStore } from '@/features/preview/stores/playback-store';
 import { useZoomStore } from './zoom-store';
@@ -35,6 +36,7 @@ export const useTimelineStore = create<TimelineState & TimelineActions>()(
   items: [],
   markers: [],
   transitions: [],
+  keyframes: [],
   fps: 30,
   scrollPosition: 0,
   snapEnabled: true,
@@ -111,6 +113,8 @@ export const useTimelineStore = create<TimelineState & TimelineActions>()(
       transitions: state.transitions.filter(
         (t) => !idsSet.has(t.leftClipId) && !idsSet.has(t.rightClipId)
       ),
+      // Remove keyframes for deleted items
+      keyframes: state.keyframes.filter((k) => !idsSet.has(k.itemId)),
       isDirty: true,
     };
   }),
@@ -1122,6 +1126,175 @@ export const useTimelineStore = create<TimelineState & TimelineActions>()(
     isDirty: true,
   })),
 
+  // Keyframe actions
+  // Add a keyframe at a specific frame for a property
+  addKeyframe: (itemId, property, frame, value, easing = 'linear') => {
+    const keyframeId = crypto.randomUUID();
+    useTimelineStore.setState((state) => {
+      const existingItemKeyframes = state.keyframes.find((k) => k.itemId === itemId);
+
+      if (existingItemKeyframes) {
+        // Item already has keyframes - update or add
+        const existingPropKeyframes = existingItemKeyframes.properties.find(
+          (p) => p.property === property
+        );
+
+        if (existingPropKeyframes) {
+          // Property already has keyframes - check for existing keyframe at this frame
+          const existingAtFrame = existingPropKeyframes.keyframes.find((k) => k.frame === frame);
+          if (existingAtFrame) {
+            // Update existing keyframe value
+            return {
+              keyframes: state.keyframes.map((ik) =>
+                ik.itemId === itemId
+                  ? {
+                      ...ik,
+                      properties: ik.properties.map((pk) =>
+                        pk.property === property
+                          ? {
+                              ...pk,
+                              keyframes: pk.keyframes.map((k) =>
+                                k.frame === frame ? { ...k, value, easing } : k
+                              ),
+                            }
+                          : pk
+                      ),
+                    }
+                  : ik
+              ),
+              isDirty: true,
+            };
+          }
+          // Add new keyframe and keep sorted
+          return {
+            keyframes: state.keyframes.map((ik) =>
+              ik.itemId === itemId
+                ? {
+                    ...ik,
+                    properties: ik.properties.map((pk) =>
+                      pk.property === property
+                        ? {
+                            ...pk,
+                            keyframes: [...pk.keyframes, { id: keyframeId, frame, value, easing }]
+                              .sort((a, b) => a.frame - b.frame),
+                          }
+                        : pk
+                    ),
+                  }
+                : ik
+            ),
+            isDirty: true,
+          };
+        }
+        // Add new property with keyframe
+        return {
+          keyframes: state.keyframes.map((ik) =>
+            ik.itemId === itemId
+              ? {
+                  ...ik,
+                  properties: [
+                    ...ik.properties,
+                    { property, keyframes: [{ id: keyframeId, frame, value, easing }] },
+                  ],
+                }
+              : ik
+          ),
+          isDirty: true,
+        };
+      }
+      // Create new item keyframes entry
+      return {
+        keyframes: [
+          ...state.keyframes,
+          {
+            itemId,
+            properties: [{ property, keyframes: [{ id: keyframeId, frame, value, easing }] }],
+          },
+        ],
+        isDirty: true,
+      };
+    });
+    return keyframeId;
+  },
+
+  // Update a keyframe's properties
+  updateKeyframe: (itemId, property, keyframeId, updates) => set((state) => ({
+    keyframes: state.keyframes.map((ik) =>
+      ik.itemId === itemId
+        ? {
+            ...ik,
+            properties: ik.properties.map((pk) =>
+              pk.property === property
+                ? {
+                    ...pk,
+                    keyframes: pk.keyframes
+                      .map((k) => (k.id === keyframeId ? { ...k, ...updates } : k))
+                      .sort((a, b) => a.frame - b.frame),
+                  }
+                : pk
+            ),
+          }
+        : ik
+    ),
+    isDirty: true,
+  })),
+
+  // Remove a keyframe
+  removeKeyframe: (itemId, property, keyframeId) => set((state) => {
+    const newKeyframes = state.keyframes.map((ik) => {
+      if (ik.itemId !== itemId) return ik;
+
+      const newProperties = ik.properties
+        .map((pk) => {
+          if (pk.property !== property) return pk;
+          return {
+            ...pk,
+            keyframes: pk.keyframes.filter((k) => k.id !== keyframeId),
+          };
+        })
+        .filter((pk) => pk.keyframes.length > 0); // Remove empty property entries
+
+      return { ...ik, properties: newProperties };
+    }).filter((ik) => ik.properties.length > 0); // Remove empty item entries
+
+    return { keyframes: newKeyframes, isDirty: true };
+  }),
+
+  // Remove all keyframes for an item
+  removeKeyframesForItem: (itemId) => set((state) => ({
+    keyframes: state.keyframes.filter((k) => k.itemId !== itemId),
+    isDirty: true,
+  })),
+
+  // Remove all keyframes for a specific property on an item
+  removeKeyframesForProperty: (itemId, property) => set((state) => ({
+    keyframes: state.keyframes
+      .map((ik) =>
+        ik.itemId === itemId
+          ? { ...ik, properties: ik.properties.filter((p) => p.property !== property) }
+          : ik
+      )
+      .filter((ik) => ik.properties.length > 0),
+    isDirty: true,
+  })),
+
+  // Get keyframes for an item (used for rendering)
+  // Note: Use granular selector in components instead of this method for reactivity
+  getKeyframesForItem: (itemId) => {
+    const { keyframes } = useTimelineStore.getState();
+    return keyframes.find((k) => k.itemId === itemId);
+  },
+
+  // Check if a keyframe exists at a specific frame for a property
+  hasKeyframesAtFrame: (itemId, property, frame) => {
+    const { keyframes } = useTimelineStore.getState();
+    const itemKeyframes = keyframes.find((k) => k.itemId === itemId);
+    if (!itemKeyframes) return false;
+    const propKeyframes = itemKeyframes.properties.find((p) => p.property === property);
+    if (!propKeyframes) return false;
+    return propKeyframes.keyframes.some((k) => k.frame === frame);
+  },
+
   // Save timeline to project in IndexedDB
   saveTimeline: async (projectId) => {
     const state = useTimelineStore.getState();
@@ -1277,6 +1450,21 @@ export const useTimelineStore = create<TimelineState & TimelineActions>()(
             ...(t.direction && { direction: t.direction }),
           })),
         }),
+        // Save keyframes
+        ...(state.keyframes.length > 0 && {
+          keyframes: state.keyframes.map(ik => ({
+            itemId: ik.itemId,
+            properties: ik.properties.map(pk => ({
+              property: pk.property,
+              keyframes: pk.keyframes.map(k => ({
+                id: k.id,
+                frame: k.frame,
+                value: k.value,
+                easing: k.easing,
+              })),
+            })),
+          })),
+        }),
       };
 
       // Generate thumbnail from current Player frame (captures the actual rendered output)
@@ -1353,6 +1541,8 @@ export const useTimelineStore = create<TimelineState & TimelineActions>()(
           markers: project.timeline.markers ?? [],
           // Restore transitions
           transitions: (project.timeline.transitions as Transition[]) ?? [],
+          // Restore keyframes
+          keyframes: (project.timeline.keyframes as ItemKeyframes[]) ?? [],
           isDirty: false, // Fresh load is clean
         });
 
@@ -1370,6 +1560,7 @@ export const useTimelineStore = create<TimelineState & TimelineActions>()(
           items: [],
           markers: [],
           transitions: [],
+          keyframes: [],
           inPoint: null,
           outPoint: null,
           isDirty: false, // New project starts clean
@@ -1391,6 +1582,7 @@ export const useTimelineStore = create<TimelineState & TimelineActions>()(
     items: [],
     markers: [],
     transitions: [],
+    keyframes: [],
     scrollPosition: 0,
     isDirty: false,
   }),

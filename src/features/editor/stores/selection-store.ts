@@ -21,6 +21,7 @@ export const useSelectionStore = create<SelectionState & SelectionActions>((set)
   selectionType: null,
   activeTool: 'select',
   dragState: null,
+  expandedKeyframeLanes: new Set<string>(),
 
   // Actions
   selectItems: (ids) => set((state) => ({
@@ -102,4 +103,23 @@ export const useSelectionStore = create<SelectionState & SelectionActions>((set)
   })),
   setDragState: (dragState) => set({ dragState }),
   setActiveTool: (tool) => set({ activeTool: tool }),
+  // Keyframe lanes expansion
+  toggleKeyframeLanes: (itemId) => set((state) => {
+    const newSet = new Set(state.expandedKeyframeLanes);
+    if (newSet.has(itemId)) {
+      newSet.delete(itemId);
+    } else {
+      newSet.add(itemId);
+    }
+    return { expandedKeyframeLanes: newSet };
+  }),
+  setKeyframeLanesExpanded: (itemId, expanded) => set((state) => {
+    const newSet = new Set(state.expandedKeyframeLanes);
+    if (expanded) {
+      newSet.add(itemId);
+    } else {
+      newSet.delete(itemId);
+    }
+    return { expandedKeyframeLanes: newSet };
+  }),
 }));

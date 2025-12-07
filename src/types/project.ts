@@ -97,6 +97,19 @@ export interface ProjectTimeline {
     timing?: string;
     direction?: string;
   }>;
+  // Keyframe animations
+  keyframes?: Array<{
+    itemId: string;
+    properties: Array<{
+      property: 'x' | 'y' | 'width' | 'height' | 'rotation' | 'opacity';
+      keyframes: Array<{
+        id: string;
+        frame: number;
+        value: number;
+        easing: 'linear' | 'ease-in' | 'ease-out' | 'ease-in-out';
+      }>;
+    }>;
+  }>;
 }
 
 export interface ProjectResolution {

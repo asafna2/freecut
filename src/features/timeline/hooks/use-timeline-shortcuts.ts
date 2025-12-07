@@ -4,8 +4,11 @@ import { usePlaybackStore } from '@/features/preview/stores/playback-store';
 import { useTimelineStore } from '../stores/timeline-store';
 import { useZoomStore } from '../stores/zoom-store';
 import { useSelectionStore } from '@/features/editor/stores/selection-store';
+import { useProjectStore } from '@/features/projects/stores/project-store';
 import { HOTKEYS, HOTKEY_OPTIONS } from '@/config/hotkeys';
 import { canJoinMultipleItems } from '@/utils/clip-utils';
+import { resolveTransform, getSourceDimensions } from '@/lib/remotion/utils/transform-resolver';
+import { resolveAnimatedTransform } from '@/features/keyframes/utils/animated-transform-resolver';
 
 export interface TimelineShortcutCallbacks {
   onPlay?: () => void;
@@ -451,5 +454,55 @@ export function useTimelineShortcuts(callbacks: TimelineShortcutCallbacks = {}) 
     },
     HOTKEY_OPTIONS,
     [setCurrentFrame, markers]
+  );
+
+  // Keyframes: K - Add keyframe at playhead for selected items
+  useHotkeys(
+    HOTKEYS.ADD_KEYFRAME,
+    (event) => {
+      if (selectedItemIds.length === 0) return;
+
+      event.preventDefault();
+      const currentFrame = usePlaybackStore.getState().currentFrame;
+      const addKeyframe = useTimelineStore.getState().addKeyframe;
+      const storeItems = useTimelineStore.getState().items;
+      const storeKeyframes = useTimelineStore.getState().keyframes;
+      const currentProject = useProjectStore.getState().currentProject;
+      const canvas = {
+        width: currentProject?.metadata.width ?? 1920,
+        height: currentProject?.metadata.height ?? 1080,
+        fps: currentProject?.metadata.fps ?? 30,
+      };
+
+      // Add keyframes for all transform properties of selected items
+      for (const itemId of selectedItemIds) {
+        const item = storeItems.find((i) => i.id === itemId);
+        if (!item) continue;
+
+        // Calculate frame relative to item start
+        const relativeFrame = currentFrame - item.from;
+
+        // Only add keyframes if playhead is within the item
+        if (relativeFrame < 0 || relativeFrame >= item.durationInFrames) continue;
+
+        // Get the current animated values (what the user sees in preview)
+        const sourceDimensions = getSourceDimensions(item);
+        const baseResolved = resolveTransform(item, canvas, sourceDimensions);
+        const itemKeyframes = storeKeyframes.find((k) => k.itemId === itemId);
+        const animated = itemKeyframes
+          ? resolveAnimatedTransform(baseResolved, itemKeyframes, relativeFrame)
+          : baseResolved;
+
+        // Add keyframes for each animatable property with current animated values
+        addKeyframe(itemId, 'x', relativeFrame, animated.x, 'linear');
+        addKeyframe(itemId, 'y', relativeFrame, animated.y, 'linear');
+        addKeyframe(itemId, 'opacity', relativeFrame, animated.opacity, 'linear');
+        addKeyframe(itemId, 'rotation', relativeFrame, animated.rotation, 'linear');
+        addKeyframe(itemId, 'width', relativeFrame, animated.width, 'linear');
+        addKeyframe(itemId, 'height', relativeFrame, animated.height, 'linear');
+      }
+    },
+    HOTKEY_OPTIONS,
+    [selectedItemIds]
   );
 }

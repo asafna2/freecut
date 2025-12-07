@@ -20,7 +20,8 @@
       "WebFetch(domain:css-irl.info)",
       "WebFetch(domain:leanrada.com)",
       "WebFetch(domain:frontendmasters.com)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(dir:*)"
     ],
     "deny": [],
     "ask": []
