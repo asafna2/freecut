@@ -3,9 +3,9 @@ import { temporal } from 'zundo';
 import type { TimelineState, TimelineActions } from '../types';
 import { getProject, updateProject } from '@/lib/storage/indexeddb';
 import type { ProjectTimeline } from '@/types/project';
-import type { TimelineItem } from '@/types/timeline';
+import type { TimelineItem, TimelineTrack, ProjectMarker } from '@/types/timeline';
 import type { ItemEffect } from '@/types/effects';
-import type { Transition, TransitionBreakage } from '@/types/transition';
+import type { Transition } from '@/types/transition';
 import { TRANSITION_CONFIGS } from '@/types/transition';
 import type { ItemKeyframes } from '@/types/keyframe';
 import { canAddTransition } from '../utils/transition-utils';
@@ -13,6 +13,21 @@ import { validateTransitions } from '../utils/transition-validation';
 import { usePlaybackStore } from '@/features/preview/stores/playback-store';
 import { useZoomStore } from './zoom-store';
 import { generatePlayheadThumbnail } from '@/features/projects/utils/thumbnail-generator';
+
+// Type for the partialized state that's tracked in undo/redo history
+// Excludes ephemeral state: pendingBreakages (notification queue), isDirty (save tracking)
+type PartializedTimelineState = {
+  tracks: TimelineTrack[];
+  items: TimelineItem[];
+  markers: ProjectMarker[];
+  transitions: Transition[];
+  keyframes: ItemKeyframes[];
+  fps: number;
+  scrollPosition: number;
+  snapEnabled: boolean;
+  inPoint: number | null;
+  outPoint: number | null;
+};
 
 // IMPORTANT: Always use granular selectors to prevent unnecessary re-renders!
 //
@@ -1476,7 +1491,36 @@ export const useTimelineStore = create<TimelineState & TimelineActions>()(
   // Dirty state management
   markDirty: () => set({ isDirty: true }),
   markClean: () => set({ isDirty: false }),
-  }))
+  }), {
+    // Exclude ephemeral state from undo/redo history
+    // Only track actual timeline data, not transient UI state or actions
+    partialize: (state): PartializedTimelineState => ({
+      tracks: state.tracks,
+      items: state.items,
+      markers: state.markers,
+      transitions: state.transitions,
+      keyframes: state.keyframes,
+      fps: state.fps,
+      scrollPosition: state.scrollPosition,
+      snapEnabled: state.snapEnabled,
+      inPoint: state.inPoint,
+      outPoint: state.outPoint,
+      // Excluded: pendingBreakages (notification queue), isDirty (save state)
+    }),
+    // Use reference equality on individual properties to avoid creating
+    // history entries when only excluded state (pendingBreakages, isDirty) changes
+    equality: (pastState: PartializedTimelineState, currentState: PartializedTimelineState) =>
+      pastState.tracks === currentState.tracks &&
+      pastState.items === currentState.items &&
+      pastState.markers === currentState.markers &&
+      pastState.transitions === currentState.transitions &&
+      pastState.keyframes === currentState.keyframes &&
+      pastState.fps === currentState.fps &&
+      pastState.scrollPosition === currentState.scrollPosition &&
+      pastState.snapEnabled === currentState.snapEnabled &&
+      pastState.inPoint === currentState.inPoint &&
+      pastState.outPoint === currentState.outPoint,
+  })
 );
 
 // === Memoized Selectors ===
