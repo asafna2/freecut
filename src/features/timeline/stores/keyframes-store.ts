@@ -22,6 +22,7 @@ export interface KeyframesActions {
   _removeKeyframesForItem: (itemId: string) => void;
   _removeKeyframesForItems: (itemIds: string[]) => void;
   _removeKeyframesForProperty: (itemId: string, property: AnimatableProperty) => void;
+  _scaleKeyframesForItem: (itemId: string, oldDuration: number, newDuration: number) => void;
 
   // Read-only helpers
   getKeyframesForItem: (itemId: string) => ItemKeyframes | undefined;
@@ -196,6 +197,71 @@ export const useKeyframesStore = create<KeyframesState & KeyframesActions>()(
             : ik
         ),
       })),
+
+    // Scale keyframes when item duration changes (rate stretch)
+    // Scales frame positions proportionally: newFrame = oldFrame * (newDuration / oldDuration)
+    // Handles edge cases:
+    // - Clamps keyframes to valid range [0, newDuration - 1]
+    // - Merges colliding keyframes (keeps the one with higher original frame)
+    // - Preserves keyframe at frame 0
+    _scaleKeyframesForItem: (itemId, oldDuration, newDuration) => {
+      // Skip if no change or invalid values
+      if (oldDuration === newDuration || oldDuration <= 0 || newDuration <= 0) return;
+
+      const scaleFactor = newDuration / oldDuration;
+      const maxFrame = newDuration - 1;
+
+      set((state) => {
+        const itemKeyframes = state.keyframes.find((k) => k.itemId === itemId);
+        if (!itemKeyframes) return state;
+
+        return {
+          keyframes: state.keyframes.map((ik) => {
+            if (ik.itemId !== itemId) return ik;
+
+            return {
+              ...ik,
+              properties: ik.properties.map((pk) => {
+                if (pk.keyframes.length === 0) return pk;
+
+                // Scale each keyframe's frame position
+                const scaledKeyframes = pk.keyframes.map((kf) => ({
+                  ...kf,
+                  // Scale and round, but clamp to valid range
+                  frame: Math.min(maxFrame, Math.max(0, Math.round(kf.frame * scaleFactor))),
+                }));
+
+                // Handle collisions: when multiple keyframes land on the same frame,
+                // keep the one that was originally later (higher original frame)
+                // This preserves the "destination" value of an animation
+                const frameMap = new Map<number, Keyframe>();
+                for (const kf of scaledKeyframes) {
+                  const existing = frameMap.get(kf.frame);
+                  if (!existing) {
+                    frameMap.set(kf.frame, kf);
+                  } else {
+                    // Find original frames to determine which was later
+                    const existingOriginal = pk.keyframes.find((k) => k.id === existing.id);
+                    const currentOriginal = pk.keyframes.find((k) => k.id === kf.id);
+                    if (existingOriginal && currentOriginal && currentOriginal.frame > existingOriginal.frame) {
+                      frameMap.set(kf.frame, kf);
+                    }
+                  }
+                }
+
+                // Convert back to sorted array
+                const deduped = Array.from(frameMap.values()).sort((a, b) => a.frame - b.frame);
+
+                return {
+                  ...pk,
+                  keyframes: deduped,
+                };
+              }),
+            };
+          }),
+        };
+      });
+    },
 
     // Read-only: Get keyframes for an item
     getKeyframesForItem: (itemId) => {

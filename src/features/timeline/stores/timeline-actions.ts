@@ -284,7 +284,17 @@ export function rateStretchItem(
   newSpeed: number
 ): void {
   execute('RATE_STRETCH_ITEM', () => {
+    // Get old duration BEFORE applying rate stretch (needed for keyframe scaling)
+    const oldItem = useItemsStore.getState().items.find((i) => i.id === id);
+    const oldDuration = oldItem?.durationInFrames ?? newDuration;
+
     useItemsStore.getState()._rateStretchItem(id, newFrom, newDuration, newSpeed);
+
+    // Scale keyframes proportionally to match new duration
+    // This ensures animations maintain their relative timing within the clip
+    if (oldDuration !== newDuration) {
+      useKeyframesStore.getState()._scaleKeyframesForItem(id, oldDuration, newDuration);
+    }
 
     // Validate transitions
     const items = useItemsStore.getState().items;

@@ -190,20 +190,42 @@ export const useItemsStore = create<ItemsState & ItemsActions>()(
       items: state.items.map((item) => {
         if (item.id !== id) return item;
 
-        const newFrom = item.from + trimAmount;
-        const newDuration = item.durationInFrames - trimAmount;
+        let actualTrimAmount = trimAmount;
+
+        // For media items, clamp trim to source boundaries (accounting for speed)
+        if (item.type === 'video' || item.type === 'audio') {
+          const currentSourceStart = item.sourceStart ?? 0;
+          const speed = item.speed ?? 1;
+
+          // When extending left (negative trimAmount), can't go past source start (0)
+          // Timeline frames to extend = -actualTrimAmount
+          // Source frames to recover = -actualTrimAmount * speed
+          // Can't recover more than currentSourceStart
+          if (actualTrimAmount < 0) {
+            const maxTimelineExtend = Math.floor(currentSourceStart / speed);
+            if (-actualTrimAmount > maxTimelineExtend) {
+              actualTrimAmount = -maxTimelineExtend;
+            }
+          }
+        }
+
+        const newFrom = item.from + actualTrimAmount;
+        const newDuration = item.durationInFrames - actualTrimAmount;
 
         if (newDuration <= 0) return item;
 
-        // Handle source offset for media items
-        if ('sourceOffsetInFrames' in item && item.type === 'video' || item.type === 'audio') {
-          const currentOffset = (item as { sourceOffsetInFrames?: number }).sourceOffsetInFrames ?? 0;
+        // Handle sourceStart for media items (in source frames)
+        if (item.type === 'video' || item.type === 'audio') {
+          const currentSourceStart = item.sourceStart ?? 0;
+          const speed = item.speed ?? 1;
+          // newSourceStart = currentSourceStart + (trimAmount * speed)
+          const newSourceStart = currentSourceStart + Math.round(actualTrimAmount * speed);
           return {
             ...item,
             from: newFrom,
             durationInFrames: newDuration,
-            sourceOffsetInFrames: currentOffset + trimAmount,
-          } as typeof item;
+            sourceStart: newSourceStart,
+          };
         }
 
         return {
@@ -219,8 +241,41 @@ export const useItemsStore = create<ItemsState & ItemsActions>()(
       items: state.items.map((item) => {
         if (item.id !== id) return item;
 
-        const newDuration = item.durationInFrames + trimAmount;
+        let actualTrimAmount = trimAmount;
+
+        // For media items, clamp trim to source boundaries (accounting for speed)
+        if (item.type === 'video' || item.type === 'audio') {
+          const sourceDuration = item.sourceDuration;
+          if (sourceDuration !== undefined) {
+            const currentSourceStart = item.sourceStart ?? 0;
+            const speed = item.speed ?? 1;
+            // At slower speeds, same source frames = more timeline frames
+            // maxTimelineDuration = availableSourceFrames / speed
+            const availableSourceFrames = sourceDuration - currentSourceStart;
+            const maxTimelineDuration = Math.floor(availableSourceFrames / speed);
+            const newDuration = item.durationInFrames + actualTrimAmount;
+
+            // When extending right, can't go past source end
+            if (newDuration > maxTimelineDuration) {
+              actualTrimAmount = maxTimelineDuration - item.durationInFrames;
+            }
+          }
+        }
+
+        const newDuration = item.durationInFrames + actualTrimAmount;
         if (newDuration <= 0) return item;
+
+        // Update sourceEnd for media items (in source frames, not timeline frames)
+        if (item.type === 'video' || item.type === 'audio') {
+          const currentSourceStart = item.sourceStart ?? 0;
+          const speed = item.speed ?? 1;
+          // sourceEnd = sourceStart + (timelineDuration * speed)
+          return {
+            ...item,
+            durationInFrames: newDuration,
+            sourceEnd: currentSourceStart + Math.round(newDuration * speed),
+          };
+        }
 
         return { ...item, durationInFrames: newDuration };
       }),
@@ -255,10 +310,14 @@ export const useItemsStore = create<ItemsState & ItemsActions>()(
         durationInFrames: rightDuration,
       } as TimelineItem;
 
-      // Handle source offset for media items
-      if ((item.type === 'video' || item.type === 'audio') && 'sourceOffsetInFrames' in item) {
-        const currentOffset = (item as { sourceOffsetInFrames?: number }).sourceOffsetInFrames ?? 0;
-        (rightItem as { sourceOffsetInFrames?: number }).sourceOffsetInFrames = currentOffset + leftDuration;
+      // Handle sourceStart/sourceEnd for media items
+      if (item.type === 'video' || item.type === 'audio') {
+        const currentSourceStart = item.sourceStart ?? 0;
+        // Left item: update sourceEnd
+        (leftItem as typeof item).sourceEnd = currentSourceStart + leftDuration;
+        // Right item: update sourceStart and sourceEnd
+        (rightItem as typeof item).sourceStart = currentSourceStart + leftDuration;
+        (rightItem as typeof item).sourceEnd = currentSourceStart + leftDuration + rightDuration;
       }
 
       set((state) => ({

@@ -152,7 +152,7 @@ export function useTimelineTrim(item: TimelineItem, timelineDuration: number, tr
         if (trimStateRef.current.handle === 'start') {
           trimItemStart(item.id, deltaFrames);
         } else if (trimStateRef.current.handle === 'end') {
-          trimItemEnd(item.id, -deltaFrames);
+          trimItemEnd(item.id, deltaFrames);
         }
       }
 
