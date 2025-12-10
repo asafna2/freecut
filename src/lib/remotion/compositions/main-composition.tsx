@@ -513,7 +513,7 @@ export const MainComposition: React.FC<RemotionInputProps> = ({ tracks, transiti
       <StableMaskedGroup hasMasks={hasActiveMasks}>
         <StableVideoSequence
           items={videoItems as any}
-          premountFor={Math.round(fps * 2)}
+          premountFor={Math.round(fps * 1)}
           renderItem={renderVideoItem as any}
         />
 
