@@ -80,12 +80,20 @@ export interface ItemVisualState {
  * new object references that would cause infinite loops.
  */
 export function useItemVisualState(
-  item: TimelineItem,
+  item: TimelineItem & { _sequenceFrameOffset?: number },
   masks: MaskInfo[] = []
 ): ItemVisualState {
   const { width: canvasWidth, height: canvasHeight, fps } = useVideoConfig();
   const frame = useCurrentFrame();
   const canvas: CanvasSettings = { width: canvasWidth, height: canvasHeight, fps };
+
+  // Calculate frame relative to item start for keyframe interpolation.
+  // When items share a Sequence (e.g., split clips via StableVideoSequence),
+  // useCurrentFrame() returns frame relative to the shared Sequence's `from` (group.minFrom),
+  // but keyframes are stored relative to item.from.
+  // _sequenceFrameOffset = item.from - group.minFrom, so:
+  // relativeFrame = frame - _sequenceFrameOffset = frame - (item.from - group.minFrom)
+  const relativeFrame = frame - (item._sequenceFrameOffset ?? 0);
 
   // === GRANULAR SELECTORS ===
   // Using individual selectors to avoid creating new object references
@@ -121,9 +129,10 @@ export function useItemVisualState(
     const baseResolved = resolveTransform(item, canvas, getSourceDimensions(item));
 
     // Apply keyframe animation to base transform
+    // Use relativeFrame (relative to item.from) for correct keyframe interpolation
     let animatedResolved = baseResolved;
     if (itemKeyframes && hasKeyframeAnimation(itemKeyframes)) {
-      animatedResolved = resolveAnimatedTransform(baseResolved, itemKeyframes, frame);
+      animatedResolved = resolveAnimatedTransform(baseResolved, itemKeyframes, relativeFrame);
     }
 
     // Priority: Unified preview (group/properties) > Single gizmo preview > Keyframe animation > Base
@@ -160,7 +169,7 @@ export function useItemVisualState(
           const midPoint = item.durationInFrames / 2;
           const peakOpacity = Math.min(1, midPoint / Math.max(fadeInFrames, 1));
           computedFadeOpacity = interpolate(
-            frame,
+            relativeFrame,
             [0, midPoint, item.durationInFrames],
             [0, peakOpacity, 0],
             { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' }
@@ -168,7 +177,7 @@ export function useItemVisualState(
         } else {
           // Normal case - distinct fade in/out regions
           computedFadeOpacity = interpolate(
-            frame,
+            relativeFrame,
             [0, fadeInFrames, fadeOutStart, item.durationInFrames],
             [0, 1, 1, 0],
             { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' }
@@ -176,14 +185,14 @@ export function useItemVisualState(
         }
       } else if (hasFadeIn) {
         computedFadeOpacity = interpolate(
-          frame,
+          relativeFrame,
           [0, fadeInFrames],
           [0, 1],
           { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' }
         );
       } else {
         computedFadeOpacity = interpolate(
-          frame,
+          relativeFrame,
           [fadeOutStart, item.durationInFrames],
           [1, 0],
           { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' }
@@ -203,7 +212,7 @@ export function useItemVisualState(
       fadeOpacity: computedFadeOpacity,
       finalOpacity: computedFinalOpacity,
     };
-  }, [activeGizmo, previewTransform, itemPreview, item, canvas, itemKeyframes, frame, fps]);
+  }, [activeGizmo, previewTransform, itemPreview, item, canvas, itemKeyframes, relativeFrame, fps]);
 
   // === EFFECTS COMPUTATION ===
   const { cssFilter, scanlinesEffect, halftoneStyles, vignetteStyle } = useMemo(() => {
