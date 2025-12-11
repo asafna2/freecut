@@ -1,9 +1,10 @@
-import { memo, useCallback, useMemo, useState } from 'react';
+import { memo, useCallback, useMemo, useState, useRef, useEffect } from 'react';
 import type { Transition } from '@/types/transition';
 import { useTimelineStore } from '../stores/timeline-store';
 import { useSelectionStore } from '@/features/editor/stores/selection-store';
 import { useTimelineZoom } from '../hooks/use-timeline-zoom';
 import { useTransitionResize } from '../hooks/use-transition-resize';
+import { dragOffsetRef } from '../hooks/use-timeline-drag';
 import type { TimelineState, TimelineActions } from '../types';
 import type { SelectionState, SelectionActions } from '@/features/editor/types';
 import {
@@ -71,6 +72,54 @@ export const TransitionItem = memo(function TransitionItem({
 
   // Track hovered edge for showing resize handles
   const [hoveredEdge, setHoveredEdge] = useState<'left' | 'right' | null>(null);
+
+  // Ref for applying drag offset when both clips are being dragged
+  const containerRef = useRef<HTMLDivElement>(null);
+  const rafIdRef = useRef<number | null>(null);
+  const isDraggingRef = useRef(false);
+
+  // Subscribe to drag state and apply offset when both clips are dragged together
+  useEffect(() => {
+    const updateDragOffset = () => {
+      if (!containerRef.current || !isDraggingRef.current) return;
+      const offset = dragOffsetRef.current;
+      containerRef.current.style.transform = `translate(${offset.x}px, ${offset.y}px)`;
+      rafIdRef.current = requestAnimationFrame(updateDragOffset);
+    };
+
+    const unsubscribe = useSelectionStore.subscribe((state) => {
+      const dragState = state.dragState;
+      const bothClipsDragged = dragState?.isDragging &&
+        dragState.draggedItemIds.includes(transition.leftClipId) &&
+        dragState.draggedItemIds.includes(transition.rightClipId);
+
+      const wasDragging = isDraggingRef.current;
+      isDraggingRef.current = !!bothClipsDragged;
+
+      // Start RAF loop when both clips start dragging
+      if (!wasDragging && bothClipsDragged) {
+        rafIdRef.current = requestAnimationFrame(updateDragOffset);
+      }
+
+      // Cleanup when drag ends
+      if (wasDragging && !bothClipsDragged) {
+        if (rafIdRef.current) {
+          cancelAnimationFrame(rafIdRef.current);
+          rafIdRef.current = null;
+        }
+        if (containerRef.current) {
+          containerRef.current.style.transform = '';
+        }
+      }
+    });
+
+    return () => {
+      unsubscribe();
+      if (rafIdRef.current) {
+        cancelAnimationFrame(rafIdRef.current);
+      }
+    };
+  }, [transition.leftClipId, transition.rightClipId]);
 
   // Calculate position and size for the transition region
   // The transition is centered on the junction (half before, half after the cut point)
@@ -190,6 +239,7 @@ export const TransitionItem = memo(function TransitionItem({
     <ContextMenu>
       <ContextMenuTrigger asChild>
         <div
+          ref={containerRef}
           className={cn(
             'absolute',
             isSelected &&

@@ -160,13 +160,32 @@ export function moveItems(updates: Array<{ id: string; from: number; trackId?: s
   execute('MOVE_ITEMS', () => {
     useItemsStore.getState()._moveItems(updates);
 
-    // Validate transitions for all moved items
+    const movedItemIds = new Set(updates.map((u) => u.id));
     const items = useItemsStore.getState().items;
     const transitions = useTransitionsStore.getState().transitions;
+
+    // Update transition trackIds when both clips of a pair move together
+    const updatedTransitions = transitions.map((t) => {
+      const leftMoved = movedItemIds.has(t.leftClipId);
+      const rightMoved = movedItemIds.has(t.rightClipId);
+
+      if (leftMoved && rightMoved) {
+        const leftClip = items.find((i) => i.id === t.leftClipId);
+        const rightClip = items.find((i) => i.id === t.rightClipId);
+
+        // If they're now on the same track, update transition trackId
+        if (leftClip && rightClip && leftClip.trackId === rightClip.trackId) {
+          return { ...t, trackId: leftClip.trackId };
+        }
+      }
+      return t;
+    });
+
+    // Validate transitions for all moved items
     const { valid, broken } = validateTransitions(
       updates.map((u) => u.id),
       items,
-      transitions
+      updatedTransitions
     );
 
     useTransitionsStore.getState().setTransitions(valid);
