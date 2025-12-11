@@ -10,6 +10,13 @@ import { PitchCorrectedAudio } from './pitch-corrected-audio';
 import { GifPlayer } from './gif-player';
 import { loadFont, FONT_WEIGHT_MAP } from '../utils/fonts';
 import { ItemVisualWrapper } from './item-visual-wrapper';
+import {
+  timelineToSourceFrames,
+  isValidSeekPosition,
+  isWithinSourceBounds,
+  getSafeTrimBefore,
+  DEFAULT_SPEED,
+} from '@/features/timeline/utils/source-calculations';
 
 /** Mask information passed from composition to items */
 export interface MaskInfo {
@@ -599,7 +606,7 @@ const ShapeContent: React.FC<{ item: ShapeItem }> = ({ item }) => {
 };
 
 // Set to true to show debug overlay on video items during rendering
-const DEBUG_VIDEO_OVERLAY = false;
+const DEBUG_VIDEO_OVERLAY = true;
 
 export interface ItemProps {
   item: TimelineItem;
@@ -639,23 +646,19 @@ export const Item = React.memo<ItemProps>(({ item, muted = false, masks = [] }) 
     // Fall back to trimStart or offset for backward compatibility
     const trimBefore = item.sourceStart ?? item.trimStart ?? item.offset ?? 0;
     // Get playback rate from speed property (default 1x)
-    const playbackRate = item.speed ?? 1;
+    const playbackRate = item.speed ?? DEFAULT_SPEED;
 
-    // Calculate source frames needed for playback
-    // Use Math.round to minimize rounding errors (ceil can exceed by 1 frame)
-    const sourceFramesNeeded = Math.round(item.durationInFrames * playbackRate);
+    // Calculate source frames needed for playback using shared utility
+    const sourceFramesNeeded = timelineToSourceFrames(item.durationInFrames, playbackRate);
     const sourceEndPosition = trimBefore + sourceFramesNeeded;
     const sourceDuration = item.sourceDuration || 0;
 
-    // Validate sourceStart doesn't exceed source duration
-    // Use small tolerance (2 frames) for floating point rounding errors
-    const tolerance = 2;
-    const isInvalidSeek = sourceDuration > 0 && trimBefore >= sourceDuration;
-    const exceedsSource = sourceDuration > 0 && sourceEndPosition > sourceDuration + tolerance;
+    // Validate using shared utilities
+    const isInvalidSeek = !isValidSeekPosition(trimBefore, sourceDuration || undefined);
+    const exceedsSource = !isWithinSourceBounds(trimBefore, item.durationInFrames, playbackRate, sourceDuration || undefined);
 
     // Safety check: if sourceStart is unreasonably high (>1 hour) and no sourceDuration is set,
     // this indicates corrupted metadata from split/trim operations
-    // Show error state instead of crashing Remotion
     const MAX_REASONABLE_FRAMES = 30 * 60 * 60; // 1 hour at 30fps
     const hasCorruptedMetadata = sourceDuration === 0 && trimBefore > MAX_REASONABLE_FRAMES;
 
@@ -675,15 +678,8 @@ export const Item = React.memo<ItemProps>(({ item, muted = false, masks = [] }) 
       );
     }
 
-    // Clamp trimBefore to valid range if source duration is known
-    let safeTrimBefore = trimBefore;
-    if (sourceDuration > 0) {
-      // Ensure we don't seek past the source
-      const maxTrimBefore = Math.max(0, sourceDuration - sourceFramesNeeded);
-      if (trimBefore > maxTrimBefore) {
-        safeTrimBefore = maxTrimBefore;
-      }
-    }
+    // Clamp trimBefore to valid range using shared utility
+    const safeTrimBefore = getSafeTrimBefore(trimBefore, item.durationInFrames, playbackRate, sourceDuration || undefined);
 
     // If clip would exceed source even after clamping, show error
     // This happens when durationInFrames * playbackRate > sourceDuration
@@ -745,8 +741,8 @@ export const Item = React.memo<ItemProps>(({ item, muted = false, masks = [] }) 
 
     // Use sourceStart for trimBefore (absolute position in source)
     const trimBefore = item.sourceStart ?? item.trimStart ?? item.offset ?? 0;
-    // Get playback rate from speed property (default 1x)
-    const playbackRate = item.speed ?? 1;
+    // Get playback rate from speed property
+    const playbackRate = item.speed ?? DEFAULT_SPEED;
 
     // Use PitchCorrectedAudio for pitch-preserved playback during preview
     // and toneFrequency correction during rendering
@@ -781,8 +777,8 @@ export const Item = React.memo<ItemProps>(({ item, muted = false, masks = [] }) 
     const isAnimatedGif = isGifUrl(item.src) || (item.label && item.label.toLowerCase().endsWith('.gif'));
 
     if (isAnimatedGif) {
-      // Get playback rate from speed property (default 1x)
-      const gifPlaybackRate = item.speed ?? 1;
+      // Get playback rate from speed property
+      const gifPlaybackRate = item.speed ?? DEFAULT_SPEED;
 
       const gifContent = (
         <GifPlayer

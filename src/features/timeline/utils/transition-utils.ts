@@ -17,6 +17,7 @@
 
 import type { TimelineItem } from '@/types/timeline';
 import type { CanAddTransitionResult, Transition, TRANSITION_CONFIGS } from '@/types/transition';
+import { getSourceProperties, sourceToTimelineFrames, getAvailableSourceFrames } from './source-calculations';
 
 /**
  * Check if a transition can be added between two clips.
@@ -92,19 +93,17 @@ export function getAvailableHandle(
   }
 
   // Video items have source-based constraints
-  const speed = clip.speed || 1;
-  const sourceDuration = clip.sourceDuration || 0;
-  const sourceStart = clip.sourceStart || 0;
-  const sourceEnd = clip.sourceEnd || sourceDuration;
+  const { sourceStart, sourceEnd, sourceDuration, speed } = getSourceProperties(clip);
+  const effectiveSourceEnd = sourceEnd ?? sourceDuration ?? 0;
+  const effectiveSourceDuration = sourceDuration ?? 0;
 
   if (side === 'start') {
     // Head handle: how much source is available before current start
-    // sourceStart is already in source frames, divide by speed to get timeline frames
-    return Math.floor(sourceStart / speed);
+    return sourceToTimelineFrames(sourceStart, speed);
   } else {
     // Tail handle: how much source is available after current end
-    // (sourceDuration - sourceEnd) in source frames, divide by speed
-    return Math.floor((sourceDuration - sourceEnd) / speed);
+    const availableAfter = getAvailableSourceFrames(effectiveSourceDuration, effectiveSourceEnd);
+    return sourceToTimelineFrames(availableAfter, speed);
   }
 }
 

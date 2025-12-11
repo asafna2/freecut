@@ -2,6 +2,8 @@ import { create } from 'zustand';
 import type { TimelineItem, TimelineTrack } from '@/types/timeline';
 import type { TransformProperties } from '@/types/transform';
 import type { VisualEffect, ItemEffect } from '@/types/effects';
+import { clampTrimAmount, calculateTrimSourceUpdate } from '../utils/trim-utils';
+import { getSourceProperties, isMediaItem, calculateSplitSourceBoundaries } from '../utils/source-calculations';
 
 /**
  * Items state - timeline clips/items and tracks.
@@ -190,48 +192,22 @@ export const useItemsStore = create<ItemsState & ItemsActions>()(
       items: state.items.map((item) => {
         if (item.id !== id) return item;
 
-        let actualTrimAmount = trimAmount;
+        // Clamp trim amount to source boundaries and minimum duration
+        const { clampedAmount } = clampTrimAmount(item, 'start', trimAmount);
 
-        // For media items, clamp trim to source boundaries (accounting for speed)
-        if (item.type === 'video' || item.type === 'audio') {
-          const currentSourceStart = item.sourceStart ?? 0;
-          const speed = item.speed ?? 1;
-
-          // When extending left (negative trimAmount), can't go past source start (0)
-          // Timeline frames to extend = -actualTrimAmount
-          // Source frames to recover = -actualTrimAmount * speed
-          // Can't recover more than currentSourceStart
-          if (actualTrimAmount < 0) {
-            const maxTimelineExtend = Math.floor(currentSourceStart / speed);
-            if (-actualTrimAmount > maxTimelineExtend) {
-              actualTrimAmount = -maxTimelineExtend;
-            }
-          }
-        }
-
-        const newFrom = item.from + actualTrimAmount;
-        const newDuration = item.durationInFrames - actualTrimAmount;
+        const newFrom = item.from + clampedAmount;
+        const newDuration = item.durationInFrames - clampedAmount;
 
         if (newDuration <= 0) return item;
 
-        // Handle sourceStart for media items (in source frames)
-        if (item.type === 'video' || item.type === 'audio') {
-          const currentSourceStart = item.sourceStart ?? 0;
-          const speed = item.speed ?? 1;
-          // newSourceStart = currentSourceStart + (trimAmount * speed)
-          const newSourceStart = currentSourceStart + Math.round(actualTrimAmount * speed);
-          return {
-            ...item,
-            from: newFrom,
-            durationInFrames: newDuration,
-            sourceStart: newSourceStart,
-          };
-        }
+        // Calculate source boundary updates for media items
+        const sourceUpdate = calculateTrimSourceUpdate(item, 'start', clampedAmount, newDuration);
 
         return {
           ...item,
           from: newFrom,
           durationInFrames: newDuration,
+          ...sourceUpdate,
         };
       }),
     })),
@@ -241,43 +217,20 @@ export const useItemsStore = create<ItemsState & ItemsActions>()(
       items: state.items.map((item) => {
         if (item.id !== id) return item;
 
-        let actualTrimAmount = trimAmount;
+        // Clamp trim amount to source boundaries and minimum duration
+        const { clampedAmount } = clampTrimAmount(item, 'end', trimAmount);
 
-        // For media items, clamp trim to source boundaries (accounting for speed)
-        if (item.type === 'video' || item.type === 'audio') {
-          const sourceDuration = item.sourceDuration;
-          if (sourceDuration !== undefined) {
-            const currentSourceStart = item.sourceStart ?? 0;
-            const speed = item.speed ?? 1;
-            // At slower speeds, same source frames = more timeline frames
-            // maxTimelineDuration = availableSourceFrames / speed
-            const availableSourceFrames = sourceDuration - currentSourceStart;
-            const maxTimelineDuration = Math.floor(availableSourceFrames / speed);
-            const newDuration = item.durationInFrames + actualTrimAmount;
-
-            // When extending right, can't go past source end
-            if (newDuration > maxTimelineDuration) {
-              actualTrimAmount = maxTimelineDuration - item.durationInFrames;
-            }
-          }
-        }
-
-        const newDuration = item.durationInFrames + actualTrimAmount;
+        const newDuration = item.durationInFrames + clampedAmount;
         if (newDuration <= 0) return item;
 
-        // Update sourceEnd for media items (in source frames, not timeline frames)
-        if (item.type === 'video' || item.type === 'audio') {
-          const currentSourceStart = item.sourceStart ?? 0;
-          const speed = item.speed ?? 1;
-          // sourceEnd = sourceStart + (timelineDuration * speed)
-          return {
-            ...item,
-            durationInFrames: newDuration,
-            sourceEnd: currentSourceStart + Math.round(newDuration * speed),
-          };
-        }
+        // Calculate source boundary updates for media items
+        const sourceUpdate = calculateTrimSourceUpdate(item, 'end', clampedAmount, newDuration);
 
-        return { ...item, durationInFrames: newDuration };
+        return {
+          ...item,
+          durationInFrames: newDuration,
+          ...sourceUpdate,
+        };
       }),
     })),
 
@@ -310,14 +263,14 @@ export const useItemsStore = create<ItemsState & ItemsActions>()(
         durationInFrames: rightDuration,
       } as TimelineItem;
 
-      // Handle sourceStart/sourceEnd for media items
-      if (item.type === 'video' || item.type === 'audio') {
-        const currentSourceStart = item.sourceStart ?? 0;
-        // Left item: update sourceEnd
-        (leftItem as typeof item).sourceEnd = currentSourceStart + leftDuration;
-        // Right item: update sourceStart and sourceEnd
-        (rightItem as typeof item).sourceStart = currentSourceStart + leftDuration;
-        (rightItem as typeof item).sourceEnd = currentSourceStart + leftDuration + rightDuration;
+      // Handle sourceStart/sourceEnd for media items (accounting for speed)
+      if (isMediaItem(item)) {
+        const { sourceStart, speed } = getSourceProperties(item);
+        const boundaries = calculateSplitSourceBoundaries(sourceStart, leftDuration, rightDuration, speed);
+
+        (leftItem as typeof item).sourceEnd = boundaries.left.sourceEnd;
+        (rightItem as typeof item).sourceStart = boundaries.right.sourceStart;
+        (rightItem as typeof item).sourceEnd = boundaries.right.sourceEnd;
       }
 
       set((state) => ({
@@ -445,7 +398,8 @@ export const useItemsStore = create<ItemsState & ItemsActions>()(
     _addEffect: (itemId, effect) => set((state) => ({
       items: state.items.map((item) => {
         if (item.id !== itemId) return item;
-        if (!('effects' in item)) return item;
+        // Audio items don't support visual effects
+        if (item.type === 'audio') return item;
 
         const effects = item.effects || [];
         const newEffect: ItemEffect = {
@@ -469,7 +423,8 @@ export const useItemsStore = create<ItemsState & ItemsActions>()(
         items: state.items.map((item) => {
           const effectsToAdd = updateMap.get(item.id);
           if (!effectsToAdd) return item;
-          if (!('effects' in item)) return item;
+          // Audio items don't support visual effects
+          if (item.type === 'audio') return item;
 
           const currentEffects = item.effects || [];
           const newEffects: ItemEffect[] = effectsToAdd.map((effect) => ({
@@ -490,7 +445,8 @@ export const useItemsStore = create<ItemsState & ItemsActions>()(
     _updateEffect: (itemId, effectId, updates) => set((state) => ({
       items: state.items.map((item) => {
         if (item.id !== itemId) return item;
-        if (!('effects' in item)) return item;
+        // Audio items don't support visual effects
+        if (item.type === 'audio') return item;
 
         const effects = item.effects || [];
         return {
@@ -512,7 +468,8 @@ export const useItemsStore = create<ItemsState & ItemsActions>()(
     _removeEffect: (itemId, effectId) => set((state) => ({
       items: state.items.map((item) => {
         if (item.id !== itemId) return item;
-        if (!('effects' in item)) return item;
+        // Audio items don't support visual effects
+        if (item.type === 'audio') return item;
 
         const effects = item.effects || [];
         return {
@@ -526,7 +483,8 @@ export const useItemsStore = create<ItemsState & ItemsActions>()(
     _toggleEffect: (itemId, effectId) => set((state) => ({
       items: state.items.map((item) => {
         if (item.id !== itemId) return item;
-        if (!('effects' in item)) return item;
+        // Audio items don't support visual effects
+        if (item.type === 'audio') return item;
 
         const effects = item.effects || [];
         return {

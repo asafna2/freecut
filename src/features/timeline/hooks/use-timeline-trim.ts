@@ -5,8 +5,9 @@ import { useTimelineStore } from '../stores/timeline-store';
 import { useSelectionStore } from '@/features/editor/stores/selection-store';
 import { useTimelineZoom } from './use-timeline-zoom';
 import { useSnapCalculator } from './use-snap-calculator';
+import { clampTrimAmount, type TrimHandle } from '../utils/trim-utils';
 
-export type TrimHandle = 'start' | 'end';
+export type { TrimHandle } from '../utils/trim-utils';
 
 interface TrimState {
   isTrimming: boolean;
@@ -25,6 +26,7 @@ interface TrimState {
  * - Only commit to store on mouseup (single undo entry)
  * - Smooth performance with RAF updates
  * - Snapping support for trim edges to grid and item boundaries
+ * - Source boundary clamping for accurate visual feedback
  */
 export function useTimelineTrim(item: TimelineItem, timelineDuration: number, trackLocked: boolean = false) {
   const { pixelsToTime } = useTimelineZoom();
@@ -116,6 +118,11 @@ export function useTimelineTrim(item: TimelineItem, timelineDuration: number, tr
           deltaFrames = snappedFrame - (initialFrom + initialDuration);
         }
       }
+
+      // Apply source boundary clamping for media items
+      // This ensures visual feedback matches what the store will actually commit
+      const { clampedAmount } = clampTrimAmount(item, handle!, deltaFrames);
+      deltaFrames = clampedAmount;
 
       // Update local state for visual feedback
       if (deltaFrames !== trimStateRef.current.currentDelta) {

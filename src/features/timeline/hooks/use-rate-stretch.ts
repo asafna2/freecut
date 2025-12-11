@@ -5,12 +5,18 @@ import { useTimelineStore } from '../stores/timeline-store';
 import { useSelectionStore } from '@/features/editor/stores/selection-store';
 import { useTimelineZoom } from './use-timeline-zoom';
 import { useSnapCalculator } from './use-snap-calculator';
+import {
+  MIN_SPEED,
+  MAX_SPEED,
+  calculateSpeed,
+  clampSpeed,
+  sourceToTimelineFrames,
+} from '../utils/source-calculations';
 
 export type StretchHandle = 'start' | 'end';
 
-// Speed limits
-export const MIN_SPEED = 0.1;
-export const MAX_SPEED = 10.0;
+// Re-export for consumers that import from this module
+export { MIN_SPEED, MAX_SPEED };
 
 // For GIFs/images that loop, use generous duration limits (1 frame to ~10 minutes at 30fps)
 const LOOPING_MEDIA_MAX_DURATION = 30 * 60 * 10; // 10 minutes at 30fps
@@ -41,19 +47,18 @@ function getDurationLimits(sourceDuration: number, isLoopingMedia: boolean): { m
     };
   }
   // For videos/audio: duration is constrained by source content
+  // Use shared utility for source-to-timeline conversion
   return {
-    min: Math.max(1, Math.ceil(sourceDuration / MAX_SPEED)),
-    max: Math.floor(sourceDuration / MIN_SPEED),
+    min: Math.max(1, sourceToTimelineFrames(sourceDuration, MAX_SPEED)),
+    max: sourceToTimelineFrames(sourceDuration, MIN_SPEED),
   };
 }
 
 /**
- * Calculate speed from source duration and timeline duration
+ * Calculate and clamp speed from source duration and timeline duration
  */
-function calculateSpeed(sourceDuration: number, timelineDuration: number): number {
-  if (timelineDuration <= 0) return 1;
-  const speed = sourceDuration / timelineDuration;
-  return Math.max(MIN_SPEED, Math.min(MAX_SPEED, speed));
+function getClampedSpeed(sourceDuration: number, timelineDuration: number): number {
+  return clampSpeed(calculateSpeed(sourceDuration, timelineDuration));
 }
 
 /**
@@ -258,7 +263,7 @@ export function useRateStretch(item: TimelineItem, timelineDuration: number, tra
           newFrom = Math.round(initialFrom);
         }
 
-        newSpeed = calculateSpeed(sourceDuration, newDuration);
+        newSpeed = getClampedSpeed(sourceDuration, newDuration);
 
         // Only update store if there was actual change (compare rounded values)
         if (newDuration !== initialDuration) {
@@ -366,7 +371,7 @@ export function useRateStretch(item: TimelineItem, timelineDuration: number, tra
       newFrom = Math.round(initialFrom);
     }
 
-    const previewSpeed = calculateSpeed(sourceDuration, newDuration);
+    const previewSpeed = getClampedSpeed(sourceDuration, newDuration);
 
     return {
       from: newFrom,
