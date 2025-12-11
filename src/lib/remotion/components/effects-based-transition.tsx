@@ -187,8 +187,27 @@ const ClipContent: React.FC<{
   adjustmentLayers: AdjustmentLayerWithTrackOrder[];
   /** The global frame position of this clip's start in the timeline */
   clipGlobalFrom: number;
-}> = ({ clip, sourceStartOffset = 0, canvasWidth, canvasHeight, fps, adjustmentLayers, clipGlobalFrom }) => {
+  /** Debug label for logging */
+  debugLabel?: string;
+}> = ({ clip, sourceStartOffset = 0, canvasWidth, canvasHeight, fps, adjustmentLayers, clipGlobalFrom, debugLabel }) => {
   const frame = useCurrentFrame();
+
+  // Debug logging for transition clips (log once using a ref)
+  const hasLoggedRef = React.useRef(false);
+  if (debugLabel && !hasLoggedRef.current) {
+    hasLoggedRef.current = true;
+    console.log(`[Transition ${debugLabel}]`, {
+      clipId: clip.id,
+      clipType: clip.type,
+      hasSrc: !!(clip as any).src,
+      localFrame: frame,
+      sourceStartOffset,
+      clipGlobalFrom,
+      sourceStart: (clip as any).sourceStart,
+      sourceEnd: (clip as any).sourceEnd,
+      sourceDuration: (clip as any).sourceDuration,
+    });
+  }
   // Convert local frame to global frame for adjustment layer timing
   const globalFrame = frame + clipGlobalFrom;
 
@@ -300,22 +319,14 @@ const ClipContent: React.FC<{
     const baseSourceStart = videoClip.sourceStart ?? videoClip.trimStart ?? videoClip.offset ?? 0;
     const rawAdjustedStart = baseSourceStart + sourceStartOffset;
 
-    // When we can't go earlier than source start (rawAdjustedStart < 0),
-    // use CSS mirror effect like CapCut does for smooth visual transition
-    const needsMirror = rawAdjustedStart < 0;
+    // Clamp to 0 - if we don't have earlier source frames, just start from 0
     const sourceStart = Math.max(0, rawAdjustedStart);
     const playbackRate = videoClip.speed ?? 1;
-
-    // Combine transform style with mirror if needed
-    const combinedTransform = needsMirror
-      ? `${transformStyle.transform || ''} scaleX(-1)`.trim()
-      : transformStyle.transform;
 
     mediaContent = (
       <div
         style={{
           ...transformStyle,
-          transform: combinedTransform || undefined,
           overflow: 'hidden',
         }}
       >
@@ -631,6 +642,21 @@ export const EffectsBasedTransitionRenderer = React.memo<EffectsBasedTransitionP
   // Right clip starts at transitionStart in the timeline context
   const rightClipGlobalFrom = transitionStart;
 
+  // Debug logging for transition setup
+  console.log('[Transition Setup]', {
+    transitionId: transition.id,
+    presentation: transition.presentation,
+    duration: transition.durationInFrames,
+    leftClipId: leftClip.id,
+    rightClipId: rightClip.id,
+    leftClipDuration: leftClip.durationInFrames,
+    rightClipDuration: rightClip.durationInFrames,
+    leftClipContentOffset,
+    rightClipSourceOffset,
+    cutPoint,
+    transitionStart,
+  });
+
   return (
     <Sequence
       from={transitionStart}
@@ -669,6 +695,7 @@ export const EffectsBasedTransitionRenderer = React.memo<EffectsBasedTransitionP
               fps={fps}
               adjustmentLayers={adjustmentLayers}
               clipGlobalFrom={rightClipGlobalFrom}
+              debugLabel="RIGHT/incoming"
             />
           </Sequence>
         </TransitionOverlay>
@@ -694,6 +721,7 @@ export const EffectsBasedTransitionRenderer = React.memo<EffectsBasedTransitionP
               fps={fps}
               adjustmentLayers={adjustmentLayers}
               clipGlobalFrom={leftClipGlobalFrom}
+              debugLabel="LEFT/outgoing"
             />
           </Sequence>
         </TransitionOverlay>

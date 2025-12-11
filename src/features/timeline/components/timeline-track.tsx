@@ -354,6 +354,9 @@ export const TimelineTrack = memo(function TimelineTrack({ track }: TimelineTrac
           const thumbnailUrl = await mediaLibraryService.getThumbnailBlobUrl(mediaId);
 
           // Create timeline item
+          // sourceDuration = full source material available (enables handle calculation for transitions)
+          // sourceEnd = current playback endpoint (what portion we're showing)
+          const actualSourceDurationFrames = Math.round(media.duration * fps);
           const baseItem = {
             id: crypto.randomUUID(),
             trackId: track.id,
@@ -364,7 +367,7 @@ export const TimelineTrack = memo(function TimelineTrack({ track }: TimelineTrac
             originId: crypto.randomUUID(),
             sourceStart: 0,
             sourceEnd: itemDuration,
-            sourceDuration: itemDuration,
+            sourceDuration: actualSourceDurationFrames,
             trimStart: 0,
             trimEnd: 0,
           };
@@ -482,6 +485,9 @@ export const TimelineTrack = memo(function TimelineTrack({ track }: TimelineTrac
       const thumbnailUrl = await mediaLibraryService.getThumbnailBlobUrl(mediaId);
 
       // Create timeline item at the collision-free position
+      // sourceDuration = full source material available (enables handle calculation for transitions)
+      // sourceEnd = current playback endpoint (what portion we're showing)
+      const actualSourceDurationFrames = Math.round(media.duration * fps);
       let timelineItem: TimelineItemType;
       const baseItem = {
         id: crypto.randomUUID(),
@@ -494,7 +500,7 @@ export const TimelineTrack = memo(function TimelineTrack({ track }: TimelineTrac
         // Initialize trim/source properties for new items
         sourceStart: 0,
         sourceEnd: itemDuration,
-        sourceDuration: itemDuration,
+        sourceDuration: actualSourceDurationFrames,
         trimStart: 0,
         trimEnd: 0,
       };

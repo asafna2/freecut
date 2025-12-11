@@ -20,7 +20,10 @@ import type { CanAddTransitionResult, Transition, TRANSITION_CONFIGS } from '@/t
 
 /**
  * Check if a transition can be added between two clips.
- * Validates: same track, adjacency, clip duration limits, and handle availability.
+ * Validates: same track, adjacency, and clip duration limits.
+ *
+ * NOTE: Handle availability is NOT required - the transition rendering uses
+ * CSS mirroring (like CapCut) when source material is unavailable.
  */
 export function canAddTransition(
   leftClip: TimelineItem,
@@ -53,28 +56,10 @@ export function canAddTransition(
     };
   }
 
-  // Calculate available handles
+  // Calculate available handles (informational - not a blocking requirement)
+  // When handles are insufficient, the transition renderer uses CSS mirroring
   const leftHandle = getAvailableHandle(leftClip, 'end');
   const rightHandle = getAvailableHandle(rightClip, 'start');
-
-  // Check if both clips have enough handle
-  if (leftHandle < durationInFrames) {
-    return {
-      canAdd: false,
-      reason: `Left clip needs ${durationInFrames - leftHandle} more frames at end`,
-      leftHandle,
-      rightHandle,
-    };
-  }
-
-  if (rightHandle < durationInFrames) {
-    return {
-      canAdd: false,
-      reason: `Right clip needs ${durationInFrames - rightHandle} more frames at start`,
-      leftHandle,
-      rightHandle,
-    };
-  }
 
   return { canAdd: true, leftHandle, rightHandle };
 }
