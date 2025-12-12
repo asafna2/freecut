@@ -11,6 +11,7 @@ import { SelectableItem } from './selectable-item';
 import { SnapGuides } from './snap-guides';
 import { screenToCanvas, transformToScreenBounds } from '../utils/coordinate-transform';
 import { useMarqueeSelection, isMarqueeJustFinished, type Rect } from '@/hooks/use-marquee-selection';
+import { MarqueeOverlay } from '@/components/marquee-overlay';
 import { useAnimatedTransforms } from '@/features/keyframes/hooks/use-animated-transform';
 import { autoKeyframeProperty, GIZMO_ANIMATABLE_PROPS } from '@/features/keyframes/utils/auto-keyframe';
 import type { AnimatableProperty } from '@/types/keyframe';
@@ -553,19 +554,7 @@ export function GizmoOverlay({
       onDoubleClick={(e) => e.stopPropagation()}
     >
       {/* Marquee selection rectangle */}
-      {marqueeState.active && (
-        <div
-          className="absolute pointer-events-none"
-          style={{
-            left: Math.min(marqueeState.startX, marqueeState.currentX),
-            top: Math.min(marqueeState.startY, marqueeState.currentY),
-            width: Math.abs(marqueeState.currentX - marqueeState.startX),
-            height: Math.abs(marqueeState.currentY - marqueeState.startY),
-            border: '1px dashed #f97316',
-            backgroundColor: 'rgba(249, 115, 22, 0.1)',
-          }}
-        />
-      )}
+      <MarqueeOverlay marqueeState={marqueeState} />
 
       {/* Player area - receives clicks for deselection and contains gizmos */}
       <div
