@@ -34,7 +34,9 @@ import {
   X,
   FlaskConical,
   Play,
+  Eye,
 } from 'lucide-react';
+import { useDebugStore } from '@/features/editor/stores/debug-store';
 import type { FixtureType } from '@/features/project-bundle/services/test-fixtures';
 
 interface DebugAction {
@@ -59,6 +61,10 @@ export function ProjectDebugPanel({ projectId }: ProjectDebugPanelProps) {
   const [availableFixtures, setAvailableFixtures] = useState<
     Array<{ type: FixtureType; name: string; description: string }>
   >([]);
+
+  // Debug overlay toggle
+  const showVideoDebugOverlay = useDebugStore((s) => s.showVideoDebugOverlay);
+  const toggleVideoDebugOverlay = useDebugStore((s) => s.toggleVideoDebugOverlay);
 
   // Load available fixtures on mount
   useEffect(() => {
@@ -354,6 +360,31 @@ export function ProjectDebugPanel({ projectId }: ProjectDebugPanelProps) {
 
             <CollapsibleContent>
               <div className="px-2 pb-2 space-y-3">
+                {/* Overlays Section */}
+                <div>
+                  <div className="px-1 py-1 text-[10px] uppercase tracking-wider text-zinc-500 font-medium">
+                    Overlays
+                  </div>
+                  <div className="space-y-0.5">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className={cn(
+                        "w-full justify-start gap-2 h-8 text-xs",
+                        showVideoDebugOverlay && "bg-amber-500/20 text-amber-300"
+                      )}
+                      onClick={toggleVideoDebugOverlay}
+                      title="Show debug info on video clips"
+                    >
+                      <Eye className="h-3.5 w-3.5" />
+                      Video Debug Overlay
+                      {showVideoDebugOverlay && (
+                        <span className="ml-auto text-[10px] bg-amber-500/30 px-1.5 py-0.5 rounded">ON</span>
+                      )}
+                    </Button>
+                  </div>
+                </div>
+
                 {/* Export Section */}
                 <div>
                   <div className="px-1 py-1 text-[10px] uppercase tracking-wider text-zinc-500 font-medium">

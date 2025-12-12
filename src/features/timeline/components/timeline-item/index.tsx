@@ -99,8 +99,8 @@ export const TimelineItem = memo(function TimelineItem({ item, timelineDuration 
     return () => window.removeEventListener('mouseup', handleMouseUp);
   }, [dragBlockedTooltip]);
 
-  // Track global drag state for join indicators (needs re-render to hide when other clips drag)
-  const [isAnyDragActive, setIsAnyDragActive] = useState(false);
+  // Track if this item or neighbors are being dragged (for join indicators)
+  const [dragAffectsJoin, setDragAffectsJoin] = useState<{ left: boolean; right: boolean }>({ left: false, right: false });
 
   // Drag-and-drop functionality (local state for anchor item) - disabled if track is locked
   const { isDragging, dragOffset, handleDragStart } = useTimelineDrag(item, timelineDuration, trackLocked);
@@ -186,9 +186,28 @@ export const TimelineItem = memo(function TimelineItem({ item, timelineDuration 
       const isDragActive = !!state.dragState?.isDragging;
       isAnyDragActiveRef.current = isDragActive;
 
-      // Update state for join indicators (only on drag start/end to minimize re-renders)
-      if (wasDragActive !== isDragActive) {
-        setIsAnyDragActive(isDragActive);
+      // Update join indicator visibility based on whether this item or neighbors are dragged
+      if (isDragActive && state.dragState?.draggedItemIds) {
+        const draggedIds = state.dragState.draggedItemIds;
+        const timelineState = useTimelineStore.getState();
+        const items = timelineState.items;
+
+        // Find current neighbors
+        const leftNeighbor = items.find(
+          (other) => other.id !== item.id && other.trackId === item.trackId &&
+            other.from + other.durationInFrames === item.from
+        );
+        const rightNeighbor = items.find(
+          (other) => other.id !== item.id && other.trackId === item.trackId &&
+            other.from === item.from + item.durationInFrames
+        );
+
+        const thisOrLeftDragged = draggedIds.includes(item.id) || (leftNeighbor && draggedIds.includes(leftNeighbor.id));
+        const thisOrRightDragged = draggedIds.includes(item.id) || (rightNeighbor && draggedIds.includes(rightNeighbor.id));
+
+        setDragAffectsJoin({ left: !!thisOrLeftDragged, right: !!thisOrRightDragged });
+      } else if (wasDragActive && !isDragActive) {
+        setDragAffectsJoin({ left: false, right: false });
       }
 
       // Track when drag ends to prevent click from clearing group selection
@@ -705,7 +724,7 @@ export const TimelineItem = memo(function TimelineItem({ item, timelineDuration 
       <div
         className={cn(
           "absolute left-0 top-0 bottom-0 w-px pointer-events-none transition-opacity duration-75",
-          hasJoinableLeft && !trackLocked && !isAnyDragActive && hoveredEdge !== 'start' && !isTrimming && !isStretching
+          hasJoinableLeft && !trackLocked && !dragAffectsJoin.left && hoveredEdge !== 'start' && !isTrimming && !isStretching
             ? "opacity-100"
             : "opacity-0"
         )}
@@ -715,7 +734,7 @@ export const TimelineItem = memo(function TimelineItem({ item, timelineDuration 
       <div
         className={cn(
           "absolute right-0 top-0 bottom-0 w-px pointer-events-none transition-opacity duration-75",
-          hasJoinableRight && !trackLocked && !isAnyDragActive && hoveredEdge !== 'end' && !isTrimming && !isStretching
+          hasJoinableRight && !trackLocked && !dragAffectsJoin.right && hoveredEdge !== 'end' && !isTrimming && !isStretching
             ? "opacity-100"
             : "opacity-0"
         )}

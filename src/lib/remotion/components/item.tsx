@@ -3,6 +3,7 @@ import { AbsoluteFill, OffthreadVideo, Img, useVideoConfig, useCurrentFrame, int
 import { Rect, Circle, Triangle, Ellipse, Star, Polygon, Heart } from '@remotion/shapes';
 import { useGizmoStore } from '@/features/preview/stores/gizmo-store';
 import { usePlaybackStore } from '@/features/preview/stores/playback-store';
+import { useDebugStore } from '@/features/editor/stores/debug-store';
 import type { TimelineItem, VideoItem, TextItem, ShapeItem } from '@/types/timeline';
 import type { TransformProperties } from '@/types/transform';
 import { DebugOverlay } from './debug-overlay';
@@ -605,8 +606,6 @@ const ShapeContent: React.FC<{ item: ShapeItem }> = ({ item }) => {
   }
 };
 
-// Set to true to show debug overlay on video items during rendering
-const DEBUG_VIDEO_OVERLAY = true;
 
 export interface ItemProps {
   item: TimelineItem;
@@ -632,6 +631,9 @@ export interface ItemProps {
 export const Item = React.memo<ItemProps>(({ item, muted = false, masks = [] }) => {
   // Use muted prop directly - MainComposition already passes track.muted
   // Avoiding store subscription here prevents re-render issues with @remotion/media Audio
+
+  // Debug overlay toggle (always false in production via store)
+  const showDebugOverlay = useDebugStore((s) => s.showVideoDebugOverlay);
 
   if (item.type === 'video') {
     // Guard against missing src (media resolution failed)
@@ -706,7 +708,7 @@ export const Item = React.memo<ItemProps>(({ item, muted = false, masks = [] }) 
           safeTrimBefore={safeTrimBefore}
           playbackRate={playbackRate}
         />
-        {DEBUG_VIDEO_OVERLAY && (
+        {showDebugOverlay && (
           <DebugOverlay
             id={item.id}
             speed={playbackRate}
