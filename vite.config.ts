@@ -19,6 +19,9 @@ export default defineConfig({
     target: 'esnext',
     sourcemap: true,
   },
+  worker: {
+    format: 'es',
+  },
   optimizeDeps: {
     exclude: ['mediabunny'],
   },
