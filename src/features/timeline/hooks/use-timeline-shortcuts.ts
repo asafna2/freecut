@@ -7,7 +7,7 @@ import { useSelectionStore } from '@/features/editor/stores/selection-store';
 import { useClipboardStore } from '@/features/editor/stores/clipboard-store';
 import { useProjectStore } from '@/features/projects/stores/project-store';
 import { HOTKEYS, HOTKEY_OPTIONS } from '@/config/hotkeys';
-import { canJoinMultipleItems } from '@/utils/clip-utils';
+import { canJoinMultipleItems } from '@/features/timeline/utils/clip-utils';
 import { resolveTransform, getSourceDimensions } from '@/lib/remotion/utils/transform-resolver';
 import { resolveAnimatedTransform } from '@/features/keyframes/utils/animated-transform-resolver';
 import type { Transition } from '@/types/transition';
