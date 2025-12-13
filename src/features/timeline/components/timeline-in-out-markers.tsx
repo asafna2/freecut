@@ -143,70 +143,18 @@ export const TimelineInOutMarkers = memo(function TimelineInOutMarkers() {
             }}
           />
 
-          {/* Invisible hit area for vertical line */}
+          {/* Invisible hit area for dragging */}
           <div
             className="absolute pointer-events-auto"
             style={{
-              top: '12px',
-              bottom: '12px',
+              top: 0,
+              bottom: 0,
               left: '-5px',
               width: '12px',
               cursor: isDraggingIn ? 'grabbing' : 'grab',
             }}
             onMouseDown={handleInMouseDown}
           />
-
-          {/* Top bracket handle (L-shape with filled corner) */}
-          <div
-            className="absolute pointer-events-auto"
-            style={{
-              top: 0,
-              left: 0,
-              width: '10px',
-              height: '12px',
-              borderTop: '2px solid var(--color-timeline-in)',
-              borderLeft: '2px solid var(--color-timeline-in)',
-              cursor: isDraggingIn ? 'grabbing' : 'grab',
-            }}
-            onMouseDown={handleInMouseDown}
-          >
-            {/* Filled corner square */}
-            <div
-              style={{
-                position: 'absolute',
-                top: '-2px',
-                left: '-2px',
-                width: '4px',
-                height: '4px',
-                backgroundColor: 'var(--color-timeline-in)',
-              }}
-            />
-          </div>
-
-          {/* Bottom bracket (mirrored L-shape with filled corner) */}
-          <div
-            className="absolute"
-            style={{
-              bottom: 0,
-              left: 0,
-              width: '10px',
-              height: '12px',
-              borderBottom: '2px solid var(--color-timeline-in)',
-              borderLeft: '2px solid var(--color-timeline-in)',
-            }}
-          >
-            {/* Filled corner square */}
-            <div
-              style={{
-                position: 'absolute',
-                bottom: '-2px',
-                left: '-2px',
-                width: '4px',
-                height: '4px',
-                backgroundColor: 'var(--color-timeline-in)',
-              }}
-            />
-          </div>
         </div>
       )}
 
@@ -232,70 +180,18 @@ export const TimelineInOutMarkers = memo(function TimelineInOutMarkers() {
             }}
           />
 
-          {/* Invisible hit area for vertical line */}
+          {/* Invisible hit area for dragging */}
           <div
             className="absolute pointer-events-auto"
             style={{
-              top: '12px',
-              bottom: '12px',
-              right: '-5px',
+              top: 0,
+              bottom: 0,
+              left: '-5px',
               width: '12px',
               cursor: isDraggingOut ? 'grabbing' : 'grab',
             }}
             onMouseDown={handleOutMouseDown}
           />
-
-          {/* Top bracket handle (mirrored L-shape with filled corner) */}
-          <div
-            className="absolute pointer-events-auto"
-            style={{
-              top: 0,
-              right: 0,
-              width: '10px',
-              height: '12px',
-              borderTop: '2px solid var(--color-timeline-out)',
-              borderRight: '2px solid var(--color-timeline-out)',
-              cursor: isDraggingOut ? 'grabbing' : 'grab',
-            }}
-            onMouseDown={handleOutMouseDown}
-          >
-            {/* Filled corner square */}
-            <div
-              style={{
-                position: 'absolute',
-                top: '-2px',
-                right: '-2px',
-                width: '4px',
-                height: '4px',
-                backgroundColor: 'var(--color-timeline-out)',
-              }}
-            />
-          </div>
-
-          {/* Bottom bracket (mirrored L-shape with filled corner) */}
-          <div
-            className="absolute"
-            style={{
-              bottom: 0,
-              right: 0,
-              width: '10px',
-              height: '12px',
-              borderBottom: '2px solid var(--color-timeline-out)',
-              borderRight: '2px solid var(--color-timeline-out)',
-            }}
-          >
-            {/* Filled corner square */}
-            <div
-              style={{
-                position: 'absolute',
-                bottom: '-2px',
-                right: '-2px',
-                width: '4px',
-                height: '4px',
-                backgroundColor: 'var(--color-timeline-out)',
-              }}
-            />
-          </div>
         </div>
       )}
     </>

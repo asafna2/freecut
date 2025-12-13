@@ -52,7 +52,7 @@ const SHORTCUT_CATEGORIES: { name: string; keys: HotkeyKey[] }[] = [
   },
   {
     name: 'Markers',
-    keys: ['ADD_MARKER', 'PREVIOUS_MARKER', 'NEXT_MARKER'],
+    keys: ['ADD_MARKER', 'REMOVE_MARKER', 'PREVIOUS_MARKER', 'NEXT_MARKER'],
   },
   {
     name: 'Keyframes',
@@ -65,6 +65,8 @@ function formatKeyBinding(key: string): string {
   return key
     .replace('mod', 'Ctrl')
     .replace('space', 'Space')
+    .replace('bracketleft', '[')
+    .replace('bracketright', ']')
     .replace('left', '←')
     .replace('right', '→')
     .replace('up', '↑')

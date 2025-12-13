@@ -61,8 +61,9 @@ export const HOTKEYS = {
 
   // Markers
   ADD_MARKER: 'm',
-  PREVIOUS_MARKER: '[',
-  NEXT_MARKER: ']',
+  REMOVE_MARKER: 'shift+m',
+  PREVIOUS_MARKER: 'bracketleft',
+  NEXT_MARKER: 'bracketright',
 
   // Keyframes
   ADD_KEYFRAME: 'k',
@@ -130,6 +131,7 @@ export const HOTKEY_DESCRIPTIONS: Record<HotkeyKey, string> = {
 
   // Markers
   ADD_MARKER: 'Add marker at playhead',
+  REMOVE_MARKER: 'Remove selected marker',
   PREVIOUS_MARKER: 'Jump to previous marker',
   NEXT_MARKER: 'Jump to next marker',
 

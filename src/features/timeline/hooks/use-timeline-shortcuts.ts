@@ -469,27 +469,47 @@ export function useTimelineShortcuts(callbacks: TimelineShortcutCallbacks = {}) 
     [addMarker]
   );
 
+  // Markers: Shift+M - Remove selected marker
+  useHotkeys(
+    HOTKEYS.REMOVE_MARKER,
+    (event) => {
+      event.preventDefault();
+      if (selectedMarkerId) {
+        removeMarker(selectedMarkerId);
+        clearSelection();
+      }
+    },
+    HOTKEY_OPTIONS,
+    [selectedMarkerId, removeMarker, clearSelection]
+  );
+
   // Markers: [ - Jump to previous marker
   useHotkeys(
     HOTKEYS.PREVIOUS_MARKER,
     (event) => {
       event.preventDefault();
+      console.log('[Shortcut] Previous marker triggered');
+      // Read markers directly from store to get latest state
+      const currentMarkers = useTimelineStore.getState().markers;
+      console.log('[Shortcut] Markers count:', currentMarkers.length);
+      if (currentMarkers.length === 0) return;
       const currentFrame = usePlaybackStore.getState().currentFrame;
-      // Find the previous marker before current frame
-      let previousMarker: number | undefined;
-      for (let i = markers.length - 1; i >= 0; i--) {
-        const marker = markers[i];
-        if (marker && marker.frame < currentFrame) {
-          previousMarker = marker.frame;
-          break;
+      // Find the closest marker before current frame (markers may not be sorted)
+      let previousFrame: number | undefined;
+      for (const marker of currentMarkers) {
+        if (marker.frame < currentFrame) {
+          if (previousFrame === undefined || marker.frame > previousFrame) {
+            previousFrame = marker.frame;
+          }
         }
       }
-      if (previousMarker !== undefined) {
-        setCurrentFrame(previousMarker);
+      if (previousFrame !== undefined) {
+        console.log('[Shortcut] Jumping to frame:', previousFrame);
+        setCurrentFrame(previousFrame);
       }
     },
     HOTKEY_OPTIONS,
-    [setCurrentFrame, markers]
+    [setCurrentFrame]
   );
 
   // Markers: ] - Jump to next marker
@@ -497,15 +517,28 @@ export function useTimelineShortcuts(callbacks: TimelineShortcutCallbacks = {}) 
     HOTKEYS.NEXT_MARKER,
     (event) => {
       event.preventDefault();
+      console.log('[Shortcut] Next marker triggered');
+      // Read markers directly from store to get latest state
+      const currentMarkers = useTimelineStore.getState().markers;
+      console.log('[Shortcut] Markers count:', currentMarkers.length);
+      if (currentMarkers.length === 0) return;
       const currentFrame = usePlaybackStore.getState().currentFrame;
-      // Find the next marker after current frame
-      const nextMarker = markers.find((m) => m.frame > currentFrame);
-      if (nextMarker) {
-        setCurrentFrame(nextMarker.frame);
+      // Find the closest marker after current frame (markers may not be sorted)
+      let nextFrame: number | undefined;
+      for (const marker of currentMarkers) {
+        if (marker.frame > currentFrame) {
+          if (nextFrame === undefined || marker.frame < nextFrame) {
+            nextFrame = marker.frame;
+          }
+        }
+      }
+      if (nextFrame !== undefined) {
+        console.log('[Shortcut] Jumping to frame:', nextFrame);
+        setCurrentFrame(nextFrame);
       }
     },
     HOTKEY_OPTIONS,
-    [setCurrentFrame, markers]
+    [setCurrentFrame]
   );
 
   // Keyframes: K - Add keyframe at playhead for selected items
