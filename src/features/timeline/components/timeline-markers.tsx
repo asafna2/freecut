@@ -1,5 +1,5 @@
 // React and external libraries
-import { useCallback, useRef, useState, useEffect, memo, useDeferredValue } from 'react';
+import { useCallback, useRef, useState, useEffect, memo } from 'react';
 
 // Stores and selectors
 import { useTimelineStore } from '../stores/timeline-store';
@@ -93,7 +93,7 @@ function calculateMarkerInterval(pixelsPerSecond: number): MarkerInterval {
 }
 
 /**
- * Draw tick lines on a single tile canvas (labels are rendered in DOM)
+ * Draw tick lines on a single tile canvas (labels rendered separately in DOM for crisp text)
  * Takes pre-computed markerConfig to avoid redundant calculations across tiles
  */
 function drawTile(
@@ -102,7 +102,6 @@ function drawTile(
   tileWidth: number,
   canvasHeight: number,
   markerConfig: MarkerInterval,
-  fps: number,
   timeToPixels: (time: number) => number,
   totalWidth: number
 ) {
@@ -179,15 +178,14 @@ function drawTile(
 }
 
 /**
- * Virtualized DOM labels for timeline ruler
+ * DOM labels for timeline ruler - uses quantized PPS to stay in sync with canvas ticks
  * Renders only visible labels with buffer for smooth scrolling
  */
 interface TimelineMarkerLabelsProps {
   scrollLeft: number;
   viewportWidth: number;
-  pixelsPerSecond: number;
+  quantizedPPS: number; // Use quantized PPS to match canvas rendering
   fps: number;
-  timeToPixels: (time: number) => number;
 }
 
 const LABEL_BUFFER = 100; // Extra pixels to render labels outside viewport
@@ -195,27 +193,36 @@ const LABEL_BUFFER = 100; // Extra pixels to render labels outside viewport
 const TimelineMarkerLabels = memo(function TimelineMarkerLabels({
   scrollLeft,
   viewportWidth,
-  pixelsPerSecond,
+  quantizedPPS,
   fps,
-  timeToPixels,
 }: TimelineMarkerLabelsProps) {
-  // Defer zoom changes to keep interactions responsive
-  const deferredPPS = useDeferredValue(pixelsPerSecond);
-  const deferredTimeToPixels = (time: number) => time * deferredPPS;
+  // Use quantized PPS directly (same as canvas) - no deferred value needed
+  const timeToPixels = (time: number) => time * quantizedPPS;
 
-  const markerConfig = calculateMarkerInterval(deferredPPS);
-  // Use intervalInSeconds directly from config (already set correctly for all marker types)
+  const markerConfig = calculateMarkerInterval(quantizedPPS);
   const intervalInSeconds = markerConfig.intervalInSeconds;
-  const markerWidthPx = deferredTimeToPixels(intervalInSeconds);
+  const markerWidthPx = timeToPixels(intervalInSeconds);
+
+  // Fallback for zero viewport (initial render)
+  const effectiveViewport = viewportWidth || 1000;
 
   if (markerWidthPx <= 0) return null;
 
-  // Calculate visible range with buffer
-  const startPx = Math.max(0, scrollLeft - LABEL_BUFFER);
-  const endPx = scrollLeft + viewportWidth + LABEL_BUFFER;
+  // Use actual scroll position - don't clamp too aggressively
+  // The scroll position from parent is authoritative; displayWidth may be stale during zoom
+  const effectiveScrollLeft = Math.max(0, scrollLeft);
 
-  const startIndex = Math.floor(startPx / markerWidthPx);
+  // Calculate visible range with buffer
+  // Start from 0 if scroll is near start, otherwise use scroll position minus buffer
+  const startPx = Math.max(0, effectiveScrollLeft - LABEL_BUFFER);
+  // End at scroll position + viewport + buffer (labels outside range will just be positioned off-screen)
+  const endPx = effectiveScrollLeft + effectiveViewport + LABEL_BUFFER;
+
+  const startIndex = Math.max(0, Math.floor(startPx / markerWidthPx));
   const endIndex = Math.ceil(endPx / markerWidthPx);
+
+  // Early exit if no valid range
+  if (endIndex < startIndex) return null;
 
   // Limit max labels to prevent performance issues at high zoom
   const maxLabels = 100;
@@ -225,7 +232,7 @@ const TimelineMarkerLabels = memo(function TimelineMarkerLabels({
 
   for (let i = startIndex; i <= actualEndIndex; i++) {
     const timeInSeconds = i * intervalInSeconds;
-    const x = deferredTimeToPixels(timeInSeconds);
+    const x = timeToPixels(timeInSeconds);
     const frameNumber = secondsToFrames(timeInSeconds, fps);
     const label = formatTimecode(frameNumber, fps);
     labels.push({ time: timeInSeconds, x, label });
@@ -254,7 +261,7 @@ const TimelineMarkerLabels = memo(function TimelineMarkerLabels({
       ))}
     </div>
   );
-});
+})
 
 /**
  * Timeline Markers Component (Tiled Canvas)
@@ -309,40 +316,39 @@ export const TimelineMarkers = memo(function TimelineMarkers({ duration, width }
   useEffect(() => {
     if (!containerRef.current) return;
 
-    const container = containerRef.current.parentElement;
-    if (!container) return;
+    // Find the actual scroll container (not the sticky parent)
+    const scrollContainer = containerRef.current.closest('.timeline-container') as HTMLElement;
+    if (!scrollContainer) return;
 
     const updateViewport = () => {
-      if (containerRef.current) {
-        setViewportWidth(containerRef.current.getBoundingClientRect().width);
-      }
+      // Measure scroll container - that's the actual viewport
+      setViewportWidth(scrollContainer.clientWidth);
     };
 
     const updateScroll = () => {
-      if (container) {
-        const newScrollLeft = container.scrollLeft;
-        if (newScrollLeft !== scrollLeftRef.current) {
-          scrollLeftRef.current = newScrollLeft;
-          if (rafIdRef.current === null) {
-            rafIdRef.current = requestAnimationFrame(() => {
-              rafIdRef.current = null;
-              setScrollLeft(scrollLeftRef.current);
-            });
-          }
+      const newScrollLeft = scrollContainer.scrollLeft;
+      if (newScrollLeft !== scrollLeftRef.current) {
+        scrollLeftRef.current = newScrollLeft;
+        if (rafIdRef.current === null) {
+          rafIdRef.current = requestAnimationFrame(() => {
+            rafIdRef.current = null;
+            setScrollLeft(scrollLeftRef.current);
+          });
         }
       }
     };
 
     updateViewport();
-    setScrollLeft(container.scrollLeft);
+    setScrollLeft(scrollContainer.scrollLeft);
 
+    // Observe scroll container for viewport size changes
     const resizeObserver = new ResizeObserver(updateViewport);
-    resizeObserver.observe(containerRef.current);
-    container.addEventListener('scroll', updateScroll, { passive: true });
+    resizeObserver.observe(scrollContainer);
+    scrollContainer.addEventListener('scroll', updateScroll, { passive: true });
 
     return () => {
       resizeObserver.disconnect();
-      container.removeEventListener('scroll', updateScroll);
+      scrollContainer.removeEventListener('scroll', updateScroll);
       if (rafIdRef.current !== null) {
         cancelAnimationFrame(rafIdRef.current);
       }
@@ -459,7 +465,6 @@ export const TimelineMarkers = memo(function TimelineMarkers({ duration, width }
           TILE_WIDTH,
           canvasHeight,
           markerConfig,
-          fps,
           renderTimeToPixels,
           displayWidth
         );
@@ -511,7 +516,6 @@ export const TimelineMarkers = memo(function TimelineMarkers({ duration, width }
               TILE_WIDTH,
               canvasHeight,
               markerConfig,
-              fps,
               renderTimeToPixels,
               displayWidth
             );
@@ -725,13 +729,12 @@ export const TimelineMarkers = memo(function TimelineMarkers({ duration, width }
         style={{ pointerEvents: 'none' }}
       />
 
-      {/* DOM labels layer (virtualized, crisp text rendering) */}
+      {/* DOM labels layer - uses same quantized PPS as canvas for sync */}
       <TimelineMarkerLabels
         scrollLeft={scrollLeft}
         viewportWidth={viewportWidth}
-        pixelsPerSecond={pixelsPerSecond}
+        quantizedPPS={quantizedPPS}
         fps={fps}
-        timeToPixels={timeToPixels}
       />
 
       {/* Vignette effects */}
