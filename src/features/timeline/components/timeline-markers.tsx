@@ -45,24 +45,27 @@ function quantizePPSForCache(pps: number): number {
 
 /**
  * Calculate optimal marker interval based on zoom level
+ *
+ * Thresholds are calibrated for the zoom range (1-200 pps).
+ * Labels need ~100px minimum spacing to display timecodes clearly.
  */
 function calculateMarkerInterval(pixelsPerSecond: number): MarkerInterval {
-  if (pixelsPerSecond >= 3000) {
-    return { type: 'frame', intervalInSeconds: 1 / 30, minorTicks: 0 };
-  }
-  if (pixelsPerSecond >= 1500) {
-    return { type: 'frame', intervalInSeconds: 3 / 30, minorTicks: 3 };
-  }
-  if (pixelsPerSecond >= 750) {
-    return { type: 'frame', intervalInSeconds: 5 / 30, minorTicks: 5 };
-  }
-  if (pixelsPerSecond >= 300) {
-    return { type: 'frame', intervalInSeconds: 10 / 30, minorTicks: 10 };
+  // Frame-level markers (for high zoom levels)
+  // At 200 pps: 5 frames = 33px, 10 frames = 67px, 15 frames = 100px
+  if (pixelsPerSecond >= 180) {
+    // ~100px apart at max zoom - show every 15 frames (0.5 sec at 30fps)
+    return { type: 'frame', intervalInSeconds: 15 / 30, minorTicks: 5 };
   }
   if (pixelsPerSecond >= 120) {
+    // ~100px apart - show every 25 frames (~0.83 sec)
+    return { type: 'frame', intervalInSeconds: 25 / 30, minorTicks: 5 };
+  }
+  if (pixelsPerSecond >= 80) {
+    // 1 second intervals with frame subdivisions
     return { type: 'second', intervalInSeconds: 1, minorTicks: 10 };
   }
-  if (pixelsPerSecond >= 60) {
+  if (pixelsPerSecond >= 50) {
+    // 2 second intervals
     return { type: 'multi-second', intervalInSeconds: 2, minorTicks: 4 };
   }
   if (pixelsPerSecond >= 24) {
@@ -120,8 +123,8 @@ function drawTile(
   // Clear
   ctx.clearRect(0, 0, actualTileWidth, canvasHeight);
 
-  // Use pre-computed marker interval
-  const intervalInSeconds = markerConfig.type === 'frame' ? 1 / fps : markerConfig.intervalInSeconds;
+  // Use pre-computed marker interval (intervalInSeconds is already set correctly in config)
+  const intervalInSeconds = markerConfig.intervalInSeconds;
   const markerWidthPx = timeToPixels(intervalInSeconds);
 
   if (markerWidthPx <= 0) return;
@@ -201,7 +204,8 @@ const TimelineMarkerLabels = memo(function TimelineMarkerLabels({
   const deferredTimeToPixels = (time: number) => time * deferredPPS;
 
   const markerConfig = calculateMarkerInterval(deferredPPS);
-  const intervalInSeconds = markerConfig.type === 'frame' ? 1 / fps : markerConfig.intervalInSeconds;
+  // Use intervalInSeconds directly from config (already set correctly for all marker types)
+  const intervalInSeconds = markerConfig.intervalInSeconds;
   const markerWidthPx = deferredTimeToPixels(intervalInSeconds);
 
   if (markerWidthPx <= 0) return null;

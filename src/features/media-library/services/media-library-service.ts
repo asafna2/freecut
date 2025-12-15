@@ -23,7 +23,7 @@ import {
   getMediaForProject as getMediaForProjectDB,
 } from '@/lib/storage/indexeddb';
 import { opfsService } from './opfs-service';
-import { validateMediaFile } from '../utils/validation';
+import { validateMediaFile, getMimeType } from '../utils/validation';
 import { extractMetadata } from '../utils/metadata-extractor';
 import { generateThumbnail } from '../utils/thumbnail-generator';
 /**
@@ -161,13 +161,14 @@ export class MediaLibraryService {
     }
 
     // Stage 6: Save metadata to IndexedDB with file handle
+    const resolvedMimeType = getMimeType(file);
     const mediaMetadata: MediaMetadata = {
       id,
       storageType: 'handle',
       fileHandle: handle,
       fileName: file.name,
       fileSize: file.size,
-      mimeType: file.type,
+      mimeType: resolvedMimeType,
       duration: (metadata as { duration?: number }).duration ?? 0,
       width: (metadata as { width?: number }).width ?? 0,
       height: (metadata as { height?: number }).height ?? 0,
@@ -186,7 +187,7 @@ export class MediaLibraryService {
     await associateMediaWithProject(projectId, id);
 
     // Pre-extract GIF frames in background
-    if (file.type === 'image/gif') {
+    if (resolvedMimeType === 'image/gif') {
       const blobUrl = URL.createObjectURL(file);
       import('@/features/timeline/services/gif-frame-cache')
         .then(({ gifFrameCache }) => gifFrameCache.getGifFrames(id, blobUrl))

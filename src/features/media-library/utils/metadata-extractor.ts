@@ -4,6 +4,8 @@
  * Extracts video/audio/image metadata for storage in IndexedDB
  */
 
+import { getMimeType } from './validation';
+
 // Type definitions for mediabunny module
 interface MediabunnyVideoTrack {
   displayWidth: number;
@@ -254,7 +256,7 @@ export async function extractImageMetadata(
 export async function extractMetadata(
   file: File
 ): Promise<Partial<VideoMetadata | AudioMetadata | ImageMetadata>> {
-  const mimeType = file.type;
+  const mimeType = getMimeType(file);
 
   try {
     if (mimeType.startsWith('video/')) {

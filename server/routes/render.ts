@@ -230,6 +230,7 @@ router.get('/media/:jobId/:mediaId', async (req: Request, res: Response) => {
       '.mp4': 'video/mp4',
       '.webm': 'video/webm',
       '.mov': 'video/quicktime',
+      '.mkv': 'video/x-matroska',
       '.mp3': 'audio/mpeg',
       '.wav': 'audio/wav',
       '.jpg': 'image/jpeg',

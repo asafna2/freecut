@@ -8,6 +8,7 @@ export const SUPPORTED_VIDEO_FORMATS = [
   'video/mp4',
   'video/webm',
   'video/quicktime',
+  'video/x-matroska', // .mkv files
 ];
 
 export const SUPPORTED_AUDIO_FORMATS = [

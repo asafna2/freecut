@@ -1,4 +1,4 @@
-import { memo, useEffect, useState, useMemo, useDeferredValue } from 'react';
+import { memo, useEffect, useState, useMemo, useDeferredValue, useCallback } from 'react';
 import { FilmstripSkeleton } from './filmstrip-skeleton';
 import { useFilmstrip, type FilmstripFrame } from '../../hooks/use-filmstrip';
 import { mediaLibraryService } from '@/features/media-library/services/media-library-service';
@@ -62,6 +62,7 @@ function findClosestFrame(frames: FilmstripFrame[], targetTime: number): Filmstr
 
 /**
  * Simple filmstrip tile - memoized to prevent unnecessary re-renders
+ * Hides itself on error to avoid broken image icons
  */
 const FilmstripTile = memo(function FilmstripTile({
   src,
@@ -70,12 +71,24 @@ const FilmstripTile = memo(function FilmstripTile({
   src: string;
   x: number;
 }) {
+  const [errorSrc, setErrorSrc] = useState<string | null>(null);
+
+  const handleError = useCallback(() => {
+    setErrorSrc(src);
+  }, [src]);
+
+  // Hide if this specific src failed, but allow new src to try again
+  if (errorSrc === src) {
+    return null;
+  }
+
   return (
     <img
       src={src}
       alt=""
       decoding="async"
       className="absolute top-0"
+      onError={handleError}
       style={{
         left: x,
         width: THUMBNAIL_WIDTH,

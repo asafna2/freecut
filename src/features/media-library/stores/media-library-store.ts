@@ -3,6 +3,7 @@ import { devtools } from 'zustand/middleware';
 import type { MediaLibraryState, MediaLibraryActions, MediaLibraryNotification, BrokenMediaInfo } from '../types';
 import type { MediaMetadata } from '@/types/storage';
 import { mediaLibraryService } from '../services/media-library-service';
+import { getMimeType } from '../utils/validation';
 import { createLogger } from '@/lib/logger';
 
 const logger = createLogger('MediaLibraryStore');
@@ -125,7 +126,7 @@ export const useMediaLibraryStore = create<
               fileHandle: handle,
               fileName: file.name,
               fileSize: file.size,
-              mimeType: file.type,
+              mimeType: getMimeType(file),
               duration: 0,
               width: 0,
               height: 0,
@@ -222,7 +223,7 @@ export const useMediaLibraryStore = create<
             fileHandle: handle,
             fileName: file.name,
             fileSize: file.size,
-            mimeType: file.type,
+            mimeType: getMimeType(file),
             duration: 0,
             width: 0,
             height: 0,

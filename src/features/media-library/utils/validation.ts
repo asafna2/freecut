@@ -7,6 +7,7 @@ export const SUPPORTED_VIDEO_TYPES = [
   'video/mp4',
   'video/webm',
   'video/quicktime', // .mov files
+  'video/x-matroska', // .mkv files
 ];
 
 export const SUPPORTED_AUDIO_TYPES = [
@@ -25,6 +26,38 @@ export const SUPPORTED_IMAGE_TYPES = [
 ];
 
 export const MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024; // 5GB
+
+// Extension to MIME type mapping for fallback when browser doesn't provide MIME type
+const EXTENSION_TO_MIME: Record<string, string> = {
+  // Video
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
+  '.mov': 'video/quicktime',
+  '.mkv': 'video/x-matroska',
+  // Audio
+  '.mp3': 'audio/mpeg',
+  '.wav': 'audio/wav',
+  '.aac': 'audio/aac',
+  '.ogg': 'audio/ogg',
+  '.opus': 'audio/ogg',
+  // Image
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png',
+  '.gif': 'image/gif',
+};
+
+/**
+ * Get MIME type from file, falling back to extension-based detection
+ */
+export function getMimeType(file: File): string {
+  if (file.type) {
+    return file.type;
+  }
+  // Fallback to extension-based detection
+  const ext = file.name.toLowerCase().match(/\.[^.]+$/)?.[0];
+  return ext ? EXTENSION_TO_MIME[ext] || '' : '';
+}
 
 export interface ValidationResult {
   valid: boolean;
@@ -47,7 +80,7 @@ export function validateMediaFile(file: File): ValidationResult {
     };
   }
 
-  // Check MIME type
+  // Check MIME type (with extension-based fallback for files like .mkv where browser doesn't provide MIME)
   // SECURITY NOTE: This validation relies on client-provided MIME types which can be spoofed.
   // For production use, consider adding server-side validation that checks file headers/magic numbers.
   // Additional validation with mediabunny.canDecode() is performed during metadata extraction.
@@ -57,10 +90,11 @@ export function validateMediaFile(file: File): ValidationResult {
     ...SUPPORTED_IMAGE_TYPES,
   ];
 
-  if (!allSupportedTypes.includes(file.type)) {
+  const mimeType = getMimeType(file);
+  if (!allSupportedTypes.includes(mimeType)) {
     return {
       valid: false,
-      error: `Unsupported file type: ${file.type}. Supported types: video (mp4, webm, mov), audio (mp3, wav, aac, ogg/opus), image (jpg, png, gif)`,
+      error: `Unsupported file type: ${mimeType || file.name.split('.').pop()}. Supported types: video (mp4, webm, mov, mkv), audio (mp3, wav, aac, ogg/opus), image (jpg, png, gif)`,
     };
   }
 

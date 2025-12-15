@@ -4,6 +4,8 @@
  * Generates thumbnails for video, audio, and image files
  */
 
+import { getMimeType } from './validation';
+
 export interface ThumbnailOptions {
   width?: number;
   height?: number;
@@ -227,7 +229,7 @@ export async function generateThumbnail(
   file: File,
   options: ThumbnailOptions = {}
 ): Promise<Blob> {
-  const mimeType = file.type;
+  const mimeType = getMimeType(file);
 
   if (mimeType.startsWith('video/')) {
     return generateVideoThumbnail(file, options);
