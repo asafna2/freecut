@@ -4,6 +4,7 @@
  * Manages filmstrip thumbnail caching with:
  * - In-memory LRU cache for fast access
  * - Hardware-accelerated frame extraction via 4 parallel workers (WebCodecs)
+ * - Off-main-thread JPEG decoding via decode worker
  * - Fixed frame density for consistent quality
  * - Progressive streaming of thumbnails
  * - Rendering matches frames to display slots by timestamp
@@ -16,6 +17,7 @@ const logger = createLogger('FilmstripCache');
 import { THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT } from '@/features/timeline/constants';
 import { filmstripWorkerPool } from './filmstrip-worker-pool';
 import { filmstripOPFSStorage } from './filmstrip-opfs-storage';
+import type { DecodeProgressResponse } from './filmstrip-decode-worker';
 // Legacy IndexedDB imports for migration
 import {
   deleteFilmstripsByMediaId as deleteFromIndexedDB,
@@ -56,6 +58,21 @@ class FilmstripCacheService {
   private currentCacheSize = 0;
   private pendingRequests = new Map<string, PendingRequest>();
   private updateCallbacks = new Map<string, Set<FilmstripUpdateCallback>>();
+  private decodeWorker: Worker | null = null;
+  private decodeRequestId = 0;
+
+  /**
+   * Get or create the decode worker (lazy initialization)
+   */
+  private getDecodeWorker(): Worker {
+    if (!this.decodeWorker) {
+      this.decodeWorker = new Worker(
+        new URL('./filmstrip-decode-worker.ts', import.meta.url),
+        { type: 'module' }
+      );
+    }
+    return this.decodeWorker;
+  }
 
   /**
    * Subscribe to filmstrip updates for progressive loading
@@ -320,7 +337,7 @@ class FilmstripCacheService {
   }
 
   /**
-   * Load filmstrip from OPFS progressively with parallel decoding
+   * Load filmstrip from OPFS progressively with off-main-thread decoding
    */
   private async loadFromOPFSProgressive(mediaId: string): Promise<CachedFilmstrip | null> {
     try {
@@ -344,54 +361,86 @@ class FilmstripCacheService {
       let sizeBytes = 0;
       let loadedCount = 0;
 
-      // Decode in parallel batches for speed
-      const DECODE_BATCH_SIZE = 20;
+      // Convert blobs to ArrayBuffers for transfer to worker
+      const frameBuffers = await Promise.all(
+        frameData.map(async (frame, index) => ({
+          index,
+          timestamp: frame.timestamp,
+          data: await frame.blob.arrayBuffer(),
+          blob: frame.blob,
+        }))
+      );
 
-      for (let startIdx = 0; startIdx < totalFrames; startIdx += DECODE_BATCH_SIZE) {
-        const endIdx = Math.min(startIdx + DECODE_BATCH_SIZE, totalFrames);
-        const batchFrames = frameData.slice(startIdx, endIdx);
-
-        // Parallel decode all frames in this batch
-        const bitmapPromises = batchFrames.map((frame) => createImageBitmap(frame.blob));
-        const decodedBitmaps = await Promise.all(bitmapPromises);
-
-        // Store results
-        for (let i = 0; i < decodedBitmaps.length; i++) {
-          const idx = startIdx + i;
-          const frame = batchFrames[i];
-          imageBitmaps[idx] = decodedBitmaps[i];
-          blobs[idx] = frame.blob;
-          timestamps[idx] = frame.timestamp;
-          sizeBytes += frame.blob.size;
-          loadedCount++;
-        }
-
-        // Emit progressive update after each batch
-        const intermediate: CachedFilmstrip = {
-          frames: imageBitmaps.slice(0, loadedCount),
-          blobs: blobs.slice(0, loadedCount),
-          timestamps: timestamps.slice(0, loadedCount),
-          width: header.width,
-          height: header.height,
-          sizeBytes,
-          lastAccessed: Date.now(),
-          isComplete: loadedCount >= totalFrames,
-        };
-
-        this.addToMemoryCache(mediaId, intermediate);
-        this.notifyUpdate(mediaId, intermediate);
+      // Store blobs and timestamps immediately (we have them)
+      for (const frame of frameBuffers) {
+        blobs[frame.index] = frame.blob;
+        timestamps[frame.index] = frame.timestamp;
+        sizeBytes += frame.data.byteLength;
       }
 
-      return {
-        frames: imageBitmaps,
-        blobs,
-        timestamps,
-        width: header.width,
-        height: header.height,
-        sizeBytes,
-        lastAccessed: Date.now(),
-        isComplete: true,
-      };
+      // Decode using worker (off main thread)
+      const worker = this.getDecodeWorker();
+      const requestId = `decode-${++this.decodeRequestId}`;
+
+      return new Promise((resolve) => {
+        const handleMessage = (event: MessageEvent<DecodeProgressResponse>) => {
+          if (event.data.requestId !== requestId) return;
+          if (event.data.type !== 'progress') return;
+
+          // Store decoded bitmaps
+          for (const result of event.data.results) {
+            imageBitmaps[result.index] = result.bitmap;
+            loadedCount++;
+          }
+
+          // Emit progressive update
+          const intermediate: CachedFilmstrip = {
+            frames: imageBitmaps.slice(0, loadedCount),
+            blobs: blobs.slice(0, loadedCount),
+            timestamps: timestamps.slice(0, loadedCount),
+            width: header.width,
+            height: header.height,
+            sizeBytes,
+            lastAccessed: Date.now(),
+            isComplete: event.data.done,
+          };
+
+          this.addToMemoryCache(mediaId, intermediate);
+          this.notifyUpdate(mediaId, intermediate);
+
+          // Resolve when done
+          if (event.data.done) {
+            worker.removeEventListener('message', handleMessage);
+            resolve({
+              frames: imageBitmaps,
+              blobs,
+              timestamps,
+              width: header.width,
+              height: header.height,
+              sizeBytes,
+              lastAccessed: Date.now(),
+              isComplete: true,
+            });
+          }
+        };
+
+        worker.addEventListener('message', handleMessage);
+
+        // Send frames to worker for decoding (transfer ArrayBuffers)
+        const transferables = frameBuffers.map((f) => f.data);
+        worker.postMessage(
+          {
+            type: 'decode',
+            requestId,
+            frames: frameBuffers.map((f) => ({
+              index: f.index,
+              timestamp: f.timestamp,
+              data: f.data,
+            })),
+          },
+          { transfer: transferables }
+        );
+      });
     } catch (err) {
       logger.warn('Failed to load filmstrip from OPFS:', err);
       return null;
@@ -604,6 +653,11 @@ class FilmstripCacheService {
     this.updateCallbacks.clear();
     // Dispose worker pool
     filmstripWorkerPool.dispose();
+    // Terminate decode worker
+    if (this.decodeWorker) {
+      this.decodeWorker.terminate();
+      this.decodeWorker = null;
+    }
   }
 }
 

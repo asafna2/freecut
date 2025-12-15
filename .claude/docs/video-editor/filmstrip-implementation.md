@@ -8,7 +8,8 @@ Quick reference for the timeline filmstrip thumbnail system.
 ClipFilmstrip (component)
     └── useFilmstrip (hook)
             └── filmstripCache (service)
-                    ├── filmstripWorkerPool (extraction)
+                    ├── filmstripWorkerPool (frame extraction)
+                    ├── filmstripDecodeWorker (JPEG decoding)
                     └── filmstripOPFSStorage (persistence)
 ```
 
@@ -23,6 +24,7 @@ ClipFilmstrip (component)
 | `services/filmstrip-cache.ts` | Memory cache + orchestration |
 | `services/filmstrip-opfs-storage.ts` | Binary OPFS storage with random access |
 | `services/filmstrip-worker-pool.ts` | Parallel frame extraction workers |
+| `services/filmstrip-decode-worker.ts` | Off-main-thread JPEG decoding |
 
 ## Storage Format (OPFS Binary)
 
@@ -70,9 +72,12 @@ Data:
    - OPFS storage → HIT
 3. loadFromOPFSProgressive():
    - Read entire file (single I/O)
-   - Decode 20 frames in parallel (Promise.all)
+   - Convert blobs to ArrayBuffers
+   - Transfer to decode worker (zero-copy)
+   - Worker decodes 20 frames in parallel
+   - Worker transfers ImageBitmaps back (zero-copy)
    - Emit update after each batch
-   - Repeat until complete
+   - Main thread stays free for UI
 ```
 
 ## Progressive Fill-in
@@ -103,8 +108,11 @@ if (timeDiff > proximityThreshold) continue;
 
 ### Loading from Cache
 - **Single file read**: One I/O operation for entire file
-- **Parallel JPEG decoding**: 20 frames decoded concurrently
+- **Off-main-thread decoding**: Dedicated worker for JPEG decode
+- **Zero-copy transfers**: ArrayBuffers and ImageBitmaps transferred, not copied
+- **Parallel JPEG decoding**: 20 frames decoded concurrently in worker
 - **Progressive updates**: UI shows frames as batches complete
+- **Non-blocking**: Main thread free for UI during decode
 
 ### Rendering
 - **Tiled canvas**: Splits large clips into 1000px tiles (avoids browser limits)
