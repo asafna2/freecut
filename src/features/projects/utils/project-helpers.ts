@@ -165,7 +165,7 @@ export function getUniqueFps(projects: Project[]): number[] {
 /**
  * Debounce function for search
  */
-export function debounce<T extends (...args: any[]) => any>(
+export function debounce<T extends (...args: unknown[]) => unknown>(
   func: T,
   wait: number
 ): (...args: Parameters<T>) => void {

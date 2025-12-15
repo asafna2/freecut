@@ -63,6 +63,12 @@ export function useTimelineShortcuts(callbacks: TimelineShortcutCallbacks = {}) 
   const addMarker = useTimelineStore((s) => s.addMarker);
   const copyTransition = useClipboardStore((s) => s.copyTransition);
   const transitionClipboard = useClipboardStore((s) => s.transitionClipboard);
+  const copyItems = useClipboardStore((s) => s.copyItems);
+  const itemsClipboard = useClipboardStore((s) => s.itemsClipboard);
+  const addItem = useTimelineStore((s) => s.addItem);
+  const tracks = useTimelineStore((s) => s.tracks);
+  const setSelectedItemIds = useSelectionStore((s) => s.setSelectedItemIds);
+  const activeTrackId = useSelectionStore((s) => s.activeTrackId);
 
   // Calculate all snap points: clip edges (start/end frames) and marker positions
   const snapPoints = useMemo(() => {
@@ -607,7 +613,7 @@ export function useTimelineShortcuts(callbacks: TimelineShortcutCallbacks = {}) 
     [selectedItemIds]
   );
 
-  // Clipboard: Ctrl+C - Copy selected transition properties
+  // Clipboard: Ctrl+C - Copy selected transition properties or timeline items
   useHotkeys(
     HOTKEYS.COPY,
     (event) => {
@@ -627,13 +633,39 @@ export function useTimelineShortcuts(callbacks: TimelineShortcutCallbacks = {}) 
         }
         return;
       }
-      // TODO: Handle clip copy if needed
+      // Copy selected items
+      if (selectedItemIds.length > 0) {
+        event.preventDefault();
+        const currentFrame = usePlaybackStore.getState().currentFrame;
+        const selectedItems = items.filter((item) => selectedItemIds.includes(item.id));
+        if (selectedItems.length > 0) {
+          copyItems(selectedItems, currentFrame, 'copy');
+        }
+      }
     },
     HOTKEY_OPTIONS,
-    [selectedTransitionId, transitions, copyTransition]
+    [selectedTransitionId, transitions, copyTransition, selectedItemIds, items, copyItems]
   );
 
-  // Clipboard: Ctrl+V - Paste transition properties to selected transition
+  // Clipboard: Ctrl+X - Cut selected items
+  useHotkeys(
+    HOTKEYS.CUT,
+    (event) => {
+      // Cut selected items (copy with cut flag)
+      if (selectedItemIds.length > 0) {
+        event.preventDefault();
+        const currentFrame = usePlaybackStore.getState().currentFrame;
+        const selectedItems = items.filter((item) => selectedItemIds.includes(item.id));
+        if (selectedItems.length > 0) {
+          copyItems(selectedItems, currentFrame, 'cut');
+        }
+      }
+    },
+    HOTKEY_OPTIONS,
+    [selectedItemIds, items, copyItems]
+  );
+
+  // Clipboard: Ctrl+V - Paste transition properties or timeline items
   useHotkeys(
     HOTKEYS.PASTE,
     (event) => {
@@ -648,9 +680,109 @@ export function useTimelineShortcuts(callbacks: TimelineShortcutCallbacks = {}) 
         });
         return;
       }
-      // TODO: Handle clip paste if needed
+      // Paste items from clipboard
+      if (itemsClipboard && itemsClipboard.items.length > 0) {
+        event.preventDefault();
+        const currentFrame = usePlaybackStore.getState().currentFrame;
+        const storeItems = useTimelineStore.getState().items;
+        const newItemIds: string[] = [];
+
+        // Helper: find next available space on a track
+        const findNextAvailableSpace = (
+          trackId: string,
+          startFrame: number,
+          duration: number
+        ): number => {
+          // Get all items on this track, sorted by start frame
+          const trackItems = storeItems
+            .filter((item) => item.trackId === trackId)
+            .sort((a, b) => a.from - b.from);
+
+          let candidateFrame = startFrame;
+
+          for (const item of trackItems) {
+            const itemEnd = item.from + item.durationInFrames;
+            // Check if candidate position overlaps with this item
+            if (candidateFrame < itemEnd && candidateFrame + duration > item.from) {
+              // Overlap detected, try after this item
+              candidateFrame = itemEnd;
+            }
+          }
+
+          return candidateFrame;
+        };
+
+        // Helper: check if space is available at position
+        const hasSpaceAt = (
+          trackId: string,
+          startFrame: number,
+          duration: number
+        ): boolean => {
+          const trackItems = storeItems.filter((item) => item.trackId === trackId);
+          for (const item of trackItems) {
+            const itemEnd = item.from + item.durationInFrames;
+            // Check overlap
+            if (startFrame < itemEnd && startFrame + duration > item.from) {
+              return false;
+            }
+          }
+          return true;
+        };
+
+        // Create new items at playhead position on active track
+        for (const itemData of itemsClipboard.items) {
+          const newId = crypto.randomUUID();
+          newItemIds.push(newId);
+
+          // 1. First check active track, then original track, then first track
+          let targetTrackId = activeTrackId;
+          if (!targetTrackId || !tracks.some((t) => t.id === targetTrackId)) {
+            targetTrackId = itemData.trackId;
+          }
+          const trackExists = tracks.some((t) => t.id === targetTrackId);
+          if (!trackExists && tracks.length > 0) {
+            targetTrackId = tracks[0].id;
+          }
+
+          // 2. Calculate position: start at playhead
+          const desiredFrom = currentFrame;
+          const duration = itemData.durationInFrames;
+
+          // 3. Check if space available at playhead, if not find next available space
+          let newFrom: number;
+          if (hasSpaceAt(targetTrackId, desiredFrom, duration)) {
+            newFrom = desiredFrom;
+          } else {
+            newFrom = findNextAvailableSpace(targetTrackId, desiredFrom, duration);
+          }
+
+          // Create new item with new ID and position
+          const newItem = {
+            ...itemData,
+            id: newId,
+            from: newFrom,
+            trackId: targetTrackId,
+            // Clear originId to treat as new item lineage
+            originId: undefined,
+          };
+
+          addItem(newItem as Parameters<typeof addItem>[0]);
+        }
+
+        // Select the newly pasted items
+        if (newItemIds.length > 0) {
+          setSelectedItemIds(newItemIds);
+        }
+
+        // For cut operation, remove original items after successful paste
+        if (itemsClipboard.copyType === 'cut') {
+          removeItems(itemsClipboard.originalIds);
+          // Clear clipboard after cut-paste to prevent double paste
+          useClipboardStore.getState().clearItemsClipboard();
+        }
+      }
     },
     HOTKEY_OPTIONS,
-    [selectedTransitionId, transitionClipboard, updateTransition]
+    [selectedTransitionId, transitionClipboard, updateTransition, itemsClipboard, tracks, addItem, setSelectedItemIds, removeItems, activeTrackId]
   );
 }

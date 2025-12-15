@@ -60,6 +60,7 @@ export function PlaybackControls({ totalFrames, fps: _fps }: PlaybackControlsPro
           className="h-9 w-9"
           onClick={handleGoToStart}
           data-tooltip="Go to Start (Home)"
+          aria-label="Go to start"
         >
           <SkipBack className="w-4 h-4" />
         </Button>
@@ -70,6 +71,7 @@ export function PlaybackControls({ totalFrames, fps: _fps }: PlaybackControlsPro
           className="h-9 w-9"
           onClick={handlePreviousFrame}
           data-tooltip="Previous Frame (←)"
+          aria-label="Previous frame"
         >
           <ChevronLeft className="w-4 h-4" />
         </Button>
@@ -79,6 +81,7 @@ export function PlaybackControls({ totalFrames, fps: _fps }: PlaybackControlsPro
           className="h-11 w-11 glow-primary-sm"
           onClick={togglePlayPause}
           data-tooltip={isPlaying ? 'Pause (Space)' : 'Play (Space)'}
+          aria-label={isPlaying ? 'Pause' : 'Play'}
         >
           {isPlaying ? (
             <Pause className="w-5 h-5" />
@@ -93,6 +96,7 @@ export function PlaybackControls({ totalFrames, fps: _fps }: PlaybackControlsPro
           className="h-9 w-9"
           onClick={handleNextFrame}
           data-tooltip="Next Frame (→)"
+          aria-label="Next frame"
         >
           <ChevronRight className="w-4 h-4" />
         </Button>
@@ -103,6 +107,7 @@ export function PlaybackControls({ totalFrames, fps: _fps }: PlaybackControlsPro
           className="h-9 w-9"
           onClick={handleGoToEnd}
           data-tooltip="Go to End (End)"
+          aria-label="Go to end"
         >
           <SkipForward className="w-4 h-4" />
         </Button>
@@ -117,6 +122,7 @@ export function PlaybackControls({ totalFrames, fps: _fps }: PlaybackControlsPro
           size="icon"
           className="h-8 w-8"
           data-tooltip="Volume"
+          aria-label="Volume"
         >
           <Volume2 className="w-4 h-4" />
         </Button>
@@ -126,6 +132,7 @@ export function PlaybackControls({ totalFrames, fps: _fps }: PlaybackControlsPro
           max={100}
           step={1}
           className="w-24"
+          aria-label="Volume control"
         />
         <span className="text-xs text-muted-foreground font-mono w-8">
           {Math.round(volume * 100)}%

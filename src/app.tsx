@@ -2,6 +2,8 @@ import { useEffect } from 'react';
 import { RouterProvider, createRouter } from '@tanstack/react-router';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { GlobalTooltip } from '@/components/ui/global-tooltip';
+import { Toaster } from '@/components/ui/sonner';
+import { ErrorBoundary } from '@/components/error-boundary';
 import { routeTree } from './routeTree.gen';
 
 const router = createRouter({ routeTree });
@@ -45,10 +47,15 @@ export function App() {
 
   // TooltipProvider at app level to prevent re-renders cascading from Editor
   // GlobalTooltip for performant data-tooltip based tooltips
+  // Toaster for toast notifications
+  // ErrorBoundary for graceful error recovery
   return (
-    <TooltipProvider delayDuration={300}>
-      <RouterProvider router={router} />
-      <GlobalTooltip />
-    </TooltipProvider>
+    <ErrorBoundary level="app">
+      <TooltipProvider delayDuration={300}>
+        <RouterProvider router={router} />
+        <GlobalTooltip />
+        <Toaster />
+      </TooltipProvider>
+    </ErrorBoundary>
   );
 }

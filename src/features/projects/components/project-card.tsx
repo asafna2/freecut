@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Link } from '@tanstack/react-router';
+import { toast } from 'sonner';
 import { MoreVertical, PlayCircle, Edit2, Copy, Trash2, AlertTriangle } from 'lucide-react';
 import {
   DropdownMenu,
@@ -48,7 +49,7 @@ export function ProjectCard({ project, onEdit }: ProjectCardProps) {
     setIsDeleting(false);
 
     if (!result.success) {
-      alert(`Failed to delete project: ${result.error}`);
+      toast.error('Failed to delete project', { description: result.error });
     }
   };
 
@@ -61,7 +62,7 @@ export function ProjectCard({ project, onEdit }: ProjectCardProps) {
     setIsDuplicating(false);
 
     if (!result.success) {
-      alert(`Failed to duplicate project: ${result.error}`);
+      toast.error('Failed to duplicate project', { description: result.error });
     }
   };
 

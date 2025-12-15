@@ -66,6 +66,7 @@ export function Toolbar({ project, isDirty = false, onSave, onExport, onExportBu
           onClick={handleBackClick}
           data-tooltip="Back to Projects"
           data-tooltip-side="right"
+          aria-label="Back to projects"
         >
           <ArrowLeft className="w-4 h-4" />
         </Button>
@@ -107,6 +108,7 @@ export function Toolbar({ project, isDirty = false, onSave, onExport, onExportBu
           onClick={() => setShowShortcutsDialog(true)}
           data-tooltip="Keyboard Shortcuts"
           data-tooltip-side="left"
+          aria-label="Keyboard shortcuts"
         >
           <Keyboard className="w-4 h-4" />
         </Button>
@@ -122,11 +124,12 @@ export function Toolbar({ project, isDirty = false, onSave, onExport, onExportBu
             rel="noopener noreferrer"
             data-tooltip="View on GitHub"
             data-tooltip-side="left"
+            aria-label="View on GitHub"
           >
             <Github className="w-4 h-4" />
           </a>
         </Button>
-        <Button variant="outline" size="sm" className="gap-2" onClick={handleSave}>
+        <Button variant="outline" size="sm" className="gap-2" onClick={handleSave} aria-label="Save project">
           <div className="relative">
             <Save className="w-4 h-4" />
             {isDirty && (

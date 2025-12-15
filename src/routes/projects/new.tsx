@@ -1,5 +1,6 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { useState } from 'react';
+import { toast } from 'sonner';
 import { ProjectForm } from '@/features/projects/components/project-form';
 import { useCreateProject } from '@/features/projects/hooks/use-project-actions';
 import type { ProjectFormData } from '@/features/projects/utils/validation';
@@ -26,12 +27,12 @@ function NewProject() {
           params: { projectId: result.project.id },
         });
       } else {
-        alert(`Failed to create project: ${result.error}`);
+        toast.error('Failed to create project', { description: result.error });
         setIsSubmitting(false);
       }
     } catch (error) {
       console.error('Failed to create project:', error);
-      alert('Failed to create project. Please try again.');
+      toast.error('Failed to create project', { description: 'Please try again' });
       setIsSubmitting(false);
     }
   };

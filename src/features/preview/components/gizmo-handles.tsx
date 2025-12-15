@@ -97,21 +97,39 @@ export function GizmoHandles({
           boxSizing: 'border-box',
           zIndex: 101,
         }}
+        role="button"
+        aria-label="Move selected element"
+        tabIndex={0}
         data-gizmo="border"
         onMouseDown={onTranslateStart}
         onDoubleClick={(e) => e.stopPropagation()}
       />
 
       {/* Scale handles */}
-      {SCALE_HANDLES.map((handle) => (
-        <div
-          key={handle}
-          className="bg-white border border-orange-500"
-          style={{ ...getHandleStyle(handle), zIndex: 102 }}
-          data-gizmo={`scale-${handle}`}
-          onMouseDown={(e) => onScaleStart(handle, e)}
-        />
-      ))}
+      {SCALE_HANDLES.map((handle) => {
+        const handleLabels: Record<GizmoHandle, string> = {
+          nw: 'Resize from top-left corner',
+          n: 'Resize from top edge',
+          ne: 'Resize from top-right corner',
+          e: 'Resize from right edge',
+          se: 'Resize from bottom-right corner',
+          s: 'Resize from bottom edge',
+          sw: 'Resize from bottom-left corner',
+          w: 'Resize from left edge',
+        };
+        return (
+          <div
+            key={handle}
+            className="bg-white border border-orange-500"
+            style={{ ...getHandleStyle(handle), zIndex: 102 }}
+            role="button"
+            aria-label={handleLabels[handle]}
+            tabIndex={0}
+            data-gizmo={`scale-${handle}`}
+            onMouseDown={(e) => onScaleStart(handle, e)}
+          />
+        );
+      })}
 
       {/* Rotation handle */}
       <div
@@ -124,6 +142,9 @@ export function GizmoHandles({
           marginLeft: -5,
           zIndex: 102,
         }}
+        role="button"
+        aria-label="Rotate selected element"
+        tabIndex={0}
         data-gizmo="rotate"
         onMouseDown={onRotateStart}
       />

@@ -1,4 +1,5 @@
 import { useState, useRef } from 'react';
+import { toast } from 'sonner';
 import { Upload } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { validateMediaFile } from '../utils/validation';
@@ -66,8 +67,7 @@ export function UploadDropzone({ onUpload, disabled = false }: UploadDropzonePro
     // Show errors if any
     if (errors.length > 0) {
       console.error('File validation errors:', errors);
-      // Could show toast notification here
-      alert(`Some files were rejected:\n\n${errors.join('\n')}`);
+      toast.error('Some files were rejected', { description: errors.join(', ') });
     }
 
     // Upload valid files

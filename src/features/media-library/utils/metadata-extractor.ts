@@ -4,11 +4,36 @@
  * Extracts video/audio/image metadata for storage in IndexedDB
  */
 
+// Type definitions for mediabunny module
+interface MediabunnyVideoTrack {
+  displayWidth: number;
+  displayHeight: number;
+  codec: string;
+  computePacketStats(count: number): Promise<{ averagePacketRate: number } | null>;
+}
+
+interface MediabunnyAudioTrack {
+  channels?: number;
+  sampleRate?: number;
+}
+
+interface MediabunnyInput {
+  computeDuration(): Promise<number>;
+  getPrimaryVideoTrack(): Promise<MediabunnyVideoTrack | null>;
+  getPrimaryAudioTrack(): Promise<MediabunnyAudioTrack | null>;
+}
+
+interface MediabunnyModule {
+  Input: new (config: { formats: unknown; source: unknown }) => MediabunnyInput;
+  ALL_FORMATS: unknown;
+  BlobSource: new (file: File) => unknown;
+}
+
 // Lazy load mediabunny only when needed to avoid loading heavy library upfront
-let mediabunnyModule: any = null;
-async function getMediabunny() {
+let mediabunnyModule: MediabunnyModule | null = null;
+async function getMediabunny(): Promise<MediabunnyModule> {
   if (!mediabunnyModule) {
-    mediabunnyModule = await import('mediabunny');
+    mediabunnyModule = await import('mediabunny') as unknown as MediabunnyModule;
   }
   return mediabunnyModule;
 }

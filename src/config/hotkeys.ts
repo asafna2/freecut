@@ -41,6 +41,7 @@ export const HOTKEYS = {
 
   // Clipboard
   COPY: 'mod+c',
+  CUT: 'mod+x',
   PASTE: 'mod+v',
   DUPLICATE: 'mod+d',
 
@@ -111,6 +112,7 @@ export const HOTKEY_DESCRIPTIONS: Record<HotkeyKey, string> = {
 
   // Clipboard
   COPY: 'Copy selected items',
+  CUT: 'Cut selected items',
   PASTE: 'Paste items',
   DUPLICATE: 'Duplicate selected items',
 

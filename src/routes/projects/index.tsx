@@ -1,5 +1,6 @@
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
 import { useEffect, useState, useRef } from 'react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Plus, Upload, FolderOpen, File, Github } from 'lucide-react';
 import { FreeCutLogo } from '@/components/brand/freecut-logo';
@@ -199,7 +200,7 @@ function ProjectsIndex() {
       setEditingProject(null);
     } catch (error) {
       console.error('Failed to update project:', error);
-      alert('Failed to update project. Please try again.');
+      toast.error('Failed to update project', { description: 'Please try again' });
     } finally {
       setIsSubmitting(false);
     }

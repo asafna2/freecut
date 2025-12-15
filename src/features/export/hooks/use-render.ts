@@ -11,6 +11,10 @@ import {
 import { convertTimelineToRemotion } from '../utils/timeline-to-remotion';
 import { useTimelineStore } from '@/features/timeline/stores/timeline-store';
 import { mediaLibraryService } from '@/features/media-library/services/media-library-service';
+import { config } from '@/lib/config';
+import { createLogger } from '@/lib/logger';
+
+const log = createLogger('useRender');
 
 interface UseRenderReturn {
   isExporting: boolean;
@@ -27,7 +31,7 @@ interface UseRenderReturn {
   resetState: () => void;
 }
 
-const SOCKET_URL = 'http://localhost:3001';
+const SOCKET_URL = config.api.socketUrl;
 
 export function useRender(): UseRenderReturn {
   const [isExporting, setIsExporting] = useState(false);
@@ -52,20 +56,20 @@ export function useRender(): UseRenderReturn {
     });
 
     socketRef.current.on('connect', () => {
-      console.log('[useRender] Socket connected');
+      log.debug('Socket connected');
     });
 
     socketRef.current.on('disconnect', () => {
-      console.log('[useRender] Socket disconnected');
+      log.debug('Socket disconnected');
     });
 
     socketRef.current.on('connect_error', (error) => {
-      console.warn('[useRender] Socket connection error:', error.message);
+      log.warn('Socket connection error:', error.message);
       // Don't set error state here - only set it if export is actually in progress
     });
 
     socketRef.current.on('render:progress', (data: Partial<RenderStatus> & { jobId: string }) => {
-      console.log('[useRender] Progress update:', data);
+      log.debug('Progress update:', data);
 
       // Only update if it's for the current job
       setProgress(data.progress ?? 0);
@@ -116,7 +120,7 @@ export function useRender(): UseRenderReturn {
         const state = useTimelineStore.getState();
         const { tracks, items, transitions, fps, inPoint, outPoint } = state;
 
-        console.log('[useRender] Export with IO points:', { inPoint, outPoint, fps, transitionCount: transitions.length });
+        log.debug('Export with IO points:', { inPoint, outPoint, fps, transitionCount: transitions.length });
 
         // Convert timeline to Remotion format with export settings
         // Use project FPS from timeline store
@@ -132,7 +136,7 @@ export function useRender(): UseRenderReturn {
           outPoint
         );
 
-        console.log('[useRender] Composition duration:', composition.durationInFrames, 'frames');
+        log.debug('Composition duration:', composition.durationInFrames, 'frames');
 
         // Get all unique media IDs from timeline
         const mediaIds = new Set<string>();
@@ -142,7 +146,7 @@ export function useRender(): UseRenderReturn {
           }
         }
 
-        console.log('[useRender] Uploading', mediaIds.size, 'media files...');
+        log.debug('Uploading', mediaIds.size, 'media files...');
 
         // Load media files in parallel for better performance
         const mediaLoadResults = await Promise.allSettled(
@@ -163,7 +167,7 @@ export function useRender(): UseRenderReturn {
               mediaFiles.push({ mediaId, blob, filename });
             }
           } else {
-            console.error('[useRender] Failed to get media:', result.reason);
+            log.error('Failed to get media:', result.reason);
           }
         }
 
@@ -174,7 +178,7 @@ export function useRender(): UseRenderReturn {
         setIsUploading(false);
         setStatus('processing');
 
-        console.log('[useRender] Starting render...');
+        log.debug('Starting render...');
 
         // Start render
         await startRender({
@@ -184,10 +188,11 @@ export function useRender(): UseRenderReturn {
           mediaFiles: Array.from(mediaIds),
         });
 
-        console.log('[useRender] Render started with job ID:', newJobId);
-      } catch (err: any) {
-        console.error('[useRender] Export error:', err);
-        setError(err?.message || 'Failed to start export');
+        log.debug('Render started with job ID:', newJobId);
+      } catch (err) {
+        log.error('Export error:', err);
+        const message = err instanceof Error ? err.message : 'Failed to start export';
+        setError(message);
         setIsExporting(false);
         setIsUploading(false);
         setStatus('failed');
@@ -203,13 +208,13 @@ export function useRender(): UseRenderReturn {
     if (jobId) {
       cancelRenderAPI(jobId)
         .then(() => {
-          console.log('[useRender] Render cancelled');
+          log.debug('Render cancelled');
           setIsExporting(false);
           setIsUploading(false);
           setStatus('cancelled');
         })
         .catch((err) => {
-          console.error('[useRender] Failed to cancel:', err);
+          log.error('Failed to cancel:', err);
         });
     }
   }, [jobId]);
@@ -221,9 +226,10 @@ export function useRender(): UseRenderReturn {
     if (jobId && status === 'completed') {
       try {
         await downloadRender(jobId);
-      } catch (err: any) {
-        console.error('[useRender] Download error:', err);
-        setError(err?.message || 'Failed to download video');
+      } catch (err) {
+        log.error('Download error:', err);
+        const message = err instanceof Error ? err.message : 'Failed to download video';
+        setError(message);
       }
     }
   }, [jobId, status]);

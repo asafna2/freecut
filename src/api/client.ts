@@ -1,7 +1,9 @@
+import { config } from '@/lib/config';
+
 export class APIClient {
   private baseUrl: string;
 
-  constructor(baseUrl: string = 'http://localhost:3001/api') {
+  constructor(baseUrl: string = config.api.baseUrl) {
     this.baseUrl = baseUrl;
   }
 

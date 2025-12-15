@@ -5,6 +5,16 @@ import type {
 } from '../workers/opfs-worker';
 
 /**
+ * Format bytes to human-readable string
+ */
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
+/**
  * OPFS Service - Wrapper for OPFS worker communication
  *
  * Provides a Promise-based API for file operations, hiding the complexity
@@ -233,6 +243,61 @@ export class OPFSService {
       usage: estimate.usage || 0,
       quota: estimate.quota || 0,
     };
+  }
+
+  /**
+   * Check if there's sufficient quota for an upload
+   *
+   * @param requiredBytes - Number of bytes needed for the upload
+   * @returns Object with canUpload flag and available space info
+   */
+  async checkQuota(requiredBytes: number): Promise<{
+    canUpload: boolean;
+    availableBytes: number;
+    usagePercent: number;
+    message?: string;
+  }> {
+    const { usage, quota } = await this.getStorageEstimate();
+    const availableBytes = quota - usage;
+    const usagePercent = quota > 0 ? (usage / quota) * 100 : 0;
+
+    // Add 10% buffer to account for metadata and system overhead
+    const requiredWithBuffer = requiredBytes * 1.1;
+
+    if (requiredWithBuffer > availableBytes) {
+      return {
+        canUpload: false,
+        availableBytes,
+        usagePercent,
+        message: `Insufficient storage. Need ${formatBytes(requiredBytes)}, only ${formatBytes(availableBytes)} available.`,
+      };
+    }
+
+    // Warn if upload would exceed 80% quota
+    if (usagePercent > 80 || (usage + requiredBytes) / quota > 0.8) {
+      return {
+        canUpload: true,
+        availableBytes,
+        usagePercent,
+        message: `Warning: Storage is ${usagePercent.toFixed(1)}% full.`,
+      };
+    }
+
+    return {
+      canUpload: true,
+      availableBytes,
+      usagePercent,
+    };
+  }
+
+  /**
+   * Request persistent storage from the browser
+   */
+  async requestPersistentStorage(): Promise<boolean> {
+    if (!navigator.storage?.persist) {
+      return false;
+    }
+    return navigator.storage.persist();
   }
 
   /**

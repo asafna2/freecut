@@ -6,6 +6,7 @@ import type {
   SlideDirection,
   FlipDirection,
 } from '@/types/transition';
+import type { TimelineItem } from '@/types/timeline';
 
 /**
  * Clipboard data for a copied transition
@@ -21,9 +22,25 @@ export interface TransitionClipboard {
   durationInFrames: number;
 }
 
+/**
+ * Clipboard data for copied timeline items
+ */
+export interface ItemsClipboard {
+  /** Serialized items (without IDs - IDs will be generated on paste) */
+  items: Omit<TimelineItem, 'id'>[];
+  /** Reference frame (playhead position at copy time) */
+  referenceFrame: number;
+  /** Copy type - cut removes originals on paste, copy keeps them */
+  copyType: 'cut' | 'copy';
+  /** Original item IDs (for cut operation) */
+  originalIds: string[];
+}
+
 interface ClipboardState {
   /** Copied transition properties (null if none copied) */
   transitionClipboard: TransitionClipboard | null;
+  /** Copied timeline items (null if none copied) */
+  itemsClipboard: ItemsClipboard | null;
 }
 
 interface ClipboardActions {
@@ -33,6 +50,12 @@ interface ClipboardActions {
   clearTransitionClipboard: () => void;
   /** Check if transition clipboard has content */
   hasTransitionClipboard: () => boolean;
+  /** Copy timeline items to clipboard */
+  copyItems: (items: TimelineItem[], referenceFrame: number, copyType: 'cut' | 'copy') => void;
+  /** Clear the items clipboard */
+  clearItemsClipboard: () => void;
+  /** Check if items clipboard has content */
+  hasItemsClipboard: () => boolean;
 }
 
 export type ClipboardStore = ClipboardState & ClipboardActions;
@@ -40,19 +63,22 @@ export type ClipboardStore = ClipboardState & ClipboardActions;
 /**
  * Clipboard store for copy/paste operations.
  *
- * Currently supports:
+ * Supports:
  * - Transition properties (presentation, direction, timing, duration)
+ * - Timeline items (clips) with all their properties
  *
  * Usage:
- * - Copy: copyTransition({ presentation, direction, timing, durationInFrames })
- * - Paste: Read transitionClipboard and apply to new transition
- * - Check: hasTransitionClipboard() to conditionally enable paste
+ * - Copy transition: copyTransition({ presentation, direction, timing, durationInFrames })
+ * - Paste transition: Read transitionClipboard and apply to new transition
+ * - Copy items: copyItems(items, referenceFrame, 'copy' | 'cut')
+ * - Paste items: Read itemsClipboard and create new items at playhead
  */
 export const useClipboardStore = create<ClipboardStore>((set, get) => ({
   // Initial state
   transitionClipboard: null,
+  itemsClipboard: null,
 
-  // Actions
+  // Transition actions
   copyTransition: (data) => {
     set({ transitionClipboard: data });
   },
@@ -64,6 +90,42 @@ export const useClipboardStore = create<ClipboardStore>((set, get) => ({
   hasTransitionClipboard: () => {
     return get().transitionClipboard !== null;
   },
+
+  // Items actions
+  copyItems: (items, referenceFrame, copyType) => {
+    if (items.length === 0) return;
+
+    // Find the earliest item to use as reference point
+    const minFrom = Math.min(...items.map((item) => item.from));
+
+    // Serialize items without IDs, storing relative positions
+    const serializedItems = items.map((item) => {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { id, ...rest } = item;
+      return {
+        ...rest,
+        // Store relative offset from the earliest item
+        from: item.from - minFrom,
+      };
+    });
+
+    set({
+      itemsClipboard: {
+        items: serializedItems,
+        referenceFrame,
+        copyType,
+        originalIds: items.map((item) => item.id),
+      },
+    });
+  },
+
+  clearItemsClipboard: () => {
+    set({ itemsClipboard: null });
+  },
+
+  hasItemsClipboard: () => {
+    return get().itemsClipboard !== null;
+  },
 }));
 
 // Selectors for granular subscriptions
@@ -71,3 +133,7 @@ export const selectTransitionClipboard = (state: ClipboardStore) =>
   state.transitionClipboard;
 export const selectHasTransitionClipboard = (state: ClipboardStore) =>
   state.transitionClipboard !== null;
+export const selectItemsClipboard = (state: ClipboardStore) =>
+  state.itemsClipboard;
+export const selectHasItemsClipboard = (state: ClipboardStore) =>
+  state.itemsClipboard !== null;
