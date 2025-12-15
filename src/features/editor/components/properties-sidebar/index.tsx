@@ -1,4 +1,4 @@
-import { Activity } from 'react';
+import { Activity, memo } from 'react';
 import { Button } from '@/components/ui/button';
 import { ChevronLeft, ChevronRight, Settings2 } from 'lucide-react';
 import { useEditorStore } from '../../stores/editor-store';
@@ -13,7 +13,7 @@ import { TransitionPanel } from './transition-panel';
  * Shows TransitionPanel when a transition is selected, MarkerPanel when a marker
  * is selected, ClipPanel when clips are selected, CanvasPanel otherwise.
  */
-export function PropertiesSidebar() {
+export const PropertiesSidebar = memo(function PropertiesSidebar() {
   // Use granular selectors - Zustand v5 best practice
   const rightSidebarOpen = useEditorStore((s) => s.rightSidebarOpen);
   const toggleRightSidebar = useEditorStore((s) => s.toggleRightSidebar);
@@ -79,4 +79,4 @@ export function PropertiesSidebar() {
       )}
     </>
   );
-}
+});

@@ -1,5 +1,5 @@
 import type { SnapTarget } from '../types/drag';
-import { useTimelineZoom } from '../hooks/use-timeline-zoom';
+import { useTimelineZoomContext } from '../contexts/timeline-zoom-context';
 
 export interface TimelineGuidelinesProps {
   /** Currently snapped target (highlighted) */
@@ -16,7 +16,7 @@ export interface TimelineGuidelinesProps {
  * Only shows when actively snapping to magnetic or playhead targets
  */
 export function TimelineGuidelines({ activeSnapTarget }: TimelineGuidelinesProps) {
-  const { frameToPixels } = useTimelineZoom();
+  const { frameToPixels } = useTimelineZoomContext();
 
   // Only show when there's an active snap target
   if (!activeSnapTarget) {

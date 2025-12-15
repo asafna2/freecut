@@ -169,6 +169,8 @@ export const TimelineContent = memo(function TimelineContent({ duration, scrollR
   const zoomCursorXRef = useRef(0); // Cursor X position (relative to container) for zoom anchor
   const lastZoomWheelTimeRef = useRef(0); // Track zoom gesture separately
   const pendingScrollRef = useRef<number | null>(null); // Queued scroll to apply after render
+  const lastZoomApplyTimeRef = useRef(0); // Throttle zoom updates in momentum loop
+  const ZOOM_UPDATE_INTERVAL = 50; // Match store throttle - update at most 20fps during momentum
 
   // Merge external scrollRef with internal containerRef
   const mergedRef = useCallback((node: HTMLDivElement | null) => {
@@ -586,14 +588,26 @@ export const TimelineContent = memo(function TimelineContent({ duration, scrollR
       // Apply velocity to zoom using logarithmic scale for symmetric feel
       // This makes zoom in and zoom out feel equally fast
       if (Math.abs(velocityZoomRef.current) > ZOOM_MIN_VELOCITY) {
-        const currentZoom = zoomLevelRef.current;
-        // Work in log space: add velocity to log(zoom), then exponentiate
-        const logZoom = Math.log(currentZoom);
-        const newLogZoom = logZoom - velocityZoomRef.current * 1.2; // Scale factor for feel
-        const newZoomLevel = Math.exp(newLogZoom);
-        applyZoomWithPlayheadCentering(newZoomLevel);
-        velocityZoomRef.current *= ZOOM_FRICTION;
-        hasZoomMomentum = true;
+        const now = performance.now();
+        const timeSinceLastApply = now - lastZoomApplyTimeRef.current;
+
+        // Calculate new velocity after decay
+        const newVelocity = velocityZoomRef.current * ZOOM_FRICTION;
+        const isFinalUpdate = Math.abs(newVelocity) <= ZOOM_MIN_VELOCITY;
+
+        // Apply zoom to store at throttled rate, or always on final update
+        if (timeSinceLastApply >= ZOOM_UPDATE_INTERVAL || isFinalUpdate) {
+          const currentZoom = zoomLevelRef.current;
+          // Work in log space: add velocity to log(zoom), then exponentiate
+          const logZoom = Math.log(currentZoom);
+          const newLogZoom = logZoom - velocityZoomRef.current * 1.2; // Scale factor for feel
+          const newZoomLevel = Math.exp(newLogZoom);
+          applyZoomWithPlayheadCentering(newZoomLevel);
+          lastZoomApplyTimeRef.current = now;
+        }
+
+        velocityZoomRef.current = newVelocity;
+        hasZoomMomentum = !isFinalUpdate;
       } else {
         velocityZoomRef.current = 0;
       }
@@ -691,6 +705,7 @@ export const TimelineContent = memo(function TimelineContent({ duration, scrollR
   return (
     <div
       ref={mergedRef}
+      data-timeline-scroll-container
       className="flex-1 overflow-auto relative bg-background/30 timeline-container"
       style={{
         scrollBehavior: 'auto', // Disable smooth scrolling for instant zoom response

@@ -9,7 +9,7 @@ import { TimelineItem } from './timeline-item';
 import { TransitionItem } from './transition-item';
 import { useTimelineStore } from '../stores/timeline-store';
 import { useSelectionStore } from '@/features/editor/stores/selection-store';
-import { useTimelineZoom } from '../hooks/use-timeline-zoom';
+import { useTimelineZoomContext } from '../contexts/timeline-zoom-context';
 import { useMediaLibraryStore } from '@/features/media-library/stores/media-library-store';
 import { useProjectStore } from '@/features/projects/stores/project-store';
 import { mediaLibraryService } from '@/features/media-library/services/media-library-service';
@@ -107,7 +107,7 @@ export const TimelineTrack = memo(function TimelineTrack({ track }: TimelineTrac
   const canvasHeight = currentProject?.metadata.height ?? 1080;
 
   // Zoom utilities for position calculation
-  const { pixelsToFrame, frameToPixels } = useTimelineZoom();
+  const { pixelsToFrame, frameToPixels } = useTimelineZoomContext();
 
   // Get item IDs for this track to check drag state
   const trackItemIds = useMemo(() => trackItems.map(item => item.id), [trackItems]);

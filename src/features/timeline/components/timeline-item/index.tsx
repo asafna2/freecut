@@ -1,7 +1,7 @@
 import { useRef, useEffect, useMemo, memo, useCallback, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { TimelineItem as TimelineItemType } from '@/types/timeline';
-import { useTimelineZoom } from '../../hooks/use-timeline-zoom';
+import { useTimelineZoomContext } from '../../contexts/timeline-zoom-context';
 import { useTimelineStore } from '../../stores/timeline-store';
 import { useSelectionStore } from '@/features/editor/stores/selection-store';
 import { useMediaLibraryStore } from '@/features/media-library/stores/media-library-store';
@@ -52,7 +52,7 @@ export interface TimelineItemProps {
  * - Stores trimStart, trimEnd, sourceStart, sourceEnd for each item
  */
 export const TimelineItem = memo(function TimelineItem({ item, timelineDuration = 30, trackLocked = false }: TimelineItemProps) {
-  const { timeToPixels, pixelsToFrame, pixelsPerSecond } = useTimelineZoom();
+  const { timeToPixels, pixelsToFrame, pixelsPerSecond } = useTimelineZoomContext();
 
   // Granular selector: only re-render when THIS item's selection state changes
   const isSelected = useSelectionStore(

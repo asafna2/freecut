@@ -1,4 +1,5 @@
-import { memo, useCallback, useMemo } from 'react';
+import { memo, useCallback } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import {
   Blend,
   Scissors,
@@ -254,19 +255,25 @@ function computeAdjacentInfo(
 export const TransitionsPanel = memo(function TransitionsPanel() {
   const addTransition = useTimelineStore((s) => s.addTransition);
   const updateTransition = useTimelineStore((s) => s.updateTransition);
-  const items = useTimelineStore((s) => s.items);
-  const transitions = useTimelineStore((s) => s.transitions);
 
   // Get selection
   const selectedItemIds = useSelectionStore((s) => s.selectedItemIds);
   const selectionCount = selectedItemIds.length;
   const selectedId = selectionCount === 1 ? selectedItemIds[0] : null;
 
-  // Compute adjacentInfo with useMemo (stable reference)
-  const adjacentInfo = useMemo(() => {
-    if (!selectedId) return null;
-    return computeAdjacentInfo([selectedId], items, transitions);
-  }, [selectedId, items, transitions]);
+  // Compute adjacentInfo via derived selector with shallow comparison
+  // This prevents re-renders when items/transitions change but result stays the same
+  const adjacentInfo = useTimelineStore(
+    useShallow(
+      useCallback(
+        (s) => {
+          if (!selectedId) return null;
+          return computeAdjacentInfo([selectedId], s.items, s.transitions);
+        },
+        [selectedId]
+      )
+    )
+  );
 
   // Apply a transition by config index - reads from store directly to avoid stale closure
   const handleApplyByIndex = useCallback(

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, memo } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { Button } from '@/components/ui/button';
 import {
@@ -36,7 +36,7 @@ export interface ToolbarProps {
   onExportBundle?: () => void;
 }
 
-export function Toolbar({ project, isDirty = false, onSave, onExport, onExportBundle }: ToolbarProps) {
+export const Toolbar = memo(function Toolbar({ project, isDirty = false, onSave, onExport, onExportBundle }: ToolbarProps) {
   const navigate = useNavigate();
   const [showUnsavedDialog, setShowUnsavedDialog] = useState(false);
   const [showShortcutsDialog, setShowShortcutsDialog] = useState(false);
@@ -161,4 +161,4 @@ export function Toolbar({ project, isDirty = false, onSave, onExport, onExportBu
       </div>
     </div>
   );
-}
+});

@@ -2,7 +2,7 @@ import { memo, useCallback, useMemo, useState, useRef, useEffect } from 'react';
 import type { Transition } from '@/types/transition';
 import { useTimelineStore } from '../stores/timeline-store';
 import { useSelectionStore } from '@/features/editor/stores/selection-store';
-import { useTimelineZoom } from '../hooks/use-timeline-zoom';
+import { useTimelineZoomContext } from '../contexts/timeline-zoom-context';
 import { useTransitionResize } from '../hooks/use-transition-resize';
 import { dragOffsetRef } from '../hooks/use-timeline-drag';
 import type { TimelineState, TimelineActions } from '../types';
@@ -35,7 +35,7 @@ export const TransitionItem = memo(function TransitionItem({
   transition,
   trackHeight,
 }: TransitionItemProps) {
-  const { frameToPixels } = useTimelineZoom();
+  const { frameToPixels } = useTimelineZoomContext();
   const fps = useTimelineStore((s: TimelineState) => s.fps);
   const removeTransition = useTimelineStore(
     (s: TimelineActions) => s.removeTransition

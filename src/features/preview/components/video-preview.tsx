@@ -1,4 +1,5 @@
-import { useRef, useEffect, useLayoutEffect, useState, useMemo, useCallback } from 'react';
+import { useRef, useEffect, useLayoutEffect, useState, useMemo, useCallback, memo } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { Player, PlayerRef } from '@remotion/player';
 import { usePlaybackStore } from '@/features/preview/stores/playback-store';
 import { useTimelineStore } from '@/features/timeline/stores/timeline-store';
@@ -33,8 +34,10 @@ interface VideoPreviewProps {
  * - Responsive sizing based on zoom and container
  * - Frame counter
  * - Fullscreen toggle
+ *
+ * Memoized to prevent expensive Remotion Player re-renders.
  */
-export function VideoPreview({ project, containerSize }: VideoPreviewProps) {
+export const VideoPreview = memo(function VideoPreview({ project, containerSize }: VideoPreviewProps) {
   const playerRef = useRef<PlayerRef>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const playerContainerRef = useRef<HTMLDivElement>(null);
@@ -54,9 +57,10 @@ export function VideoPreview({ project, containerSize }: VideoPreviewProps) {
 
   // Granular selectors - avoid subscribing to currentFrame here to prevent re-renders
   const fps = useTimelineStore((s) => s.fps);
-  const tracks = useTimelineStore((s) => s.tracks);
-  const items = useTimelineStore((s) => s.items);
-  const transitions = useTimelineStore((s) => s.transitions);
+  // Use useShallow for arrays to prevent re-renders when references change but content is same
+  const tracks = useTimelineStore(useShallow((s) => s.tracks));
+  const items = useTimelineStore(useShallow((s) => s.items));
+  const transitions = useTimelineStore(useShallow((s) => s.transitions));
   const zoom = usePlaybackStore((s) => s.zoom);
 
   // Note: canvasBackgroundPreview is now read directly in MainComposition
@@ -382,4 +386,4 @@ export function VideoPreview({ project, containerSize }: VideoPreviewProps) {
       </div>
     </div>
   );
-}
+});

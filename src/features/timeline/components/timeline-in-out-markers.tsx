@@ -5,7 +5,7 @@ import { useState, useCallback, useEffect, useRef, memo } from 'react';
 import { useTimelineStore } from '../stores/timeline-store';
 
 // Utilities and hooks
-import { useTimelineZoom } from '../hooks/use-timeline-zoom';
+import { useTimelineZoomContext } from '../contexts/timeline-zoom-context';
 
 /**
  * Timeline In/Out Markers Component
@@ -20,7 +20,7 @@ export const TimelineInOutMarkers = memo(function TimelineInOutMarkers() {
   const outPoint = useTimelineStore((s) => s.outPoint);
   const setInPoint = useTimelineStore((s) => s.setInPoint);
   const setOutPoint = useTimelineStore((s) => s.setOutPoint);
-  const { frameToPixels, pixelsToFrame } = useTimelineZoom();
+  const { frameToPixels, pixelsToFrame } = useTimelineZoomContext();
 
   const [isDraggingIn, setIsDraggingIn] = useState(false);
   const [isDraggingOut, setIsDraggingOut] = useState(false);

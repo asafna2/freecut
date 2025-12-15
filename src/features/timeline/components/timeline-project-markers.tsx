@@ -6,7 +6,7 @@ import { useTimelineStore } from '../stores/timeline-store';
 import { useSelectionStore } from '@/features/editor/stores/selection-store';
 
 // Utilities and hooks
-import { useTimelineZoom } from '../hooks/use-timeline-zoom';
+import { useTimelineZoomContext } from '../contexts/timeline-zoom-context';
 
 // Types
 import type { ProjectMarker } from '@/types/timeline';
@@ -25,7 +25,7 @@ export const TimelineProjectMarkers = memo(function TimelineProjectMarkers() {
   const updateMarker = useTimelineStore((s) => s.updateMarker);
   const selectedMarkerId = useSelectionStore((s) => s.selectedMarkerId);
   const selectMarker = useSelectionStore((s) => s.selectMarker);
-  const { frameToPixels, pixelsToFrame } = useTimelineZoom();
+  const { frameToPixels, pixelsToFrame } = useTimelineZoomContext();
 
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);

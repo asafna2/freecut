@@ -1,4 +1,4 @@
-import { memo, useEffect, useState, useMemo } from 'react';
+import { memo, useEffect, useState, useMemo, useDeferredValue } from 'react';
 import { FilmstripSkeleton } from './filmstrip-skeleton';
 import { useFilmstrip, type FilmstripFrame } from '../../hooks/use-filmstrip';
 import { mediaLibraryService } from '@/features/media-library/services/media-library-service';
@@ -30,49 +30,68 @@ export interface ClipFilmstripProps {
 }
 
 /**
- * Find the closest frame by timestamp using binary search
+ * Find closest frame using binary search
  */
-function findClosestFrame(
-  frames: FilmstripFrame[],
-  targetTime: number
-): FilmstripFrame | null {
+function findClosestFrame(frames: FilmstripFrame[], targetTime: number): FilmstripFrame | null {
   if (frames.length === 0) return null;
 
   let left = 0;
   let right = frames.length - 1;
-  let bestIndex = 0;
+  let bestFrame = frames[0]!;
+  let bestDiff = Math.abs(bestFrame.timestamp - targetTime);
 
   while (left <= right) {
     const mid = Math.floor((left + right) / 2);
-    const midTime = frames[mid]!.timestamp;
+    const frame = frames[mid]!;
+    const diff = Math.abs(frame.timestamp - targetTime);
 
-    if (midTime === targetTime) {
-      return frames[mid]!;
-    } else if (midTime < targetTime) {
-      bestIndex = mid;
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      bestFrame = frame;
+    }
+
+    if (frame.timestamp < targetTime) {
       left = mid + 1;
     } else {
       right = mid - 1;
     }
   }
 
-  // Check if next frame is closer
-  if (bestIndex < frames.length - 1) {
-    const currentDiff = Math.abs(frames[bestIndex]!.timestamp - targetTime);
-    const nextDiff = Math.abs(frames[bestIndex + 1]!.timestamp - targetTime);
-    if (nextDiff < currentDiff) {
-      return frames[bestIndex + 1]!;
-    }
-  }
-
-  return frames[bestIndex]!;
+  return bestFrame;
 }
+
+/**
+ * Simple filmstrip tile - memoized to prevent unnecessary re-renders
+ */
+const FilmstripTile = memo(function FilmstripTile({
+  src,
+  x,
+}: {
+  src: string;
+  x: number;
+}) {
+  return (
+    <img
+      src={src}
+      alt=""
+      loading="lazy"
+      decoding="async"
+      className="absolute top-0"
+      style={{
+        left: x,
+        width: THUMBNAIL_WIDTH,
+        height: THUMBNAIL_HEIGHT,
+        objectFit: 'cover',
+      }}
+    />
+  );
+});
 
 /**
  * Clip Filmstrip Component
  *
- * Renders video frame thumbnails using img tags with object URLs.
- * Simple approach: position each thumbnail based on its timestamp.
+ * Renders video frame thumbnails as a tiled filmstrip.
+ * Uses useDeferredValue to keep zoom interactions responsive.
  */
 export const ClipFilmstrip = memo(function ClipFilmstrip({
   mediaId,
@@ -88,6 +107,10 @@ export const ClipFilmstrip = memo(function ClipFilmstrip({
   className = 'top-1',
 }: ClipFilmstripProps) {
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
+
+  // Defer zoom values to keep zoom slider responsive
+  const deferredPixelsPerSecond = useDeferredValue(pixelsPerSecond);
+  const deferredClipWidth = useDeferredValue(clipWidth);
 
   // Load blob URL for the media
   useEffect(() => {
@@ -122,49 +145,26 @@ export const ClipFilmstrip = memo(function ClipFilmstrip({
     enabled: isVisible && !!blobUrl && sourceDuration > 0,
   });
 
-  // Calculate which slots need thumbnails and map frames to slots
-  const visibleFrames = useMemo(() => {
+  // Calculate tiles - maps each tile position to the best frame
+  const tiles = useMemo(() => {
     if (!frames || frames.length === 0) return [];
 
     const effectiveStart = sourceStart + trimStart;
-    const slotCount = Math.ceil(clipWidth / THUMBNAIL_WIDTH);
-    const slotTimeSpan = (THUMBNAIL_WIDTH / pixelsPerSecond) * speed;
-    const proximityThreshold = slotTimeSpan * 0.6;
+    const tileCount = Math.ceil(deferredClipWidth / THUMBNAIL_WIDTH);
+    const result: { tileIndex: number; frame: FilmstripFrame; x: number }[] = [];
 
-    const result: { slot: number; frame: FilmstripFrame; x: number }[] = [];
-    let lastGoodFrame: FilmstripFrame | null = null;
+    for (let tile = 0; tile < tileCount; tile++) {
+      const tileX = tile * THUMBNAIL_WIDTH;
+      const tileTime = effectiveStart + (tileX / deferredPixelsPerSecond) * speed;
+      const frame = findClosestFrame(frames, tileTime);
 
-    for (let slot = 0; slot < slotCount; slot++) {
-      const slotLeftPixel = slot * THUMBNAIL_WIDTH;
-      const timelineSeconds = slotLeftPixel / pixelsPerSecond;
-      const sourceTime = effectiveStart + timelineSeconds * speed;
-
-      const closestFrame = findClosestFrame(frames, sourceTime);
-
-      // Check if we have a good frame for this slot
-      const timeDiff = closestFrame ? Math.abs(closestFrame.timestamp - sourceTime) : Infinity;
-      const hasGoodFrame = closestFrame && timeDiff <= proximityThreshold;
-
-      if (hasGoodFrame) {
-        lastGoodFrame = closestFrame;
-        result.push({
-          slot,
-          frame: closestFrame,
-          x: slotLeftPixel,
-        });
-      } else if (lastGoodFrame) {
-        // No good frame yet - repeat the last good frame as placeholder
-        result.push({
-          slot,
-          frame: lastGoodFrame,
-          x: slotLeftPixel,
-        });
+      if (frame) {
+        result.push({ tileIndex: tile, frame, x: tileX });
       }
-      // If no lastGoodFrame yet, slot stays empty (will be filled by skeleton)
     }
 
     return result;
-  }, [frames, clipWidth, pixelsPerSecond, sourceStart, trimStart, speed]);
+  }, [frames, deferredClipWidth, deferredPixelsPerSecond, sourceStart, trimStart, speed]);
 
   if (error) {
     return null;
@@ -183,23 +183,10 @@ export const ClipFilmstrip = memo(function ClipFilmstrip({
       )}
       <div
         className={`absolute left-0 ${className} overflow-hidden pointer-events-none`}
-        style={{ width: clipWidth, height }}
+        style={{ width: deferredClipWidth, height }}
       >
-        {visibleFrames.map(({ slot, frame, x }) => (
-          <img
-            key={slot}
-            src={frame.url}
-            alt=""
-            loading="lazy"
-            decoding="async"
-            className="absolute top-0 transition-opacity duration-150"
-            style={{
-              left: x,
-              width: THUMBNAIL_WIDTH,
-              height: THUMBNAIL_HEIGHT,
-              objectFit: 'cover',
-            }}
-          />
+        {tiles.map(({ tileIndex, frame, x }) => (
+          <FilmstripTile key={tileIndex} src={frame.url} x={x} />
         ))}
       </div>
     </>

@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef, useCallback, memo } from 'react';
 import { createLogger } from '@/lib/logger';
 import {
   ResizablePanelGroup,
@@ -48,8 +48,10 @@ export interface EditorProps {
  * - React 19 optimizations with Activity components in sidebars
  * - Zundo temporal middleware for undo/redo in timeline
  * - Comprehensive keyboard shortcuts
+ *
+ * Memoized to prevent re-renders from route changes cascading to all children.
  */
-export function Editor({ projectId, project }: EditorProps) {
+export const Editor = memo(function Editor({ projectId, project }: EditorProps) {
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
 
   // Guard against concurrent saves (e.g., spamming Ctrl+S)
@@ -276,4 +278,4 @@ export function Editor({ projectId, project }: EditorProps) {
       <ProjectDebugPanel projectId={projectId} />
     </div>
   );
-}
+});

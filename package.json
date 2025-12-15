@@ -39,6 +39,7 @@
     "@remotion/shapes": "^4.0.390",
     "@remotion/transitions": "^4.0.390",
     "@tanstack/react-router": "^1.91.6",
+    "@tanstack/react-virtual": "^3.13.13",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.5",
     "@types/multer": "^2.0.0",

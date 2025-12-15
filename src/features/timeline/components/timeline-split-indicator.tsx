@@ -1,4 +1,4 @@
-import { useTimelineZoom } from '../hooks/use-timeline-zoom';
+import { useTimelineZoomContext } from '../contexts/timeline-zoom-context';
 import { useTimelineStore } from '../stores/timeline-store';
 import { usePlaybackStore } from '@/features/preview/stores/playback-store';
 
@@ -22,7 +22,7 @@ const SNAP_THRESHOLD_PX = 10;
  * Snaps to frame boundaries and playhead position for precise cuts.
  */
 export function TimelineSplitIndicator({ cursorX, hoveredElement, tracksContainerRef }: TimelineSplitIndicatorProps) {
-  const { pixelsToFrame, frameToPixels } = useTimelineZoom();
+  const { pixelsToFrame, frameToPixels } = useTimelineZoomContext();
   const fps = useTimelineStore((s) => s.fps);
   // Don't subscribe to currentFrame - read from store only when needed for snap calculation
   // This prevents re-renders during playback

@@ -1,4 +1,5 @@
 import { useMemo, useCallback, memo } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { Separator } from '@/components/ui/separator';
 import { useSelectionStore } from '@/features/editor/stores/selection-store';
 import { useTimelineStore } from '@/features/timeline/stores/timeline-store';
@@ -57,15 +58,17 @@ function computeItemTypeInfo(items: TimelineItem[]) {
 export const ClipPanel = memo(function ClipPanel() {
   // Granular selectors with explicit types
   const selectedItemIds = useSelectionStore((s: SelectionState & SelectionActions) => s.selectedItemIds);
-  const items = useTimelineStore((s: TimelineState & TimelineActions) => s.items);
   const fps = useTimelineStore((s: TimelineState & TimelineActions) => s.fps);
   const updateItemsTransform = useTimelineStore((s: TimelineState & TimelineActions) => s.updateItemsTransform);
   const currentProject = useProjectStore((s) => s.currentProject);
 
-  // Get selected items
-  const selectedItems = useMemo(
-    () => items.filter((item: TimelineItem) => selectedItemIds.includes(item.id)),
-    [items, selectedItemIds]
+  // Get selected items using derived selector with shallow comparison
+  // useShallow prevents re-renders when unrelated items change in the store
+  const selectedItems = useTimelineStore(
+    useShallow(useCallback(
+      (s: TimelineState & TimelineActions) => s.items.filter((item: TimelineItem) => selectedItemIds.includes(item.id)),
+      [selectedItemIds]
+    ))
   );
 
   // Canvas settings

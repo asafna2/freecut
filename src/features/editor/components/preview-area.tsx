@@ -82,7 +82,11 @@ export const PreviewArea = memo(function PreviewArea({ project }: PreviewAreaPro
   }, []);
 
   // Build project object with live values from store
-  const liveProject = { width, height, fps, backgroundColor };
+  // Memoize to prevent VideoPreview re-renders when reference changes
+  const liveProject = useMemo(
+    () => ({ width, height, fps, backgroundColor }),
+    [width, height, fps, backgroundColor]
+  );
 
   return (
     <div className="flex-1 flex flex-col min-w-0">

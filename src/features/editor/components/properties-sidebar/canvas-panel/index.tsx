@@ -1,4 +1,4 @@
-import { useMemo, useCallback, useState, useRef, useEffect, memo } from 'react';
+import { useCallback, useState, useRef, useEffect, memo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { ArrowLeftRight, RotateCcw, LayoutDashboard, Clock } from 'lucide-react';
@@ -96,19 +96,18 @@ const ColorPicker = memo(function ColorPicker({
  * Canvas properties panel - shown when no clip is selected.
  * Displays and allows editing of canvas dimensions and shows project duration.
  */
-export function CanvasPanel() {
+export const CanvasPanel = memo(function CanvasPanel() {
   // Granular selectors
   const currentProject = useProjectStore((s) => s.currentProject);
   const updateProject = useProjectStore((s) => s.updateProject);
-  const items = useTimelineStore((s) => s.items);
   const fps = useTimelineStore((s) => s.fps);
   const markDirty = useTimelineStore((s) => s.markDirty);
 
-  // Calculate timeline duration from rightmost item
-  const timelineDuration = useMemo(() => {
-    if (items.length === 0) return 0;
-    return Math.max(...items.map((item) => item.from + item.durationInFrames));
-  }, [items]);
+  // Derived selector: only returns the computed duration, not the full items array
+  // This prevents re-renders when items change but duration stays the same
+  const timelineDuration = useTimelineStore((s) =>
+    s.items.length === 0 ? 0 : Math.max(...s.items.map((item) => item.from + item.durationInFrames))
+  );
 
 
   // All handlers must be defined before any early returns (Rules of Hooks)
@@ -271,4 +270,4 @@ export function CanvasPanel() {
       </PropertySection>
     </div>
   );
-}
+});

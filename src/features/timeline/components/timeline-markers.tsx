@@ -1,5 +1,5 @@
 // React and external libraries
-import { useCallback, useRef, useState, useEffect, memo } from 'react';
+import { useCallback, useRef, useState, useEffect, memo, useDeferredValue } from 'react';
 
 // Stores and selectors
 import { useTimelineStore } from '../stores/timeline-store';
@@ -11,7 +11,7 @@ import { TimelineInOutMarkers } from './timeline-in-out-markers';
 import { TimelineProjectMarkers } from './timeline-project-markers';
 
 // Utilities and hooks
-import { useTimelineZoom } from '../hooks/use-timeline-zoom';
+import { useTimelineZoomContext } from '../contexts/timeline-zoom-context';
 import { formatTimecode, secondsToFrames } from '@/utils/time-utils';
 
 // Edge-scrolling configuration
@@ -196,9 +196,13 @@ const TimelineMarkerLabels = memo(function TimelineMarkerLabels({
   fps,
   timeToPixels,
 }: TimelineMarkerLabelsProps) {
-  const markerConfig = calculateMarkerInterval(pixelsPerSecond);
+  // Defer zoom changes to keep interactions responsive
+  const deferredPPS = useDeferredValue(pixelsPerSecond);
+  const deferredTimeToPixels = (time: number) => time * deferredPPS;
+
+  const markerConfig = calculateMarkerInterval(deferredPPS);
   const intervalInSeconds = markerConfig.type === 'frame' ? 1 / fps : markerConfig.intervalInSeconds;
-  const markerWidthPx = timeToPixels(intervalInSeconds);
+  const markerWidthPx = deferredTimeToPixels(intervalInSeconds);
 
   if (markerWidthPx <= 0) return null;
 
@@ -209,11 +213,15 @@ const TimelineMarkerLabels = memo(function TimelineMarkerLabels({
   const startIndex = Math.floor(startPx / markerWidthPx);
   const endIndex = Math.ceil(endPx / markerWidthPx);
 
+  // Limit max labels to prevent performance issues at high zoom
+  const maxLabels = 100;
+  const actualEndIndex = Math.min(endIndex, startIndex + maxLabels);
+
   const labels: { time: number; x: number; label: string }[] = [];
 
-  for (let i = startIndex; i <= endIndex; i++) {
+  for (let i = startIndex; i <= actualEndIndex; i++) {
     const timeInSeconds = i * intervalInSeconds;
-    const x = timeToPixels(timeInSeconds);
+    const x = deferredTimeToPixels(timeInSeconds);
     const frameNumber = secondsToFrames(timeInSeconds, fps);
     const label = formatTimecode(frameNumber, fps);
     labels.push({ time: timeInSeconds, x, label });
@@ -251,7 +259,7 @@ const TimelineMarkerLabels = memo(function TimelineMarkerLabels({
  * Each tile is 2000px wide, only visible tiles are rendered.
  */
 export const TimelineMarkers = memo(function TimelineMarkers({ duration, width }: TimelineMarkersProps) {
-  const { timeToPixels, pixelsPerSecond, pixelsToFrame } = useTimelineZoom();
+  const { timeToPixels, pixelsPerSecond, pixelsToFrame } = useTimelineZoomContext();
   const fps = useTimelineStore((s) => s.fps);
   const inPoint = useTimelineStore((s) => s.inPoint);
   const outPoint = useTimelineStore((s) => s.outPoint);

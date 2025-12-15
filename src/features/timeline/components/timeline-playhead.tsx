@@ -6,7 +6,7 @@ import { usePlaybackStore } from '@/features/preview/stores/playback-store';
 import { useSelectionStore } from '@/features/editor/stores/selection-store';
 
 // Utilities and hooks
-import { useTimelineZoom } from '../hooks/use-timeline-zoom';
+import { useTimelineZoomContext } from '../contexts/timeline-zoom-context';
 
 export interface TimelinePlayheadProps {
   inRuler?: boolean; // If true, shows diamond indicator for ruler
@@ -25,7 +25,7 @@ export interface TimelinePlayheadProps {
 export function TimelinePlayhead({ inRuler = false, maxFrame }: TimelinePlayheadProps) {
   const currentFrame = usePlaybackStore((s) => s.currentFrame);
   const setCurrentFrame = usePlaybackStore((s) => s.setCurrentFrame);
-  const { frameToPixels, pixelsToFrame } = useTimelineZoom();
+  const { frameToPixels, pixelsToFrame } = useTimelineZoomContext();
 
   const [isDragging, setIsDragging] = useState(false);
   const [isExternalDrag, setIsExternalDrag] = useState(false);
