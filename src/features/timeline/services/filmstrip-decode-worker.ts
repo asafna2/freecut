@@ -1,7 +1,7 @@
 /**
  * Filmstrip Decode Worker
  *
- * Decodes JPEG blobs to ImageBitmaps off the main thread.
+ * Decodes image blobs (WebP/JPEG) to ImageBitmaps off the main thread.
  * Uses parallel decoding for maximum throughput.
  * Transfers ImageBitmaps back via zero-copy transfer.
  */
@@ -57,7 +57,7 @@ self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
 
     // Decode all frames in batch in parallel
     const decodePromises = batch.map(async (frame) => {
-      const blob = new Blob([frame.data], { type: 'image/jpeg' });
+      const blob = new Blob([frame.data], { type: 'image/webp' });
       const bitmap = await createImageBitmap(blob);
       return {
         index: frame.index,

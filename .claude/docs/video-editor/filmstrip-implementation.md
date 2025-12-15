@@ -130,7 +130,8 @@ if (timeDiff > proximityThreshold) continue;
 ```typescript
 THUMBNAIL_WIDTH = 78        // 16:9 aspect ratio
 THUMBNAIL_HEIGHT = 44       // VIDEO_FILMSTRIP_HEIGHT
-JPEG_QUALITY = 0.7          // 70% quality
+IMAGE_FORMAT = 'image/webp' // WebP ~30% smaller than JPEG
+IMAGE_QUALITY = 0.7         // 70% quality
 MAX_CACHE_SIZE = 100MB      // Memory cache limit
 FRAMES_PER_BATCH = 3        // Update frequency during extraction
 DECODE_BATCH_SIZE = 20      // Parallel decoding batch

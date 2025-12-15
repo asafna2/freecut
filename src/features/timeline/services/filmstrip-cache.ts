@@ -4,7 +4,7 @@
  * Manages filmstrip thumbnail caching with:
  * - In-memory LRU cache for fast access
  * - Hardware-accelerated frame extraction via 4 parallel workers (WebCodecs)
- * - Off-main-thread JPEG decoding via decode worker
+ * - Off-main-thread image decoding via decode worker (WebP format)
  * - Fixed frame density for consistent quality
  * - Progressive streaming of thumbnails
  * - Rendering matches frames to display slots by timestamp
@@ -26,7 +26,10 @@ import {
 
 // Re-export for consumers that import from this file
 export { THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT };
-const JPEG_QUALITY = 0.7;
+
+// WebP offers ~30% smaller files than JPEG at similar quality
+const IMAGE_FORMAT = 'image/webp';
+const IMAGE_QUALITY = 0.7;
 
 // Memory cache configuration
 const MAX_CACHE_SIZE_BYTES = 100 * 1024 * 1024; // 100MB
@@ -273,8 +276,8 @@ class FilmstripCacheService {
               for (const bitmap of frames) {
                 ctx.drawImage(bitmap, 0, 0);
                 const blob = await canvas.convertToBlob({
-                  type: 'image/jpeg',
-                  quality: JPEG_QUALITY,
+                  type: IMAGE_FORMAT,
+                  quality: IMAGE_QUALITY,
                 });
                 blobs.push(blob);
                 sizeBytes += blob.size;
@@ -307,7 +310,7 @@ class FilmstripCacheService {
                 framesWithTimestamps,
                 THUMBNAIL_WIDTH,
                 THUMBNAIL_HEIGHT,
-                JPEG_QUALITY
+                IMAGE_QUALITY
               );
             } catch (err) {
               logger.warn('Failed to persist filmstrip to OPFS:', err);
@@ -538,7 +541,7 @@ class FilmstripCacheService {
         framesWithTimestamps,
         THUMBNAIL_WIDTH,
         THUMBNAIL_HEIGHT,
-        JPEG_QUALITY
+        IMAGE_QUALITY
       );
       // Delete from IndexedDB after successful migration
       await deleteFromIndexedDB(mediaId);

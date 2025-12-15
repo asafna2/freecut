@@ -9,7 +9,7 @@
  *   - Width: uint16 (2 bytes)
  *   - Height: uint16 (2 bytes)
  *   - Frame count: uint32 (4 bytes)
- *   - Quality: uint8 (1 byte, JPEG quality * 100)
+ *   - Quality: uint8 (1 byte, image quality * 100)
  *   - Reserved: (16 bytes)
  *
  * Index (12 bytes per frame):
@@ -18,7 +18,7 @@
  *   - Size: uint32 (4 bytes)
  *
  * Data:
- *   - JPEG bytes concatenated
+ *   - WebP image bytes concatenated
  */
 
 import { createLogger } from '@/lib/logger';
@@ -322,7 +322,7 @@ class FilmstripOPFSStorage {
         .slice(entry.offset, entry.offset + entry.size)
         .arrayBuffer();
 
-      return new Blob([frameData], { type: 'image/jpeg' });
+      return new Blob([frameData], { type: 'image/webp' });
     } catch (error) {
       logger.error(`Failed to get frame ${frameIndex} for ${mediaId}:`, error);
       return null;
@@ -376,7 +376,7 @@ class FilmstripOPFSStorage {
         const frameData = dataBuffer.slice(localOffset, localOffset + entry.size);
         frames.push({
           timestamp: entry.timestamp,
-          blob: new Blob([frameData], { type: 'image/jpeg' }),
+          blob: new Blob([frameData], { type: 'image/webp' }),
         });
       }
 
@@ -414,7 +414,7 @@ class FilmstripOPFSStorage {
         const frameData = uint8.slice(entry.offset, entry.offset + entry.size);
         frames.push({
           timestamp: entry.timestamp,
-          blob: new Blob([frameData], { type: 'image/jpeg' }),
+          blob: new Blob([frameData], { type: 'image/webp' }),
         });
       }
 
