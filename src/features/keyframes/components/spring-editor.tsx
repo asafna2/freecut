@@ -74,6 +74,13 @@ export const SpringEditor = memo(function SpringEditor({
     onChange(DEFAULT_SPRING_PARAMS);
   }, [onChange]);
 
+  // Blur slider on release to allow keyboard shortcuts (play/pause)
+  const handleSliderCommit = useCallback(() => {
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+  }, []);
+
   const isDefault =
     value.tension === DEFAULT_SPRING_PARAMS.tension &&
     value.friction === DEFAULT_SPRING_PARAMS.friction &&
@@ -93,6 +100,7 @@ export const SpringEditor = memo(function SpringEditor({
         <Slider
           value={[value.tension]}
           onValueChange={handleTensionChange}
+          onValueCommit={handleSliderCommit}
           min={PARAM_RANGES.tension.min}
           max={PARAM_RANGES.tension.max}
           step={PARAM_RANGES.tension.step}
@@ -109,6 +117,7 @@ export const SpringEditor = memo(function SpringEditor({
         <Slider
           value={[value.friction]}
           onValueChange={handleFrictionChange}
+          onValueCommit={handleSliderCommit}
           min={PARAM_RANGES.friction.min}
           max={PARAM_RANGES.friction.max}
           step={PARAM_RANGES.friction.step}
@@ -125,6 +134,7 @@ export const SpringEditor = memo(function SpringEditor({
         <Slider
           value={[value.mass]}
           onValueChange={handleMassChange}
+          onValueCommit={handleSliderCommit}
           min={PARAM_RANGES.mass.min}
           max={PARAM_RANGES.mass.max}
           step={PARAM_RANGES.mass.step}

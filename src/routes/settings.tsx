@@ -97,6 +97,11 @@ function Settings() {
                 <Slider
                   value={[autoSaveInterval]}
                   onValueChange={([v]) => setSetting('autoSaveInterval', v)}
+                  onValueCommit={() => {
+                    if (document.activeElement instanceof HTMLElement) {
+                      document.activeElement.blur();
+                    }
+                  }}
                   min={0}
                   max={30}
                   step={5}

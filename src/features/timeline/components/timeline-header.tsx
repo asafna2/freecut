@@ -141,6 +141,10 @@ export const TimelineHeader = memo(function TimelineHeader({ onZoomChange, onZoo
     if (Math.abs(zoomVelocityRef.current) > ZOOM_MIN_VELOCITY) {
       startZoomMomentum();
     }
+    // Blur slider to release focus for keyboard shortcuts (play/pause)
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
   }, [startZoomMomentum]);
 
   // Cleanup on unmount

@@ -129,6 +129,11 @@ export function PlaybackControls({ totalFrames, fps: _fps }: PlaybackControlsPro
         <Slider
           value={[volume * 100]}
           onValueChange={(values) => setVolume((values[0] ?? 75) / 100)}
+          onValueCommit={() => {
+            if (document.activeElement instanceof HTMLElement) {
+              document.activeElement.blur();
+            }
+          }}
           max={100}
           step={1}
           className="w-24"
