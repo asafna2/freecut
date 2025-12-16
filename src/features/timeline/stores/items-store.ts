@@ -351,6 +351,7 @@ export const useItemsStore = create<ItemsState & ItemsActions>()(
     })),
 
     // Reset item transform
+    // Note: opacity is intentionally omitted - undefined means "use default (1.0)"
     _resetItemTransform: (id) => set((state) => ({
       items: state.items.map((item) => {
         if (item.id !== id) return item;
@@ -363,7 +364,7 @@ export const useItemsStore = create<ItemsState & ItemsActions>()(
             y: 0,
             scale: 1,
             rotation: 0,
-            opacity: 1,
+            // opacity intentionally not set - defaults to 1.0
           },
         };
         return updatedItem as TimelineItem;

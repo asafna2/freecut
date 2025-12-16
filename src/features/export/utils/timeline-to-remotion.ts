@@ -250,8 +250,11 @@ function processKeyframesForExport(
     const originalItem = originalItems.find(i => i.id === item.id);
     
     // If no direct keyframes, try to find via originId (for split clips)
+    // BUT: don't inherit opacity keyframes - they should only apply to the original clip
+    let isInherited = false;
     if (!itemKeyframes && item.originId) {
       itemKeyframes = keyframesByOriginId.get(item.originId);
+      isInherited = true;
       
       if (itemKeyframes && originalItem) {
         // Calculate the frame offset for this split clip
@@ -261,6 +264,14 @@ function processKeyframesForExport(
     }
     
     if (!itemKeyframes) continue;
+    
+    // If keyframes are inherited, filter out opacity keyframes
+    // Opacity is a visual property that shouldn't transfer to split clips
+    if (isInherited) {
+      const filteredProperties = itemKeyframes.properties.filter(p => p.property !== 'opacity');
+      if (filteredProperties.length === 0) continue; // No keyframes left after filtering
+      itemKeyframes = { ...itemKeyframes, properties: filteredProperties };
+    }
     
     // Keyframes are stored RELATIVE TO ITEM START (frame 0 = first frame of item)
     // When IO markers trim the start of an item, we need to offset the keyframes

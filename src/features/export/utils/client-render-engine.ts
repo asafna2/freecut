@@ -244,6 +244,10 @@ export async function renderComposition(options: RenderEngineOptions): Promise<C
       // Render frame to canvas
       await frameRenderer.renderFrame(frame);
 
+      // Ensure canvas operations are flushed before capturing
+      // This forces the browser to complete all pending draw operations
+      ctx.getImageData(0, 0, 1, 1);
+
       // Calculate timestamp in seconds
       const timestamp = frame / fps;
       const frameDuration = 1 / fps;
@@ -479,6 +483,11 @@ async function createCompositionRenderer(
       // Find active transitions
       const activeTransitions = findActiveTransitions(transitions, clipMap, frame, fps);
       const transitionClipIds = getTransitionClipIds(transitions, clipMap, frame);
+      
+      // Debug: Log transition state at key frames
+      if (activeTransitions.length > 0 && (frame === activeTransitions[0]?.transitionStart || frame % 30 === 0)) {
+        log.info(`TRANSITION STATE: frame=${frame} activeTransitions=${activeTransitions.length} skippedClipIds=${Array.from(transitionClipIds).map(id => id.substring(0,8)).join(',')}`);
+      }
 
       // Sort tracks for rendering (bottom to top)
       const sortedTracks = [...tracks].sort((a, b) => (b.order ?? 0) - (a.order ?? 0));
@@ -521,7 +530,12 @@ async function createCompositionRenderer(
           }
 
           // Skip items being handled by transitions
-          if (transitionClipIds.has(item.id)) continue;
+          if (transitionClipIds.has(item.id)) {
+            if (frame === activeTransitions[0]?.transitionStart) {
+              log.info(`SKIPPING clip ${item.id.substring(0,8)} - handled by transition`);
+            }
+            continue;
+          }
 
           // Skip audio items (handled separately)
           if (item.type === 'audio') continue;
@@ -604,7 +618,9 @@ async function createCompositionRenderer(
         }
       }
 
-      // Render transitions on top
+      // Render transitions
+      // Note: Transitions should be rendered at the appropriate layer position
+      // For now, we render them after all regular items
       for (const activeTransition of activeTransitions) {
         await renderTransitionToCanvas(
           contentCtx,
@@ -616,6 +632,12 @@ async function createCompositionRenderer(
           keyframesMap,
           adjustmentLayers
         );
+        
+        // Debug: Check content after transition
+        if (frame === activeTransition.transitionStart) {
+          const afterData = contentCtx.getImageData(Math.floor(canvas.width/2), Math.floor(canvas.height/2), 1, 1).data;
+          log.info(`TRANSITION RENDERED: frame=${frame} progress=${activeTransition.progress.toFixed(3)} centerPixel=(${afterData[0]},${afterData[1]},${afterData[2]},${afterData[3]})`);
+        }
       }
 
       // Apply masks to content
@@ -623,6 +645,12 @@ async function createCompositionRenderer(
         applyMasks(ctx, contentCanvas, activeMasks, maskSettings);
       } else {
         ctx.drawImage(contentCanvas, 0, 0);
+      }
+      
+      // Debug: Check final output during transitions
+      if (activeTransitions.length > 0 && frame === activeTransitions[0]?.transitionStart) {
+        const finalData = ctx.getImageData(Math.floor(canvas.width/2), Math.floor(canvas.height/2), 1, 1).data;
+        log.info(`FINAL OUTPUT CHECK: frame=${frame} alpha=${finalData[3]} RGB=(${finalData[0]},${finalData[1]},${finalData[2]})`);
       }
     },
 
@@ -651,7 +679,13 @@ async function createCompositionRenderer(
     imageElements: Map<string, HTMLImageElement>
   ): Promise<void> {
     ctx.save();
-    ctx.globalAlpha = transform.opacity;
+    
+    // Apply opacity only if it's not the default value (1.0)
+    // This prevents inherited/errant keyframe values from making clips transparent
+    // while still allowing intentional opacity changes
+    if (transform.opacity !== 1) {
+      ctx.globalAlpha = transform.opacity;
+    }
 
     // Apply rotation
     if (transform.rotation !== 0) {
@@ -863,7 +897,13 @@ async function createCompositionRenderer(
     keyframesMap: Map<string, ItemKeyframes>,
     _adjustmentLayers: AdjustmentLayerWithTrackOrder[]
   ): Promise<void> {
-    const { leftClip, rightClip } = activeTransition;
+    const { leftClip, rightClip, progress, transition, transitionStart } = activeTransition;
+
+    // Debug: Log transition progress at start and periodically
+    const isFirstFrame = frame === transitionStart;
+    if (isFirstFrame) {
+      log.info(`TRANSITION START: frame=${frame} progress=${progress.toFixed(3)} presentation=${transition.presentation} duration=${transition.durationInFrames} leftClip=${leftClip.id.substring(0,8)} rightClip=${rightClip.id.substring(0,8)}`);
+    }
 
     // Render left clip to canvas
     const leftCanvas = new OffscreenCanvas(canvas.width, canvas.height);
@@ -878,6 +918,13 @@ async function createCompositionRenderer(
     const rightKeyframes = keyframesMap.get(rightClip.id);
     const rightTransform = getAnimatedTransform(rightClip, rightKeyframes, frame, canvas);
     await renderItem(rightCtx, rightClip, rightTransform, frame, canvas, videoElements, imageElements);
+
+    // Debug: Check if canvases have content
+    if (isFirstFrame) {
+      const leftData = leftCtx.getImageData(Math.floor(canvas.width/2), Math.floor(canvas.height/2), 1, 1).data;
+      const rightData = rightCtx.getImageData(Math.floor(canvas.width/2), Math.floor(canvas.height/2), 1, 1).data;
+      log.info(`TRANSITION CANVASES: leftHasContent=${leftData[3]! > 0} rightHasContent=${rightData[3]! > 0} leftAlpha=${leftData[3]} rightAlpha=${rightData[3]}`);
+    }
 
     // Render transition
     const transitionSettings: TransitionCanvasSettings = canvas;
