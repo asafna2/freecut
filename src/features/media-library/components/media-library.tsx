@@ -33,6 +33,7 @@ export interface MediaLibraryProps {
 
 export const MediaLibrary = memo(function MediaLibrary({ onMediaSelect }: MediaLibraryProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const isFocusedRef = useRef(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [idsToDelete, setIdsToDelete] = useState<string[]>([]);
 
@@ -69,25 +70,64 @@ export const MediaLibrary = memo(function MediaLibrary({ onMediaSelect }: MediaL
     loadMediaItems();
   }, [currentProjectId, loadMediaItems]); // Reload when project context changes
 
-  // Clear selection when clicking outside the media library
+  // Track focus and clear selection when clicking outside the media library
   useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      // Only clear if there's a selection
-      if (selectedMediaIds.length === 0) return;
+    const handleMouseDown = (event: MouseEvent) => {
+      const isInside = containerRef.current?.contains(event.target as Node);
 
-      // Check if click was outside the media library container
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
-        clearSelection();
+      if (isInside) {
+        // Clicked inside - mark as focused
+        isFocusedRef.current = true;
+      } else {
+        // Clicked outside - clear focus and selection
+        isFocusedRef.current = false;
+        if (selectedMediaIds.length > 0) {
+          clearSelection();
+        }
       }
     };
 
-    // Add listener
-    document.addEventListener('mousedown', handleClickOutside);
+    // Use capture phase to catch events before they're stopped by other handlers
+    document.addEventListener('mousedown', handleMouseDown, true);
 
     return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('mousedown', handleMouseDown, true);
     };
   }, [selectedMediaIds.length, clearSelection]);
+
+  // Handle Delete key to delete selected items
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      // Only handle Delete key
+      if (event.key !== 'Delete') return;
+
+      // Don't trigger if media library is not focused
+      if (!isFocusedRef.current) return;
+
+      // Don't trigger if no items selected
+      if (selectedMediaIds.length === 0) return;
+
+      // Don't trigger if dialog is already open
+      if (showDeleteDialog) return;
+
+      // Don't trigger if user is typing in an input or textarea
+      const target = event.target as HTMLElement;
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+        return;
+      }
+
+      // Prevent default behavior and trigger delete
+      event.preventDefault();
+      setIdsToDelete([...selectedMediaIds]);
+      setShowDeleteDialog(true);
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [selectedMediaIds, showDeleteDialog]);
 
   // Import files using file picker (instant, no copy)
   const handleImport = async () => {
