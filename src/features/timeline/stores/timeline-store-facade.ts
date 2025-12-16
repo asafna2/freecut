@@ -100,6 +100,7 @@ async function saveTimeline(projectId: string): Promise<void> {
               frame: k.frame,
               value: k.value,
               easing: k.easing,
+              ...(k.easingConfig && { easingConfig: k.easingConfig }),
             })),
           })),
         })),
@@ -150,8 +151,12 @@ async function saveTimeline(projectId: string): Promise<void> {
   }
 }
 
+/** Default track height for new projects */
+const DEFAULT_TRACK_HEIGHT = 80;
+
 /**
  * Load timeline from project in IndexedDB.
+ * Single source of truth for all timeline loading (project open, refresh, etc.)
  */
 async function loadTimeline(projectId: string): Promise<void> {
   try {
@@ -160,8 +165,15 @@ async function loadTimeline(projectId: string): Promise<void> {
       throw new Error(`Project not found: ${projectId}`);
     }
 
-    if (project.timeline) {
+    if (project.timeline && project.timeline.tracks?.length > 0) {
       const t = project.timeline;
+
+      logger.debug('loadTimeline: loading existing timeline', {
+        tracksCount: t.tracks?.length ?? 0,
+        itemsCount: t.items?.length ?? 0,
+        keyframesCount: t.keyframes?.length ?? 0,
+        transitionsCount: t.transitions?.length ?? 0,
+      });
 
       // Restore tracks and items from project
       // Sort tracks by order property to preserve user's track arrangement
@@ -182,24 +194,57 @@ async function loadTimeline(projectId: string): Promise<void> {
       useMarkersStore.getState().setMarkers(t.markers || []);
       useMarkersStore.getState().setInPoint(t.inPoint ?? null);
       useMarkersStore.getState().setOutPoint(t.outPoint ?? null);
-      // fps is stored in project.metadata, not timeline
-      useTimelineSettingsStore.getState().setFps(project.metadata?.fps || 30);
       useTimelineSettingsStore.getState().setScrollPosition(t.scrollPosition || 0);
-      // snapEnabled is UI state, default to true
-      useTimelineSettingsStore.getState().setSnapEnabled(true);
-      useTimelineSettingsStore.getState().markClean();
 
       // Restore zoom and playback
       if (t.zoomLevel !== undefined) {
         useZoomStore.getState().setZoomLevel(t.zoomLevel);
+      } else {
+        useZoomStore.getState().setZoomLevel(1);
       }
       if (t.currentFrame !== undefined) {
         usePlaybackStore.getState().setCurrentFrame(t.currentFrame);
+      } else {
+        usePlaybackStore.getState().setCurrentFrame(0);
       }
+    } else {
+      logger.debug('loadTimeline: initializing new project with default track');
 
-      // Clear undo history when loading
-      useTimelineCommandStore.getState().clearHistory();
+      // Initialize with default tracks for new projects
+      useItemsStore.getState().setTracks([
+        {
+          id: 'track-1',
+          name: 'Track 1',
+          height: DEFAULT_TRACK_HEIGHT,
+          locked: false,
+          visible: true,
+          muted: false,
+          solo: false,
+          order: 0,
+          items: [],
+        },
+      ]);
+      useItemsStore.getState().setItems([]);
+      useTransitionsStore.getState().setTransitions([]);
+      useTransitionsStore.getState().setPendingBreakages([]);
+      useKeyframesStore.getState().setKeyframes([]);
+      useMarkersStore.getState().setMarkers([]);
+      useMarkersStore.getState().setInPoint(null);
+      useMarkersStore.getState().setOutPoint(null);
+      useTimelineSettingsStore.getState().setScrollPosition(0);
+      useZoomStore.getState().setZoomLevel(1);
+      usePlaybackStore.getState().setCurrentFrame(0);
     }
+
+    // Common setup for both cases
+    // fps is stored in project.metadata, not timeline
+    useTimelineSettingsStore.getState().setFps(project.metadata?.fps || 30);
+    // snapEnabled is UI state, default to true
+    useTimelineSettingsStore.getState().setSnapEnabled(true);
+    useTimelineSettingsStore.getState().markClean();
+
+    // Clear undo history when loading
+    useTimelineCommandStore.getState().clearHistory();
   } catch (error) {
     logger.error('Failed to load timeline:', error);
     throw error;

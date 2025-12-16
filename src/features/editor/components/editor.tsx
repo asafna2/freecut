@@ -21,12 +21,9 @@ import { useTransitionBreakageNotifications } from '@/features/timeline/hooks/us
 import { initTransitionChainSubscription } from '@/features/timeline/stores/transition-chain-store';
 import { useTimelineStore } from '@/features/timeline/stores/timeline-store';
 import { usePlaybackStore } from '@/features/preview/stores/playback-store';
-import { useZoomStore } from '@/features/timeline/stores/zoom-store';
 import { useMediaLibraryStore } from '@/features/media-library/stores/media-library-store';
 import { useProjectStore } from '@/features/projects/stores/project-store';
-import { DEFAULT_TRACK_HEIGHT } from '@/features/timeline/constants';
-import type { ProjectTimeline } from '@/types/project';
-
+/** Project metadata passed from route loader (timeline loaded separately via loadTimeline) */
 export interface EditorProps {
   projectId: string;
   project: {
@@ -36,7 +33,6 @@ export interface EditorProps {
     height: number;
     fps: number;
     backgroundColor?: string;
-    timeline?: ProjectTimeline;
   };
 }
 
@@ -74,8 +70,6 @@ export const Editor = memo(function Editor({ projectId, project }: EditorProps) 
 
   // Initialize timeline from project data (or create default tracks for new projects)
   useEffect(() => {
-    const { setCurrentFrame } = usePlaybackStore.getState();
-    const { setZoomLevel } = useZoomStore.getState();
     const { setCurrentProject: setMediaProject } = useMediaLibraryStore.getState();
     const { setCurrentProject } = useProjectStore.getState();
 
@@ -98,72 +92,11 @@ export const Editor = memo(function Editor({ projectId, project }: EditorProps) 
       updatedAt: Date.now(),
     });
 
-    // Clear undo/redo history when loading a new project or refreshing
-    // History is session-based; the saved state becomes the new ground truth
-    useTimelineStore.temporal.getState().clear();
-
-    if (project.timeline) {
-      // Load timeline from project data (router already loaded it)
-      const tracksWithItems = project.timeline.tracks.map(track => ({
-        ...track,
-        items: [], // Items are stored separately in the store
-      }));
-
-      // Sort tracks by order property to preserve user's track arrangement
-      // Use original array index as fallback for tracks without order property
-      const sortedTracks = tracksWithItems
-        .map((track, index) => ({ track, originalIndex: index }))
-        .sort((a, b) => (a.track.order ?? a.originalIndex) - (b.track.order ?? b.originalIndex))
-        .map(({ track }) => track);
-
-      // Set both tracks and items from project data
-      useTimelineStore.setState({
-        tracks: sortedTracks,
-        items: project.timeline.items as any, // Type assertion needed for serialization
-        inPoint: project.timeline.inPoint ?? null,
-        outPoint: project.timeline.outPoint ?? null,
-        markers: project.timeline.markers ?? [],
-        transitions: (project.timeline.transitions as any) ?? [],
-        scrollPosition: project.timeline.scrollPosition ?? 0,
-      });
-
-      // Restore playback and view state
-      if (project.timeline.currentFrame !== undefined) {
-        setCurrentFrame(project.timeline.currentFrame);
-      } else {
-        setCurrentFrame(0);
-      }
-
-      if (project.timeline.zoomLevel !== undefined) {
-        setZoomLevel(project.timeline.zoomLevel);
-      } else {
-        setZoomLevel(1);
-      }
-    } else {
-      // Initialize with default tracks for new projects
-      useTimelineStore.setState({
-        tracks: [
-          {
-            id: 'track-1',
-            name: 'Track 1',
-            height: DEFAULT_TRACK_HEIGHT,
-            locked: false,
-            visible: true,
-            muted: false,
-            solo: false,
-            order: 0,
-            items: [],
-          },
-        ],
-        items: [],
-        inPoint: null,
-        outPoint: null,
-      });
-
-      // Reset playback and view state for new projects
-      setCurrentFrame(0);
-      setZoomLevel(1);
-    }
+    // Load timeline from IndexedDB - single source of truth for all timeline state
+    const { loadTimeline } = useTimelineStore.getState();
+    loadTimeline(projectId).catch((error) => {
+      logger.error('Failed to load timeline:', error);
+    });
 
     // Cleanup: clear project context and stop playback when leaving editor
     return () => {
@@ -172,7 +105,7 @@ export const Editor = memo(function Editor({ projectId, project }: EditorProps) 
       usePlaybackStore.getState().pause();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, project]); // Re-initialize when projectId or project data changes
+  }, [projectId]); // Re-initialize when projectId changes
 
   // Track unsaved changes
   const isDirty = useTimelineStore((s: { isDirty: boolean }) => s.isDirty);
