@@ -499,13 +499,26 @@ async function createCompositionRenderer(
       contentCtx.fillStyle = 'transparent';
       contentCtx.clearRect(0, 0, canvas.width, canvas.height);
 
+      // Debug: count items per track for first few frames
+      if (frame < 3) {
+        const allItems = sortedTracks.flatMap(t => t.items ?? []);
+        const videoItems = allItems.filter(i => i.type === 'video');
+        log.info(`FRAME ${frame}: totalItems=${allItems.length} videoItems=${videoItems.length}`);
+        for (const vi of videoItems) {
+          const visible = frame >= vi.from && frame < vi.from + vi.durationInFrames;
+          log.info(`  VIDEO id=${vi.id.substring(0,8)} from=${vi.from} dur=${vi.durationInFrames} visible=${visible}`);
+        }
+      }
+
       // Render each track
       for (const track of sortedTracks) {
         if (track.visible === false) continue;
 
         for (const item of track.items ?? []) {
           // Skip items not visible at this frame
-          if (frame < item.from || frame >= item.from + item.durationInFrames) continue;
+          if (frame < item.from || frame >= item.from + item.durationInFrames) {
+            continue;
+          }
 
           // Skip items being handled by transitions
           if (transitionClipIds.has(item.id)) continue;
@@ -522,6 +535,31 @@ async function createCompositionRenderer(
           // Get animated transform
           const itemKeyframes = keyframesMap.get(item.id);
           const transform = getAnimatedTransform(item, itemKeyframes, frame, canvasSettings);
+
+          // Debug logging for first frame only
+          if (frame === 0) {
+            const localFrame = frame - item.from;
+            // Log each keyframe property separately for clarity
+            if (itemKeyframes) {
+              for (const prop of itemKeyframes.properties) {
+                if (prop.keyframes.length > 0) {
+                  const kfDetails = prop.keyframes.map(k => `frame=${k.frame}, value=${k.value}`).join(' | ');
+                  log.debug(`Keyframes [${prop.property}]: ${kfDetails}`);
+                }
+              }
+            }
+            log.debug('Transform at frame 0', {
+              localFrame,
+              itemFrom: item.from,
+              itemId: item.id.substring(0, 8),
+              x: transform.x,
+              y: transform.y,
+              width: transform.width,
+              height: transform.height,
+              opacity: transform.opacity,
+              rotation: transform.rotation,
+            });
+          }
 
           // Get effects (item effects + adjustment layer effects)
           const adjEffects = getAdjustmentLayerEffects(
@@ -545,6 +583,14 @@ async function createCompositionRenderer(
             videoElements,
             imageElements
           );
+
+          // Debug: check if itemCanvas has content
+          if (frame === 0) {
+            const imageData = itemCtx.getImageData(0, 0, 100, 100);
+            const hasContent = imageData.data.some((v, i) => i % 4 !== 3 && v > 0); // Check if any non-alpha pixel is non-zero
+            const hasAlpha = imageData.data.some((v, i) => i % 4 === 3 && v > 0); // Check if any alpha is non-zero
+            log.info(`ITEM CANVAS CHECK: hasContent=${hasContent} hasAlpha=${hasAlpha} itemType=${item.type}`);
+          }
 
           // Apply effects
           if (combinedEffects.length > 0) {
@@ -646,7 +692,10 @@ async function createCompositionRenderer(
     videoElements: Map<string, HTMLVideoElement>
   ): Promise<void> {
     const video = videoElements.get(item.id);
-    if (!video || video.readyState < 2) return;
+    if (!video) {
+      if (frame === 0) log.warn('Video element not found', { itemId: item.id });
+      return;
+    }
 
     // Calculate source time
     // Use sourceStart as primary - it contains the full source offset including:
@@ -659,20 +708,55 @@ async function createCompositionRenderer(
     const sourceTime = sourceStart / fps + localTime * speed;
     const clampedTime = Math.max(0, Math.min(sourceTime, video.duration - 0.01));
 
-    // Seek if needed
+    // Seek to the correct time and wait for video to be ready
     if (Math.abs(video.currentTime - clampedTime) > 0.01) {
       video.currentTime = clampedTime;
+    }
+    
+    // Wait for video to have enough data to draw
+    if (video.readyState < 2) {
       await new Promise<void>((resolve) => {
-        const onSeeked = () => {
-          video.removeEventListener('seeked', onSeeked);
-          resolve();
+        const checkReady = () => {
+          if (video.readyState >= 2) {
+            video.removeEventListener('canplay', checkReady);
+            video.removeEventListener('loadeddata', checkReady);
+            resolve();
+          }
         };
-        video.addEventListener('seeked', onSeeked);
+        video.addEventListener('canplay', checkReady);
+        video.addEventListener('loadeddata', checkReady);
+        // Also check immediately in case it's already ready
+        checkReady();
+        // Timeout fallback
         setTimeout(() => {
-          video.removeEventListener('seeked', onSeeked);
+          video.removeEventListener('canplay', checkReady);
+          video.removeEventListener('loadeddata', checkReady);
           resolve();
-        }, 500);
+        }, 1000);
       });
+    }
+    
+    // Wait for seek to complete
+    await new Promise<void>((resolve) => {
+      if (!video.seeking) {
+        resolve();
+        return;
+      }
+      const onSeeked = () => {
+        video.removeEventListener('seeked', onSeeked);
+        resolve();
+      };
+      video.addEventListener('seeked', onSeeked);
+      setTimeout(() => {
+        video.removeEventListener('seeked', onSeeked);
+        resolve();
+      }, 500);
+    });
+    
+    // Final check - skip if still not ready
+    if (video.readyState < 2) {
+      if (frame < 5) log.warn(`Video not ready after waiting: frame=${frame} readyState=${video.readyState}`);
+      return;
     }
 
     // Calculate draw dimensions
@@ -682,6 +766,11 @@ async function createCompositionRenderer(
       transform,
       canvas
     );
+
+    // Debug logging
+    if (frame < 5 || frame % 10 === 0) {
+      log.debug(`VIDEO DRAW frame=${frame} sourceTime=${clampedTime.toFixed(2)}s readyState=${video.readyState} videoW=${video.videoWidth}`);
+    }
 
     ctx.drawImage(
       video,
