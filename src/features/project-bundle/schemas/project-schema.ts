@@ -12,7 +12,7 @@ import { SNAPSHOT_VERSION } from '../types/snapshot';
 // Keyframe Schemas
 // ============================================================================
 
-const animatablePropertySchema = z.enum(['x', 'y', 'width', 'height', 'rotation', 'opacity']);
+const animatablePropertySchema = z.enum(['x', 'y', 'width', 'height', 'rotation', 'opacity', 'cornerRadius']);
 
 const easingTypeSchema = z.enum([
   'linear',
@@ -64,7 +64,7 @@ const itemKeyframesSchema = z.object({
 // Timeline Item Schemas
 // ============================================================================
 
-const itemTypeSchema = z.enum(['video', 'audio', 'text', 'image', 'shape']);
+const itemTypeSchema = z.enum(['video', 'audio', 'text', 'image', 'shape', 'adjustment']);
 
 const shapeTypeSchema = z.enum([
   'rectangle',
@@ -73,9 +73,97 @@ const shapeTypeSchema = z.enum([
   'ellipse',
   'star',
   'polygon',
+  'heart',
 ]);
 
 const directionSchema = z.enum(['up', 'down', 'left', 'right']);
+
+// Text-specific schemas
+const fontWeightSchema = z.enum(['normal', 'medium', 'semibold', 'bold']);
+const fontStyleSchema = z.enum(['normal', 'italic']);
+const textAlignSchema = z.enum(['left', 'center', 'right']);
+const verticalAlignSchema = z.enum(['top', 'middle', 'bottom']);
+
+const textShadowSchema = z.object({
+  offsetX: z.number(),
+  offsetY: z.number(),
+  blur: z.number(),
+  color: z.string(),
+});
+
+const textStrokeSchema = z.object({
+  width: z.number(),
+  color: z.string(),
+});
+
+// Mask schemas
+const maskTypeSchema = z.enum(['clip', 'alpha']);
+
+// ============================================================================
+// Effect Schemas
+// ============================================================================
+
+const cssFilterTypeSchema = z.enum([
+  'brightness', 'contrast', 'saturate', 'blur', 'hue-rotate', 'grayscale', 'sepia', 'invert',
+]);
+
+const glitchVariantSchema = z.enum(['rgb-split', 'scanlines', 'color-glitch']);
+
+const halftonePatternTypeSchema = z.enum(['dots', 'lines', 'rays', 'ripples']);
+const halftoneBlendModeSchema = z.enum(['multiply', 'screen', 'overlay', 'soft-light']);
+
+const cssFilterEffectSchema = z.object({
+  type: z.literal('css-filter'),
+  filter: cssFilterTypeSchema,
+  value: z.number(),
+});
+
+const glitchEffectSchema = z.object({
+  type: z.literal('glitch'),
+  variant: glitchVariantSchema,
+  intensity: z.number().min(0).max(1),
+  speed: z.number().min(0.5).max(2),
+  seed: z.number(),
+});
+
+const halftoneEffectSchema = z.object({
+  type: z.literal('canvas-effect'),
+  variant: z.literal('halftone'),
+  patternType: halftonePatternTypeSchema,
+  dotSize: z.number().min(2).max(20),
+  spacing: z.number().min(4).max(40),
+  angle: z.number().min(0).max(360),
+  intensity: z.number().min(0).max(1),
+  softness: z.number().min(0).max(1),
+  blendMode: halftoneBlendModeSchema,
+  inverted: z.boolean(),
+  fadeAngle: z.number().min(-1).max(360),
+  fadeAmount: z.number().min(0).max(1),
+  dotColor: z.string(),
+});
+
+const vignetteEffectSchema = z.object({
+  type: z.literal('overlay-effect'),
+  variant: z.literal('vignette'),
+  intensity: z.number().min(0).max(1),
+  size: z.number().min(0).max(1),
+  softness: z.number().min(0).max(1),
+  color: z.string(),
+  shape: z.enum(['circular', 'elliptical']),
+});
+
+const visualEffectSchema = z.discriminatedUnion('type', [
+  cssFilterEffectSchema,
+  glitchEffectSchema,
+  halftoneEffectSchema,
+  vignetteEffectSchema,
+]);
+
+const itemEffectSchema = z.object({
+  id: z.string().min(1),
+  effect: visualEffectSchema,
+  enabled: z.boolean(),
+});
 
 const transformSchema = z.object({
   x: z.number().optional(),
@@ -105,11 +193,23 @@ const timelineItemSchema = z.object({
   sourceStart: z.number().optional(),
   sourceEnd: z.number().optional(),
   sourceDuration: z.number().optional(),
+  // Trim fields
+  trimStart: z.number().optional(),
+  trimEnd: z.number().optional(),
   // Text fields
   text: z.string().optional(),
   fontSize: z.number().optional(),
   fontFamily: z.string().optional(),
+  fontWeight: fontWeightSchema.optional(),
+  fontStyle: fontStyleSchema.optional(),
   color: z.string().optional(),
+  backgroundColor: z.string().optional(),
+  textAlign: textAlignSchema.optional(),
+  verticalAlign: verticalAlignSchema.optional(),
+  lineHeight: z.number().optional(),
+  letterSpacing: z.number().optional(),
+  textShadow: textShadowSchema.optional(),
+  stroke: textStrokeSchema.optional(),
   // Shape fields
   shapeType: shapeTypeSchema.optional(),
   fillColor: z.string().optional(),
@@ -118,6 +218,11 @@ const timelineItemSchema = z.object({
   direction: directionSchema.optional(),
   points: z.number().optional(),
   innerRadius: z.number().optional(),
+  // Mask fields
+  isMask: z.boolean().optional(),
+  maskType: maskTypeSchema.optional(),
+  maskFeather: z.number().min(0).max(100).optional(),
+  maskInvert: z.boolean().optional(),
   // Speed
   speed: z.number().min(0.1).max(10).optional(),
   // Source dimensions
@@ -132,6 +237,10 @@ const timelineItemSchema = z.object({
   // Video properties
   fadeIn: z.number().min(0).optional(),
   fadeOut: z.number().min(0).optional(),
+  // Effects
+  effects: z.array(itemEffectSchema).optional(),
+  // Adjustment layer
+  effectOpacity: z.number().min(0).max(1).optional(),
 });
 
 // ============================================================================
