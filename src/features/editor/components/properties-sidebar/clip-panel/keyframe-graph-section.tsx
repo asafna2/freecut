@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button';
 import { ValueGraphEditor } from '@/features/keyframes/components/value-graph-editor';
 import { useKeyframesStore } from '@/features/timeline/stores/keyframes-store';
 import { useKeyframeSelectionStore } from '@/features/timeline/stores/keyframe-selection-store';
-import { usePlaybackStore } from '@/features/preview/stores/playback-store';
+import { useThrottledFrame } from '@/features/preview/hooks/use-throttled-frame';
 import type { TimelineItem } from '@/types/timeline';
 import type { AnimatableProperty, KeyframeRef, BezierControlPoints, Keyframe } from '@/types/keyframe';
 
@@ -42,8 +42,8 @@ export const KeyframeGraphSection = memo(function KeyframeGraphSection({
   const selectedKeyframes = useKeyframeSelectionStore((s) => s.selectedKeyframes);
   const selectKeyframes = useKeyframeSelectionStore((s) => s.selectKeyframes);
 
-  // Get current frame
-  const currentFrame = usePlaybackStore((s) => s.currentFrame);
+  // Get current frame (throttled to reduce re-renders during playback)
+  const currentFrame = useThrottledFrame();
 
   // Get keyframes by property for the selected item
   const keyframesByProperty = useMemo((): Partial<Record<AnimatableProperty, Keyframe[]>> => {

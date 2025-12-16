@@ -1,5 +1,5 @@
 // React and external libraries
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, useLayoutEffect } from 'react';
 
 // Stores and selectors
 import { usePlaybackStore } from '@/features/preview/stores/playback-store';
@@ -19,11 +19,11 @@ export interface TimelinePlayheadProps {
  * Renders the playhead indicator that shows the current frame position
  * - Vertical line across all tracks
  * - Diamond indicator in ruler when inRuler=true
- * - Synchronized with playback store
+ * - Synchronized with playback store via manual subscription (no re-renders during playback)
  * - Draggable for scrubbing through timeline
  */
 export function TimelinePlayhead({ inRuler = false, maxFrame }: TimelinePlayheadProps) {
-  const currentFrame = usePlaybackStore((s) => s.currentFrame);
+  // Don't subscribe to currentFrame - use ref + manual subscription instead
   const setCurrentFrame = usePlaybackStore((s) => s.setCurrentFrame);
   const { frameToPixels, pixelsToFrame } = useTimelineZoomContext();
 
@@ -44,6 +44,7 @@ export function TimelinePlayhead({ inRuler = false, maxFrame }: TimelinePlayhead
   const pixelsToFrameRef = useRef(pixelsToFrame);
   const setCurrentFrameRef = useRef(setCurrentFrame);
   const maxFrameRef = useRef(maxFrame);
+  const frameToPixelsRef = useRef(frameToPixels);
 
   // RAF throttling refs for smooth scrubbing without excessive state updates
   const pendingFrameRef = useRef<number | null>(null);
@@ -54,7 +55,33 @@ export function TimelinePlayhead({ inRuler = false, maxFrame }: TimelinePlayhead
     pixelsToFrameRef.current = pixelsToFrame;
     setCurrentFrameRef.current = setCurrentFrame;
     maxFrameRef.current = maxFrame;
-  }, [pixelsToFrame, setCurrentFrame, maxFrame]);
+    frameToPixelsRef.current = frameToPixels;
+  }, [pixelsToFrame, setCurrentFrame, maxFrame, frameToPixels]);
+
+  // Subscribe to currentFrame changes and update position directly (no React re-renders)
+  useEffect(() => {
+    const updatePosition = (frame: number) => {
+      if (!playheadRef.current) return;
+      const leftPosition = Math.round(frameToPixelsRef.current(frame));
+      playheadRef.current.style.left = `${leftPosition}px`;
+    };
+
+    // Initial update
+    updatePosition(usePlaybackStore.getState().currentFrame);
+
+    // Subscribe to store changes
+    return usePlaybackStore.subscribe((state) => {
+      updatePosition(state.currentFrame);
+    });
+  }, []);
+
+  // Also update position when frameToPixels changes (zoom changes)
+  useLayoutEffect(() => {
+    if (!playheadRef.current) return;
+    const frame = usePlaybackStore.getState().currentFrame;
+    const leftPosition = Math.round(frameToPixels(frame));
+    playheadRef.current.style.left = `${leftPosition}px`;
+  }, [frameToPixels]);
 
   // Track external drag operations to disable pointer events on hit areas
   useEffect(() => {
@@ -71,8 +98,6 @@ export function TimelinePlayhead({ inRuler = false, maxFrame }: TimelinePlayhead
       document.removeEventListener('drop', handleDragEnd);
     };
   }, []);
-
-  const leftPosition = Math.round(frameToPixels(currentFrame));
 
   // Handle drag start
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
@@ -148,7 +173,7 @@ export function TimelinePlayhead({ inRuler = false, maxFrame }: TimelinePlayhead
       ref={playheadRef}
       className="absolute top-0 bottom-0"
       style={{
-        left: `${leftPosition}px`,
+        // left is set via ref subscription in useEffect (no re-renders during playback)
         width: '2px',
         pointerEvents: 'none',
         zIndex: 9999,

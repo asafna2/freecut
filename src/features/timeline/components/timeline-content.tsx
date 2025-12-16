@@ -1,6 +1,5 @@
 import { useMemo, useRef, useEffect, useLayoutEffect, useState, useCallback, memo } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { useVirtualizer } from '@tanstack/react-virtual';
 
 // Stores and selectors
 import { useTimelineStore } from '../stores/timeline-store';
@@ -273,15 +272,6 @@ export const TimelineContent = memo(function TimelineContent({ duration, scrollR
       containerRef.current.scrollLeft = pendingScrollRef.current;
       pendingScrollRef.current = null;
     }
-  });
-
-  // Track virtualization - only render visible tracks for performance
-  // Uses variable sizing since each track can have different heights
-  const trackVirtualizer = useVirtualizer({
-    count: tracks.length,
-    getScrollElement: () => containerRef.current,
-    estimateSize: (index) => tracks[index]?.height ?? 64,
-    overscan: 2, // Render 2 extra tracks above/below viewport for smooth scrolling
   });
 
   // Marquee selection - create items array for getBoundingRect lookups
@@ -748,8 +738,6 @@ export const TimelineContent = memo(function TimelineContent({ duration, scrollR
           className="relative timeline-tracks"
           style={{
             width: `${timelineWidth}px`,
-            // Total height from virtualizer for proper scrolling
-            height: `${trackVirtualizer.getTotalSize()}px`,
             // CSS containment and will-change hints for scroll/paint optimization
             contain: 'layout style paint',
             willChange: 'contents',
@@ -757,26 +745,11 @@ export const TimelineContent = memo(function TimelineContent({ duration, scrollR
           onMouseMove={handleMouseMoveForRazor}
           onMouseLeave={handleMouseLeaveForRazor}
         >
-          {/* Virtualized tracks - only render visible tracks */}
-          {trackVirtualizer.getVirtualItems().map((virtualItem) => {
-            const track = tracks[virtualItem.index];
-            if (!track) return null;
-            return (
-              <div
-                key={track.id}
-                style={{
-                  position: 'absolute',
-                  top: 0,
-                  left: 0,
-                  width: '100%',
-                  height: `${virtualItem.size}px`,
-                  transform: `translateY(${virtualItem.start}px)`,
-                }}
-              >
-                <TimelineTrack track={track} timelineWidth={timelineWidth} />
-              </div>
-            );
-          })}
+          {/* Render all tracks - virtualization removed as it caused drag lag */}
+          {/* Video editors typically have <10 tracks, making virtualization overhead not worth it */}
+          {tracks.map((track) => (
+            <TimelineTrack key={track.id} track={track} timelineWidth={timelineWidth} />
+          ))}
 
           {/* Snap guidelines (shown during drag) */}
           {isDragging && (

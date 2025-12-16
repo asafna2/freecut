@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useMemo, memo } from 'react';
+import { useEffect, useRef, useState, useMemo, memo, useCallback } from 'react';
 import { Search, Filter, SortAsc, Video, FileAudio, Image as ImageIcon, Trash2, Grid3x3, List, AlertTriangle, Info, X, FolderOpen, Link2Off } from 'lucide-react';
 import { createLogger } from '@/lib/logger';
 
@@ -138,14 +138,14 @@ export const MediaLibrary = memo(function MediaLibrary({ onMediaSelect }: MediaL
     }
   };
 
-  // Import files from drag-drop handles
-  const handleImportHandles = async (handles: FileSystemFileHandle[]) => {
+  // Import files from drag-drop handles - memoized to prevent MediaGrid re-renders
+  const handleImportHandles = useCallback(async (handles: FileSystemFileHandle[]) => {
     try {
       await importHandles(handles);
     } catch (error) {
       logger.error('Import failed:', error);
     }
-  };
+  }, [importHandles]);
 
   // Find timeline items that reference the media being deleted (for batch delete from selection)
   // Read from store directly to avoid subscribing to items array

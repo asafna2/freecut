@@ -9,6 +9,7 @@ import { useCallback, useMemo } from 'react';
 import { Diamond } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useTimelineStore } from '@/features/timeline/stores/timeline-store';
+import { useThrottledFrame } from '@/features/preview/hooks/use-throttled-frame';
 import { usePlaybackStore } from '@/features/preview/stores/playback-store';
 import type { AnimatableProperty } from '@/types/keyframe';
 import {
@@ -41,8 +42,8 @@ export function KeyframeToggle({
   className,
   disabled = false,
 }: KeyframeToggleProps) {
-  // Get current frame from playback store
-  const currentFrame = usePlaybackStore((s) => s.currentFrame);
+  // Get current frame (throttled to reduce re-renders during playback)
+  const currentFrame = useThrottledFrame();
 
   // Get keyframes for the first item (for multi-select, we show state of first item)
   const firstItemId = itemIds[0];
@@ -163,7 +164,8 @@ interface KeyframeNavProps {
 }
 
 export function KeyframeNav({ itemIds, property, className }: KeyframeNavProps) {
-  const currentFrame = usePlaybackStore((s) => s.currentFrame);
+  // Use throttled frame for display, but get immediate value for navigation
+  const currentFrame = useThrottledFrame();
   const setCurrentFrame = usePlaybackStore((s) => s.setCurrentFrame);
 
   const firstItemId = itemIds[0];

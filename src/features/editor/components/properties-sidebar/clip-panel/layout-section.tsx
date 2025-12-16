@@ -6,7 +6,7 @@ import type { TimelineItem } from '@/types/timeline';
 import type { TransformProperties, CanvasSettings } from '@/types/transform';
 import { useGizmoStore } from '@/features/preview/stores/gizmo-store';
 import { useMediaLibraryStore } from '@/features/media-library/stores/media-library-store';
-import { usePlaybackStore } from '@/features/preview/stores/playback-store';
+import { useThrottledFrame } from '@/features/preview/hooks/use-throttled-frame';
 import { useTimelineStore } from '@/features/timeline/stores/timeline-store';
 import {
   resolveTransform,
@@ -55,8 +55,8 @@ export const LayoutSection = memo(function LayoutSection({
 }: LayoutSectionProps) {
   const itemIds = useMemo(() => items.map((item) => item.id), [items]);
 
-  // Get current playhead frame for keyframe animation
-  const currentFrame = usePlaybackStore((s) => s.currentFrame);
+  // Get current playhead frame for keyframe animation (throttled to reduce re-renders)
+  const currentFrame = useThrottledFrame();
 
   // Get keyframes for all selected items
   const allKeyframes = useTimelineStore((s) => s.keyframes);

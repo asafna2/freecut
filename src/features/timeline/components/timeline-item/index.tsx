@@ -114,6 +114,15 @@ export const TimelineItem = memo(function TimelineItem({ item, timelineDuration 
   const dragParticipationRef = useRef(0); // 0 = not participating, 1 = participating, 2 = participating + alt
   const rafIdRef = useRef<number | null>(null);
 
+  // PERFORMANCE: Use refs for item properties accessed in subscription callbacks
+  // This prevents effect recreation on every position change during drag
+  const itemFromRef = useRef(item.from);
+  const itemDurationRef = useRef(item.durationInFrames);
+  const itemTrackIdRef = useRef(item.trackId);
+  itemFromRef.current = item.from;
+  itemDurationRef.current = item.durationInFrames;
+  itemTrackIdRef.current = item.trackId;
+
   // Single subscription for all drag state tracking - manages RAF loop directly
   useEffect(() => {
     const updateTransform = () => {
@@ -178,19 +187,23 @@ export const TimelineItem = memo(function TimelineItem({ item, timelineDuration 
       isAnyDragActiveRef.current = isDragActive;
 
       // Update join indicator visibility based on whether this item or neighbors are dragged
+      // Use refs for item properties to avoid effect recreation on position changes
       if (isDragActive && state.dragState?.draggedItemIds) {
         const draggedIds = state.dragState.draggedItemIds;
         const timelineState = useTimelineStore.getState();
         const items = timelineState.items;
+        const currentFrom = itemFromRef.current;
+        const currentDuration = itemDurationRef.current;
+        const currentTrackId = itemTrackIdRef.current;
 
-        // Find current neighbors
+        // Find current neighbors using refs
         const leftNeighbor = items.find(
-          (other) => other.id !== item.id && other.trackId === item.trackId &&
-            other.from + other.durationInFrames === item.from
+          (other) => other.id !== item.id && other.trackId === currentTrackId &&
+            other.from + other.durationInFrames === currentFrom
         );
         const rightNeighbor = items.find(
-          (other) => other.id !== item.id && other.trackId === item.trackId &&
-            other.from === item.from + item.durationInFrames
+          (other) => other.id !== item.id && other.trackId === currentTrackId &&
+            other.from === currentFrom + currentDuration
         );
 
         const thisOrLeftDragged = draggedIds.includes(item.id) || (leftNeighbor && draggedIds.includes(leftNeighbor.id));
@@ -233,7 +246,7 @@ export const TimelineItem = memo(function TimelineItem({ item, timelineDuration 
       cleanupDragStyles();
       if (dragWasActiveTimeout) clearTimeout(dragWasActiveTimeout);
     };
-  }, [item.id, isDragging, item.trackId, item.from, item.durationInFrames]);
+  }, [item.id, isDragging]); // Use refs for position values to avoid recreation on drag
 
   // Computed values from refs for rendering
   const isPartOfMultiDrag = dragParticipationRef.current > 0;
@@ -437,40 +450,11 @@ export const TimelineItem = memo(function TimelineItem({ item, timelineDuration 
     return canJoinMultipleItems(selectedItems);
   }, []);
 
-  // Track item count on this track for neighbor detection
-  const trackItemCount = useTimelineStore(
-    useCallback(
-      (s) => s.items.filter(i => i.trackId === item.trackId).length,
-      [item.trackId]
-    )
-  );
-
-  // Track neighbor speeds for join indicator updates
-  const neighborSpeeds = useTimelineStore(
-    useCallback(
-      (s) => {
-        const left = s.items.find(
-          (other) =>
-            other.id !== item.id &&
-            other.trackId === item.trackId &&
-            other.from + other.durationInFrames === item.from
-        );
-        const right = s.items.find(
-          (other) =>
-            other.id !== item.id &&
-            other.trackId === item.trackId &&
-            other.from === item.from + item.durationInFrames
-        );
-        return `${left?.speed ?? 1}|${right?.speed ?? 1}`;
-      },
-      [item.id, item.trackId, item.from, item.durationInFrames]
-    )
-  );
-
-  // Neighbor calculation for join indicators
-  const { leftNeighbor, rightNeighbor, hasJoinableLeft, hasJoinableRight } = useMemo(() => {
-    const state = useTimelineStore.getState();
-    const items = state.items;
+  // PERFORMANCE: Neighbors are computed on-demand from store snapshot
+  // Don't subscribe to item changes - it causes O(n²) re-renders
+  // Instead, compute neighbors when needed for join indicators
+  const getNeighbors = useCallback(() => {
+    const items = useTimelineStore.getState().items;
 
     const left = items.find(
       (other) =>
@@ -492,7 +476,13 @@ export const TimelineItem = memo(function TimelineItem({ item, timelineDuration 
       hasJoinableLeft: left ? canJoinItems(left, item) : false,
       hasJoinableRight: right ? canJoinItems(item, right) : false,
     };
-  }, [item, trackItemCount, neighborSpeeds]);
+  }, [item]);
+
+  // Compute neighbors once per render - no subscription, just snapshot
+  const { leftNeighbor, rightNeighbor, hasJoinableLeft, hasJoinableRight } = useMemo(
+    () => getNeighbors(),
+    [getNeighbors]
+  );
 
   // Action handlers
   const handleJoinSelected = useCallback(() => {

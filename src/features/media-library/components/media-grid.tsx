@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useRef } from 'react';
+import { useState, useMemo, useEffect, useRef, memo } from 'react';
 import { Loader2, Upload, AlertTriangle } from 'lucide-react';
 import { createLogger } from '@/lib/logger';
 
@@ -27,7 +27,7 @@ export interface MediaGridProps {
   viewMode?: 'grid' | 'list';
 }
 
-export function MediaGrid({ onMediaSelect, onImportHandles, onShowNotification, viewMode = 'grid' }: MediaGridProps) {
+export const MediaGrid = memo(function MediaGrid({ onMediaSelect, onImportHandles, onShowNotification, viewMode = 'grid' }: MediaGridProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [mediaIdToDelete, setMediaIdToDelete] = useState<string | null>(null);
@@ -440,4 +440,4 @@ export function MediaGrid({ onMediaSelect, onImportHandles, onShowNotification, 
       </AlertDialog>
     </div>
   );
-}
+});
