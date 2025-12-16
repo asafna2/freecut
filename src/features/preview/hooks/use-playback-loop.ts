@@ -22,9 +22,12 @@ export function usePlaybackLoop({ totalFrames, fps }: UsePlaybackLoopOptions) {
   useEffect(() => {
     if (!isPlaying) return;
 
+    // totalFrames is a count, so valid frame indices are [0, totalFrames - 1]
+    const lastValidFrame = Math.max(0, totalFrames - 1);
+
     const interval = setInterval(() => {
       const current = usePlaybackStore.getState().currentFrame;
-      if (current >= totalFrames) {
+      if (current >= lastValidFrame) {
         setCurrentFrame(0); // Loop back to start
       } else {
         setCurrentFrame(current + 1);

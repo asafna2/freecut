@@ -183,19 +183,37 @@ export const GraphExtensionLines = memo(function GraphExtensionLines({
   );
 });
 
+interface GraphPlayheadProps {
+  frame: number;
+  viewport: GraphViewport;
+  padding: GraphPadding;
+  /** Total frames in the clip (for display) */
+  totalFrames?: number;
+  /** Callback when playhead is scrubbed (dragged) */
+  onScrub?: (frame: number) => void;
+  /** Callback when scrubbing starts */
+  onScrubStart?: () => void;
+  /** Callback when scrubbing ends */
+  onScrubEnd?: () => void;
+  /** Whether scrubbing is disabled */
+  disabled?: boolean;
+}
+
 /**
  * Playhead indicator on the graph.
  * Shows current frame position as a vertical line with a triangular marker.
+ * Can be dragged to scrub through frames.
  */
 export const GraphPlayhead = memo(function GraphPlayhead({
   frame,
   viewport,
   padding,
-}: {
-  frame: number;
-  viewport: GraphViewport;
-  padding: GraphPadding;
-}) {
+  totalFrames,
+  onScrub,
+  onScrubStart,
+  onScrubEnd,
+  disabled = false,
+}: GraphPlayheadProps) {
   const { startFrame, endFrame, width, height } = viewport;
 
   // Check if playhead is in visible range
@@ -208,8 +226,81 @@ export const GraphPlayhead = memo(function GraphPlayhead({
 
   const x = graphLeft + ((frame - startFrame) / (endFrame - startFrame)) * graphWidth;
 
+  // Convert screen X to frame (clamped to valid range)
+  const screenXToFrame = (screenX: number): number => {
+    const relativeX = screenX - graphLeft;
+    const normalizedX = Math.max(0, Math.min(1, relativeX / graphWidth));
+    const calculatedFrame = Math.round(startFrame + normalizedX * (endFrame - startFrame));
+    // Clamp to valid frame range [0, totalFrames - 1] (last valid frame is totalFrames - 1)
+    // This prevents scrubbing past the clip boundary which would deselect the clip
+    const maxValidFrame = totalFrames ? totalFrames - 1 : endFrame - 1;
+    return Math.max(0, Math.min(maxValidFrame, calculatedFrame));
+  };
+
+  // Handle pointer down on playhead
+  const handlePointerDown = (event: React.PointerEvent) => {
+    if (disabled || !onScrub) return;
+    
+    event.preventDefault();
+    event.stopPropagation();
+    
+    const svg = (event.target as SVGElement).ownerSVGElement;
+    if (!svg) return;
+
+    // Notify scrub start
+    onScrubStart?.();
+
+    // Capture pointer for drag
+    svg.setPointerCapture(event.pointerId);
+
+    const handlePointerMove = (e: PointerEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const rect = svg.getBoundingClientRect();
+      const localX = e.clientX - rect.left;
+      const newFrame = screenXToFrame(localX);
+      onScrub(newFrame);
+    };
+
+    const handlePointerUp = (e: PointerEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      svg.releasePointerCapture(event.pointerId);
+      svg.removeEventListener('pointermove', handlePointerMove);
+      svg.removeEventListener('pointerup', handlePointerUp);
+      
+      // Notify scrub end
+      onScrubEnd?.();
+    };
+
+    svg.addEventListener('pointermove', handlePointerMove);
+    svg.addEventListener('pointerup', handlePointerUp);
+  };
+
+  const isInteractive = !disabled && !!onScrub;
+
   return (
-    <g className="graph-playhead" style={{ pointerEvents: 'none' }}>
+    <g 
+      className="graph-playhead" 
+      style={{ 
+        pointerEvents: isInteractive ? 'auto' : 'none',
+        cursor: isInteractive ? 'ew-resize' : 'default',
+      }}
+    >
+      {/* Invisible wider hit area for easier grabbing */}
+      {isInteractive && (
+        <line
+          x1={x}
+          y1={graphTop}
+          x2={x}
+          y2={graphTop + graphHeight}
+          stroke="transparent"
+          strokeWidth={12}
+          onPointerDown={handlePointerDown}
+          style={{ cursor: 'ew-resize' }}
+        />
+      )}
+      {/* Visible playhead line */}
       <line
         x1={x}
         y1={graphTop}
@@ -218,11 +309,15 @@ export const GraphPlayhead = memo(function GraphPlayhead({
         stroke="#ef4444"
         strokeWidth={2}
         strokeOpacity={0.9}
+        onPointerDown={isInteractive ? handlePointerDown : undefined}
+        style={{ cursor: isInteractive ? 'ew-resize' : 'default' }}
       />
-      {/* Playhead top marker */}
+      {/* Playhead top marker (draggable handle) */}
       <path
         d={`M ${x - 6} ${graphTop} L ${x + 6} ${graphTop} L ${x} ${graphTop + 8} Z`}
         fill="#ef4444"
+        onPointerDown={isInteractive ? handlePointerDown : undefined}
+        style={{ cursor: isInteractive ? 'ew-resize' : 'default' }}
       />
       {/* Frame number label */}
       <text
@@ -233,8 +328,9 @@ export const GraphPlayhead = memo(function GraphPlayhead({
         fontSize={9}
         fontFamily="monospace"
         fontWeight="bold"
+        style={{ pointerEvents: 'none' }}
       >
-        F{Math.round(frame)}
+        {totalFrames ? `F${Math.round(frame)}/${totalFrames - 1}` : `F${Math.round(frame)}`}
       </text>
     </g>
   );

@@ -4,9 +4,10 @@
  */
 
 import { memo, useState, useCallback, useMemo, useEffect, useRef } from 'react';
-import { ZoomIn, ZoomOut, Maximize2, RotateCcw } from 'lucide-react';
+import { ZoomIn, ZoomOut, Maximize2, RotateCcw, ChevronLeft, ChevronRight, Plus, Trash2, Magnet } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import {
   Select,
   SelectContent,
@@ -52,6 +53,16 @@ interface ValueGraphEditorProps {
   onPropertyChange?: (property: AnimatableProperty | null) => void;
   /** Callback when playhead is scrubbed (frame is clip-relative) */
   onScrub?: (frame: number) => void;
+  /** Callback when drag starts (for undo batching) */
+  onDragStart?: () => void;
+  /** Callback when drag ends (for undo batching) */
+  onDragEnd?: () => void;
+  /** Callback to add a keyframe at the current frame */
+  onAddKeyframe?: (property: AnimatableProperty, frame: number) => void;
+  /** Callback to remove selected keyframes */
+  onRemoveKeyframes?: (refs: KeyframeRef[]) => void;
+  /** Callback to navigate to a keyframe (sets playhead to that frame) */
+  onNavigateToKeyframe?: (frame: number) => void;
   /** Whether the editor is disabled */
   disabled?: boolean;
   /** Additional class name */
@@ -76,18 +87,25 @@ export const ValueGraphEditor = memo(function ValueGraphEditor({
   onSelectionChange,
   onPropertyChange,
   onScrub,
+  onDragStart,
+  onDragEnd,
+  onAddKeyframe,
+  onRemoveKeyframes,
+  onNavigateToKeyframe,
   disabled = false,
   className,
 }: ValueGraphEditorProps) {
   const padding = DEFAULT_GRAPH_PADDING;
   const svgRef = useRef<SVGSVGElement>(null);
   
+  // Track if playhead is being scrubbed (to prevent background click deselection)
+  const isScrrubbingRef = useRef(false);
+  
   // Calculate heights for layout
-  // Toolbar: ~28px (min-h-7), Scrubber: ~32px (frame label + bar), gaps: ~4px (gap-1)
+  // Toolbar: ~28px (min-h-7), gaps: ~4px (gap-1)
   const toolbarHeight = 28;
-  const scrubberHeight = onScrub ? 32 : 0;
   const gaps = 4; // gap-1 = 4px
-  const totalFixedHeight = toolbarHeight + scrubberHeight + gaps;
+  const totalFixedHeight = toolbarHeight + gaps;
   const graphHeight = Math.max(60, height - totalFixedHeight);
 
   // Get available properties
@@ -121,6 +139,9 @@ export const ValueGraphEditor = memo(function ValueGraphEditor({
   }, [totalFrames, width, graphHeight, propertyRange]);
 
   const [viewport, setViewport] = useState<GraphViewport>(() => calculateFittedViewport());
+  
+  // Snapping state
+  const [snapEnabled, setSnapEnabled] = useState(true);
 
   // Update viewport when keyframes or property changes
   useEffect(() => {
@@ -149,12 +170,53 @@ export const ValueGraphEditor = memo(function ValueGraphEditor({
     }));
   }, [displayProperty, keyframes, itemId, viewport, padding, selectedKeyframeIds]);
 
+  // Calculate snap targets for keyframe dragging
+  const snapTargets = useMemo(() => {
+    // Frame targets: other keyframe frames, playhead position
+    const frameTargets: number[] = [];
+    // Value targets: 0, min, max, and other keyframe values
+    const valueTargets: number[] = [];
+
+    // Add special frame targets
+    frameTargets.push(0); // Start of clip
+    frameTargets.push(currentFrame); // Playhead position
+
+    // Add special value targets based on property range
+    if (propertyRange) {
+      valueTargets.push(propertyRange.min);
+      valueTargets.push(propertyRange.max);
+      // Add 0 if it's within range
+      if (propertyRange.min <= 0 && propertyRange.max >= 0) {
+        valueTargets.push(0);
+      }
+      // Add 1 for normalized properties (opacity, scale)
+      if (propertyRange.min <= 1 && propertyRange.max >= 1) {
+        valueTargets.push(1);
+      }
+    }
+
+    // Add other keyframes' positions (excluding currently selected ones)
+    for (const kf of keyframes) {
+      if (!selectedKeyframeIds.has(kf.id)) {
+        frameTargets.push(kf.frame);
+        valueTargets.push(kf.value);
+      }
+    }
+
+    // Remove duplicates
+    return {
+      frameTargets: [...new Set(frameTargets)],
+      valueTargets: [...new Set(valueTargets)],
+    };
+  }, [keyframes, selectedKeyframeIds, currentFrame, propertyRange]);
+
   // Interaction handlers
   const {
     dragState,
     isDragging,
     previewValues,
     draggingHandle,
+    constraintAxis,
     handleKeyframePointerDown,
     handleKeyframeClick,
     handleBezierPointerDown,
@@ -177,6 +239,11 @@ export const ValueGraphEditor = memo(function ValueGraphEditor({
     onSelectionChange,
     onKeyframeMove,
     onBezierHandleMove,
+    onDragStart,
+    onDragEnd,
+    snapEnabled,
+    snapFrameTargets: snapTargets.frameTargets,
+    snapValueTargets: snapTargets.valueTargets,
     disabled,
   });
 
@@ -232,6 +299,207 @@ export const ValueGraphEditor = memo(function ValueGraphEditor({
     [onPropertyChange]
   );
 
+  // Get sorted keyframe frames for navigation
+  const sortedKeyframeFrames = useMemo(() => {
+    return [...keyframes].map(kf => kf.frame).sort((a, b) => a - b);
+  }, [keyframes]);
+
+  // Find previous keyframe frame
+  const prevKeyframeFrame = useMemo(() => {
+    for (let i = sortedKeyframeFrames.length - 1; i >= 0; i--) {
+      if (sortedKeyframeFrames[i]! < currentFrame) {
+        return sortedKeyframeFrames[i];
+      }
+    }
+    return null;
+  }, [sortedKeyframeFrames, currentFrame]);
+
+  // Find next keyframe frame
+  const nextKeyframeFrame = useMemo(() => {
+    for (const frame of sortedKeyframeFrames) {
+      if (frame > currentFrame) {
+        return frame;
+      }
+    }
+    return null;
+  }, [sortedKeyframeFrames, currentFrame]);
+
+  // Check if there's a keyframe at the current frame
+  const hasKeyframeAtCurrentFrame = useMemo(() => {
+    return keyframes.some(kf => kf.frame === currentFrame);
+  }, [keyframes, currentFrame]);
+
+  // Get selected keyframe (only when exactly one is selected)
+  const selectedKeyframe = useMemo(() => {
+    if (selectedKeyframeIds.size !== 1) return null;
+    const selectedId = [...selectedKeyframeIds][0];
+    return keyframes.find(kf => kf.id === selectedId) ?? null;
+  }, [selectedKeyframeIds, keyframes]);
+
+  // Local state for input fields (commit on Enter/blur)
+  const [frameInputValue, setFrameInputValue] = useState<string>('');
+  const [valueInputValue, setValueInputValue] = useState<string>('');
+
+  // Sync local input state when selected keyframe changes
+  useEffect(() => {
+    if (selectedKeyframe) {
+      setFrameInputValue(String(selectedKeyframe.frame));
+      setValueInputValue(selectedKeyframe.value.toFixed(3));
+    }
+  }, [selectedKeyframe?.id, selectedKeyframe?.frame, selectedKeyframe?.value]);
+
+  // Commit frame value
+  const commitFrameValue = useCallback(() => {
+    if (!selectedKeyframe || !displayProperty || !onKeyframeMove) return;
+    
+    const newFrame = Math.round(Number(frameInputValue));
+    if (isNaN(newFrame)) {
+      // Reset to current value if invalid
+      setFrameInputValue(String(selectedKeyframe.frame));
+      return;
+    }
+    
+    // Clamp to valid range
+    const clampedFrame = Math.max(0, Math.min(totalFrames - 1, newFrame));
+    
+    // Skip if no change
+    if (clampedFrame === selectedKeyframe.frame) {
+      setFrameInputValue(String(selectedKeyframe.frame));
+      return;
+    }
+    
+    // Wrap in undo batch
+    onDragStart?.();
+    onKeyframeMove(
+      { itemId, property: displayProperty, keyframeId: selectedKeyframe.id },
+      clampedFrame,
+      selectedKeyframe.value
+    );
+    onDragEnd?.();
+    
+    // Move playhead to the new frame
+    onNavigateToKeyframe?.(clampedFrame);
+  }, [selectedKeyframe, displayProperty, itemId, totalFrames, frameInputValue, onKeyframeMove, onDragStart, onDragEnd, onNavigateToKeyframe]);
+
+  // Commit value
+  const commitValueInput = useCallback(() => {
+    if (!selectedKeyframe || !displayProperty || !onKeyframeMove) return;
+    
+    const newValue = Number(valueInputValue);
+    if (isNaN(newValue)) {
+      // Reset to current value if invalid
+      setValueInputValue(selectedKeyframe.value.toFixed(3));
+      return;
+    }
+    
+    // Clamp to property range
+    const range = PROPERTY_VALUE_RANGES[displayProperty];
+    const clampedValue = range 
+      ? Math.max(range.min, Math.min(range.max, newValue))
+      : newValue;
+    
+    // Skip if no change (with small epsilon for floating point)
+    if (Math.abs(clampedValue - selectedKeyframe.value) < 0.0001) {
+      setValueInputValue(selectedKeyframe.value.toFixed(3));
+      return;
+    }
+    
+    // Wrap in undo batch
+    onDragStart?.();
+    onKeyframeMove(
+      { itemId, property: displayProperty, keyframeId: selectedKeyframe.id },
+      selectedKeyframe.frame,
+      clampedValue
+    );
+    onDragEnd?.();
+  }, [selectedKeyframe, displayProperty, itemId, valueInputValue, onKeyframeMove, onDragStart, onDragEnd]);
+
+  // Handle key down for Enter to commit
+  const handleInputKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>, commitFn: () => void) => {
+    if (e.key === 'Enter') {
+      e.currentTarget.blur();
+      commitFn();
+    } else if (e.key === 'Escape') {
+      // Reset on escape
+      if (selectedKeyframe) {
+        setFrameInputValue(String(selectedKeyframe.frame));
+        setValueInputValue(selectedKeyframe.value.toFixed(3));
+      }
+      e.currentTarget.blur();
+    }
+  }, [selectedKeyframe]);
+
+  // Navigate to previous keyframe and select it
+  const goToPrevKeyframe = useCallback(() => {
+    if (prevKeyframeFrame !== null && prevKeyframeFrame !== undefined && onNavigateToKeyframe) {
+      onNavigateToKeyframe(prevKeyframeFrame);
+      // Select the keyframe at that frame
+      const keyframeAtFrame = keyframes.find(kf => kf.frame === prevKeyframeFrame);
+      if (keyframeAtFrame && onSelectionChange) {
+        onSelectionChange(new Set([keyframeAtFrame.id]));
+      }
+    }
+  }, [prevKeyframeFrame, onNavigateToKeyframe, keyframes, onSelectionChange]);
+
+  // Navigate to next keyframe and select it
+  const goToNextKeyframe = useCallback(() => {
+    if (nextKeyframeFrame !== null && onNavigateToKeyframe) {
+      onNavigateToKeyframe(nextKeyframeFrame);
+      // Select the keyframe at that frame
+      const keyframeAtFrame = keyframes.find(kf => kf.frame === nextKeyframeFrame);
+      if (keyframeAtFrame && onSelectionChange) {
+        onSelectionChange(new Set([keyframeAtFrame.id]));
+      }
+    }
+  }, [nextKeyframeFrame, onNavigateToKeyframe, keyframes, onSelectionChange]);
+
+  // Add keyframe at current frame
+  const handleAddKeyframe = useCallback(() => {
+    if (displayProperty && onAddKeyframe) {
+      onAddKeyframe(displayProperty, currentFrame);
+    }
+  }, [displayProperty, currentFrame, onAddKeyframe]);
+
+  // Remove selected keyframes
+  const handleRemoveKeyframes = useCallback(() => {
+    if (!displayProperty || !onRemoveKeyframes) return;
+    
+    const refs: KeyframeRef[] = [];
+    for (const kfId of selectedKeyframeIds) {
+      refs.push({
+        itemId,
+        property: displayProperty,
+        keyframeId: kfId,
+      });
+    }
+    
+    if (refs.length > 0) {
+      onRemoveKeyframes(refs);
+    }
+  }, [displayProperty, selectedKeyframeIds, itemId, onRemoveKeyframes]);
+
+  // Wrapped scrub handler that tracks scrubbing state
+  const handlePlayheadScrubStart = useCallback(() => {
+    isScrrubbingRef.current = true;
+  }, []);
+
+  const handlePlayheadScrubEnd = useCallback(() => {
+    // Delay clearing the flag to prevent click event from deselecting
+    setTimeout(() => {
+      isScrrubbingRef.current = false;
+    }, 100);
+  }, []);
+
+  // Custom background click that respects scrubbing state
+  const handleGraphBackgroundClick = useCallback(
+    (event: React.MouseEvent) => {
+      // Don't deselect if we just finished scrubbing
+      if (isScrrubbingRef.current) return;
+      handleBackgroundClick(event);
+    },
+    [handleBackgroundClick]
+  );
+
   // Attach native wheel event listener with passive: false to prevent page scroll
   useEffect(() => {
     const svg = svgRef.current;
@@ -259,7 +527,7 @@ export const ValueGraphEditor = memo(function ValueGraphEditor({
             onValueChange={handlePropertySelect}
             disabled={disabled || availableProperties.length === 0}
           >
-            <SelectTrigger className="w-[140px] h-7 text-xs">
+            <SelectTrigger className="w-[140px] h-7 text-xs focus:ring-0 focus:ring-offset-0">
               <SelectValue placeholder="Select property" />
             </SelectTrigger>
             <SelectContent>
@@ -275,6 +543,143 @@ export const ValueGraphEditor = memo(function ValueGraphEditor({
           <span className="text-xs text-muted-foreground">
             {keyframes.length} keyframe{keyframes.length !== 1 ? 's' : ''}
           </span>
+        </div>
+
+        {/* Keyframe controls */}
+        <div className="flex items-center gap-1">
+          {/* Navigation */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 w-7 p-0"
+                onClick={goToPrevKeyframe}
+                disabled={disabled || prevKeyframeFrame === null || !onNavigateToKeyframe}
+              >
+                <ChevronLeft className="h-3.5 w-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Previous keyframe</TooltipContent>
+          </Tooltip>
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 w-7 p-0"
+                onClick={goToNextKeyframe}
+                disabled={disabled || nextKeyframeFrame === null || !onNavigateToKeyframe}
+              >
+                <ChevronRight className="h-3.5 w-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Next keyframe</TooltipContent>
+          </Tooltip>
+
+          {/* Separator */}
+          <div className="w-px h-4 bg-border mx-1" />
+
+          {/* Add/Remove */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant={hasKeyframeAtCurrentFrame ? "secondary" : "ghost"}
+                size="sm"
+                className="h-7 w-7 p-0"
+                onClick={handleAddKeyframe}
+                disabled={disabled || !displayProperty || !onAddKeyframe || hasKeyframeAtCurrentFrame}
+              >
+                <Plus className="h-3.5 w-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              {hasKeyframeAtCurrentFrame ? 'Keyframe exists at current frame' : 'Add keyframe at current frame'}
+            </TooltipContent>
+          </Tooltip>
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 w-7 p-0 text-destructive hover:text-destructive"
+                onClick={handleRemoveKeyframes}
+                disabled={disabled || selectedKeyframeIds.size === 0 || !onRemoveKeyframes}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              {selectedKeyframeIds.size > 0 
+                ? `Remove ${selectedKeyframeIds.size} selected keyframe${selectedKeyframeIds.size !== 1 ? 's' : ''}`
+                : 'Remove selected keyframes'}
+            </TooltipContent>
+          </Tooltip>
+
+          {/* Separator */}
+          <div className="w-px h-4 bg-border mx-1" />
+
+          {/* Snapping toggle */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                className={cn(
+                  "h-7 w-7 p-0",
+                  snapEnabled && "bg-primary text-primary-foreground hover:bg-primary/90"
+                )}
+                onClick={() => setSnapEnabled(!snapEnabled)}
+                disabled={disabled}
+              >
+                <Magnet className="h-3.5 w-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              {snapEnabled ? 'Snapping enabled (hold Ctrl to disable temporarily)' : 'Enable snapping'}
+            </TooltipContent>
+          </Tooltip>
+
+          {/* Separator */}
+          <div className="w-px h-4 bg-border mx-1" />
+
+          {/* Precise value inputs (shown when exactly one keyframe is selected) */}
+          {selectedKeyframe && (
+            <>
+              <div className="flex items-center gap-1">
+                <span className="text-xs text-muted-foreground">F:</span>
+                <Input
+                  type="number"
+                  value={frameInputValue}
+                  onChange={(e) => setFrameInputValue(e.target.value)}
+                  onBlur={commitFrameValue}
+                  onKeyDown={(e) => handleInputKeyDown(e, commitFrameValue)}
+                  className="w-14 h-6 text-xs px-1.5 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                  min={0}
+                  max={totalFrames - 1}
+                  disabled={disabled || !onKeyframeMove}
+                />
+              </div>
+              <div className="flex items-center gap-1">
+                <span className="text-xs text-muted-foreground">V:</span>
+                <Input
+                  type="number"
+                  value={valueInputValue}
+                  onChange={(e) => setValueInputValue(e.target.value)}
+                  onBlur={commitValueInput}
+                  onKeyDown={(e) => handleInputKeyDown(e, commitValueInput)}
+                  step={0.01}
+                  className="w-16 h-6 text-xs px-1.5 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                  min={propertyRange?.min}
+                  max={propertyRange?.max}
+                  disabled={disabled || !onKeyframeMove}
+                />
+              </div>
+              <div className="w-px h-4 bg-border mx-1" />
+            </>
+          )}
         </div>
 
         {/* Zoom controls */}
@@ -354,8 +759,11 @@ export const ValueGraphEditor = memo(function ValueGraphEditor({
         onPointerUp={handlePointerUp}
         onPointerLeave={handlePointerUp}
         onWheel={handleWheel}
-        onClick={handleBackgroundClick}
-        style={{ touchAction: 'none' }}
+        onClick={handleGraphBackgroundClick}
+        style={{ 
+          touchAction: 'none',
+          cursor: isDragging && dragState?.type === 'keyframe' ? 'pointer' : undefined,
+        }}
       >
         {/* Grid background */}
         <GraphGrid viewport={viewport} padding={padding} />
@@ -366,6 +774,18 @@ export const ValueGraphEditor = memo(function ValueGraphEditor({
         {/* Interpolation curves */}
         <GraphCurves points={pointsWithDragState} selectedKeyframeIds={selectedKeyframeIds} />
 
+        {/* Playhead (rendered before keyframes so keyframes get click priority) */}
+        <GraphPlayhead 
+          frame={currentFrame} 
+          viewport={viewport} 
+          padding={padding}
+          totalFrames={totalFrames}
+          onScrub={onScrub}
+          onScrubStart={handlePlayheadScrubStart}
+          onScrubEnd={handlePlayheadScrubEnd}
+          disabled={disabled}
+        />
+
         {/* Bezier handles (for selected keyframes with cubic-bezier easing) */}
         <GraphHandles
           points={pointsWithDragState}
@@ -375,7 +795,7 @@ export const ValueGraphEditor = memo(function ValueGraphEditor({
           disabled={disabled}
         />
 
-        {/* Keyframe points */}
+        {/* Keyframe points (rendered last for highest click priority) */}
         <GraphKeyframes
           points={pointsWithDragState}
           previewValues={previewValues}
@@ -384,19 +804,45 @@ export const ValueGraphEditor = memo(function ValueGraphEditor({
           disabled={disabled}
         />
 
-        {/* Playhead */}
-        <GraphPlayhead frame={currentFrame} viewport={viewport} padding={padding} />
+        {/* Constraint guide line when Shift is held during drag */}
+        {isDragging && constraintAxis && dragState?.type === 'keyframe' && (() => {
+          const draggingPoint = pointsWithDragState.find(p => p.keyframe.id === dragState.keyframeId);
+          if (!draggingPoint) return null;
+          
+          const graphLeft = padding.left;
+          const graphRight = viewport.width - padding.right;
+          const graphTop = padding.top;
+          const graphBottom = viewport.height - padding.bottom;
+          
+          return constraintAxis === 'x' ? (
+            // Horizontal constraint line (frame only movement)
+            <line
+              x1={graphLeft}
+              y1={draggingPoint.y}
+              x2={graphRight}
+              y2={draggingPoint.y}
+              stroke="#f97316"
+              strokeWidth={1.5}
+              strokeDasharray="6 3"
+              opacity={0.8}
+              pointerEvents="none"
+            />
+          ) : (
+            // Vertical constraint line (value only movement)
+            <line
+              x1={draggingPoint.x}
+              y1={graphTop}
+              x2={draggingPoint.x}
+              y2={graphBottom}
+              stroke="#f97316"
+              strokeWidth={1.5}
+              strokeDasharray="6 3"
+              opacity={0.8}
+              pointerEvents="none"
+            />
+          );
+        })()}
       </svg>
-
-      {/* Timeline scrubber bar */}
-      {onScrub && (
-        <GraphScrubber
-          currentFrame={currentFrame}
-          totalFrames={totalFrames}
-          onScrub={onScrub}
-          disabled={disabled}
-        />
-      )}
 
       {/* Keyboard hints (shows when dragging) */}
       {isDragging && dragState?.type === 'keyframe' && (
@@ -405,109 +851,6 @@ export const ValueGraphEditor = memo(function ValueGraphEditor({
           <span><kbd className="px-1 py-0.5 bg-muted rounded text-[10px]">Alt</kbd> fine adjust</span>
         </div>
       )}
-    </div>
-  );
-});
-
-/**
- * Timeline scrubber component - horizontal progress bar for scrubbing through the clip.
- */
-const GraphScrubber = memo(function GraphScrubber({
-  currentFrame,
-  totalFrames,
-  onScrub,
-  disabled = false,
-}: {
-  currentFrame: number;
-  totalFrames: number;
-  onScrub: (frame: number) => void;
-  disabled?: boolean;
-}) {
-  const barRef = useRef<HTMLDivElement>(null);
-  const [isScrubbing, setIsScrubbing] = useState(false);
-
-  // Calculate progress percentage
-  const progress = totalFrames > 0 ? Math.min(100, Math.max(0, (currentFrame / totalFrames) * 100)) : 0;
-
-  // Convert x position to frame
-  const xToFrame = useCallback(
-    (clientX: number): number => {
-      const bar = barRef.current;
-      if (!bar) return 0;
-      
-      const rect = bar.getBoundingClientRect();
-      const x = clientX - rect.left;
-      const percent = Math.max(0, Math.min(1, x / rect.width));
-      return Math.round(percent * (totalFrames - 1));
-    },
-    [totalFrames]
-  );
-
-  // Handle click/drag start
-  const handleMouseDown = useCallback(
-    (e: React.MouseEvent) => {
-      if (disabled) return;
-      e.preventDefault();
-      setIsScrubbing(true);
-      onScrub(xToFrame(e.clientX));
-    },
-    [disabled, onScrub, xToFrame]
-  );
-
-  // Handle drag
-  useEffect(() => {
-    if (!isScrubbing) return;
-
-    const handleMouseMove = (e: MouseEvent) => {
-      onScrub(xToFrame(e.clientX));
-    };
-
-    const handleMouseUp = () => {
-      setIsScrubbing(false);
-    };
-
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, [isScrubbing, onScrub, xToFrame]);
-
-  return (
-    <div className="flex-shrink-0 px-2">
-      {/* Frame indicator */}
-      <div className="flex items-center justify-between text-[10px] text-muted-foreground mb-0.5">
-        <span>0</span>
-        <span className="text-foreground font-medium">Frame {currentFrame} / {totalFrames - 1}</span>
-        <span>{totalFrames - 1}</span>
-      </div>
-      
-      {/* Scrubber bar */}
-      <div
-        ref={barRef}
-        className={cn(
-          'relative h-3 bg-muted/50 rounded cursor-ew-resize overflow-hidden border border-border',
-          disabled && 'opacity-50 cursor-not-allowed'
-        )}
-        onMouseDown={handleMouseDown}
-      >
-        {/* Progress fill */}
-        <div
-          className="absolute inset-y-0 left-0 bg-primary/40 transition-none"
-          style={{ width: `${progress}%` }}
-        />
-        
-        {/* Playhead thumb */}
-        <div
-          className={cn(
-            'absolute top-1/2 -translate-y-1/2 w-2 h-full bg-primary rounded-sm',
-            'transition-none'
-          )}
-          style={{ left: `calc(${progress}% - 4px)` }}
-        />
-      </div>
     </div>
   );
 });

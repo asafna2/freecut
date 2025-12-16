@@ -113,7 +113,8 @@ export function KeyframeToggle({
   ]);
 
   // Don't render if outside item bounds
-  if (!firstItem || relativeFrame < 0 || relativeFrame > firstItem.durationInFrames) {
+  // Valid frame range is [0, durationInFrames - 1] since durationInFrames is a count
+  if (!firstItem || relativeFrame < 0 || relativeFrame >= firstItem.durationInFrames) {
     return null;
   }
 

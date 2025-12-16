@@ -109,8 +109,8 @@ export const KeyframeLane = memo(function KeyframeLane({
       const clickX = e.clientX - rect.left;
       const frame = Math.round(clickX / pixelsPerFrame);
 
-      // Clamp to valid range
-      if (frame >= 0 && frame <= itemDuration) {
+      // Clamp to valid range [0, itemDuration - 1] since itemDuration is a count
+      if (frame >= 0 && frame < itemDuration) {
         // Get default value for property (we'd need to resolve the transform here)
         // For now, use a sensible default
         const defaultValue = property === 'opacity' ? 1 : 0;

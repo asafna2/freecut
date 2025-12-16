@@ -14,8 +14,13 @@ import { useSelectionStore } from '@/features/editor/stores/selection-store';
 import { useTimelineStore } from '../stores/timeline-store';
 import { useKeyframesStore } from '../stores/keyframes-store';
 import { useKeyframeSelectionStore } from '../stores/keyframe-selection-store';
+import { useTimelineCommandStore } from '../stores/timeline-command-store';
+import { captureSnapshot } from '../stores/commands/snapshot';
+import type { TimelineSnapshot } from '../stores/commands/types';
 import { usePlaybackStore } from '@/features/preview/stores/playback-store';
+import { useTimelineSettingsStore } from '../stores/timeline-settings-store';
 import type { AnimatableProperty, KeyframeRef } from '@/types/keyframe';
+import * as timelineActions from '../stores/timeline-actions';
 
 /** Height of the panel header bar in pixels */
 export const GRAPH_PANEL_HEADER_HEIGHT = 32;
@@ -131,7 +136,11 @@ export const KeyframeGraphPanel = memo(function KeyframeGraphPanel({
   // Timeline state
   const items = useTimelineStore((s) => s.items);
   const keyframes = useKeyframesStore((s) => s.keyframes);
-  const updateKeyframe = useTimelineStore((s) => s.updateKeyframe);
+  // Use _updateKeyframe directly (no undo per call) for dragging
+  const _updateKeyframe = useKeyframesStore((s) => s._updateKeyframe);
+
+  // Ref to store snapshot captured on drag start for undo batching
+  const dragSnapshotRef = useRef<TimelineSnapshot | null>(null);
 
   // Keyframe selection
   const selectedKeyframes = useKeyframeSelectionStore((s) => s.selectedKeyframes);
@@ -191,15 +200,33 @@ export const KeyframeGraphPanel = memo(function KeyframeGraphPanel({
     return Math.max(0, currentFrame - selectedItemWithKeyframes.item.from);
   }, [currentFrame, selectedItemWithKeyframes]);
 
-  // Handle keyframe move in graph editor
+  // Handle drag start - capture snapshot for undo batching
+  const handleDragStart = useCallback(() => {
+    dragSnapshotRef.current = captureSnapshot();
+  }, []);
+
+  // Handle drag end - commit undo entry with pre-captured snapshot
+  const handleDragEnd = useCallback(() => {
+    const beforeSnapshot = dragSnapshotRef.current;
+    if (beforeSnapshot) {
+      useTimelineCommandStore.getState().addUndoEntry(
+        { type: 'MOVE_KEYFRAME_GRAPH', payload: {} },
+        beforeSnapshot
+      );
+      useTimelineSettingsStore.getState().markDirty();
+      dragSnapshotRef.current = null;
+    }
+  }, []);
+
+  // Handle keyframe move in graph editor (no undo per call - batched via drag start/end)
   const handleKeyframeMove = useCallback(
     (ref: KeyframeRef, newFrame: number, newValue: number) => {
-      updateKeyframe(ref.itemId, ref.property, ref.keyframeId, {
+      _updateKeyframe(ref.itemId, ref.property, ref.keyframeId, {
         frame: Math.max(0, Math.round(newFrame)),
         value: newValue,
       });
     },
-    [updateKeyframe]
+    [_updateKeyframe]
   );
 
   // Handle selection change in graph editor
@@ -246,6 +273,67 @@ export const KeyframeGraphPanel = memo(function KeyframeGraphPanel({
       const absoluteFrame = selectedItemWithKeyframes.item.from + clipRelativeFrame;
       
       // Update the playback store's current frame
+      usePlaybackStore.getState().setCurrentFrame(absoluteFrame);
+    },
+    [selectedItemWithKeyframes]
+  );
+
+  // Handle adding a keyframe at the current frame
+  const handleAddKeyframe = useCallback(
+    (property: AnimatableProperty, frame: number) => {
+      if (!selectedItemWithKeyframes) return;
+
+      // Get the interpolated value at this frame from existing keyframes
+      const propKeyframes = selectedItemWithKeyframes.itemKeyframes.properties.find(
+        (p) => p.property === property
+      );
+      
+      // Default value based on property or interpolate from existing keyframes
+      let value = 1; // Default for scale, opacity
+      if (property === 'x' || property === 'y') value = 0;
+      if (property === 'rotation') value = 0;
+
+      // If there are existing keyframes, interpolate value
+      if (propKeyframes && propKeyframes.keyframes.length > 0) {
+        const sorted = [...propKeyframes.keyframes].sort((a, b) => a.frame - b.frame);
+        const before = sorted.filter((kf) => kf.frame <= frame).pop();
+        const after = sorted.find((kf) => kf.frame > frame);
+
+        if (before && after) {
+          // Linear interpolation between before and after
+          const t = (frame - before.frame) / (after.frame - before.frame);
+          value = before.value + (after.value - before.value) * t;
+        } else if (before) {
+          value = before.value;
+        } else if (after) {
+          value = after.value;
+        }
+      }
+
+      timelineActions.addKeyframe(
+        selectedItemWithKeyframes.item.id,
+        property,
+        frame,
+        value
+      );
+    },
+    [selectedItemWithKeyframes]
+  );
+
+  // Handle removing keyframes
+  const handleRemoveKeyframes = useCallback(
+    (refs: KeyframeRef[]) => {
+      if (refs.length === 0) return;
+      timelineActions.removeKeyframes(refs);
+    },
+    []
+  );
+
+  // Handle navigation to a keyframe - convert clip-relative frame to absolute
+  const handleNavigateToKeyframe = useCallback(
+    (clipRelativeFrame: number) => {
+      if (!selectedItemWithKeyframes) return;
+      const absoluteFrame = selectedItemWithKeyframes.item.from + clipRelativeFrame;
       usePlaybackStore.getState().setCurrentFrame(absoluteFrame);
     },
     [selectedItemWithKeyframes]
@@ -339,6 +427,11 @@ export const KeyframeGraphPanel = memo(function KeyframeGraphPanel({
               onSelectionChange={handleSelectionChange}
               onPropertyChange={handlePropertyChange}
               onScrub={handleScrub}
+              onDragStart={handleDragStart}
+              onDragEnd={handleDragEnd}
+              onAddKeyframe={handleAddKeyframe}
+              onRemoveKeyframes={handleRemoveKeyframes}
+              onNavigateToKeyframe={handleNavigateToKeyframe}
             />
           ) : (
             <div className="flex items-center justify-center h-full text-muted-foreground text-sm">

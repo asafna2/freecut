@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { TimelineCommand, CommandEntry } from './commands/types';
+import type { TimelineCommand, CommandEntry, TimelineSnapshot } from './commands/types';
 import { captureSnapshot, restoreSnapshot, snapshotsEqual } from './commands/snapshot';
 
 const MAX_HISTORY = 100;
@@ -52,6 +52,12 @@ export interface CommandStoreActions {
    * Get the last command type (for debugging/UI).
    */
   getLastCommandType: () => string | null;
+
+  /**
+   * Add a pre-captured snapshot to the undo stack.
+   * Used for drag operations where snapshot is captured at start and committed at end.
+   */
+  addUndoEntry: (command: TimelineCommand, beforeSnapshot: TimelineSnapshot) => void;
 }
 
 export const useTimelineCommandStore = create<CommandStoreState & CommandStoreActions>()(
@@ -149,6 +155,24 @@ export const useTimelineCommandStore = create<CommandStoreState & CommandStoreAc
       if (undoStack.length === 0) return null;
       const entry = undoStack[undoStack.length - 1];
       return entry ? entry.command.type : null;
+    },
+
+    // Add pre-captured snapshot to undo stack (for drag operations)
+    addUndoEntry: (command: TimelineCommand, beforeSnapshot: TimelineSnapshot) => {
+      const afterSnapshot = captureSnapshot();
+      
+      // Only add to history if state actually changed
+      if (!snapshotsEqual(beforeSnapshot, afterSnapshot)) {
+        set((state) => ({
+          undoStack: [
+            ...state.undoStack.slice(-(MAX_HISTORY - 1)),
+            { command, beforeSnapshot, timestamp: Date.now() },
+          ],
+          redoStack: [], // Clear redo on new action
+          canUndo: true,
+          canRedo: false,
+        }));
+      }
     },
   })
 );

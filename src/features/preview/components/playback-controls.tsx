@@ -39,15 +39,18 @@ export function PlaybackControls({ totalFrames, fps: _fps }: PlaybackControlsPro
   // Note: Automatic playback loop is now handled by Remotion Player
   // The Player controls frame advancement via frameupdate events
 
+  // Note: totalFrames is the count, so valid frame indices are [0, totalFrames - 1]
+  const lastValidFrame = Math.max(0, totalFrames - 1);
+  
   const handleGoToStart = () => setCurrentFrame(0);
-  const handleGoToEnd = () => setCurrentFrame(totalFrames);
+  const handleGoToEnd = () => setCurrentFrame(lastValidFrame);
   const handlePreviousFrame = () => {
     const currentFrame = usePlaybackStore.getState().currentFrame;
     setCurrentFrame(Math.max(0, currentFrame - 1));
   };
   const handleNextFrame = () => {
     const currentFrame = usePlaybackStore.getState().currentFrame;
-    setCurrentFrame(Math.min(totalFrames, currentFrame + 1));
+    setCurrentFrame(Math.min(lastValidFrame, currentFrame + 1));
   };
 
   return (

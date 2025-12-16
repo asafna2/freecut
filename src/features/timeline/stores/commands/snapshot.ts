@@ -4,6 +4,7 @@ import { useTransitionsStore } from '../transitions-store';
 import { useKeyframesStore } from '../keyframes-store';
 import { useMarkersStore } from '../markers-store';
 import { useTimelineSettingsStore } from '../timeline-settings-store';
+import { usePlaybackStore } from '@/features/preview/stores/playback-store';
 
 /**
  * Capture a snapshot of all timeline state.
@@ -15,6 +16,7 @@ export function captureSnapshot(): TimelineSnapshot {
   const keyframesState = useKeyframesStore.getState();
   const markersState = useMarkersStore.getState();
   const settingsState = useTimelineSettingsStore.getState();
+  const playbackState = usePlaybackStore.getState();
 
   return {
     items: itemsState.items,
@@ -27,6 +29,7 @@ export function captureSnapshot(): TimelineSnapshot {
     fps: settingsState.fps,
     scrollPosition: settingsState.scrollPosition,
     snapEnabled: settingsState.snapEnabled,
+    currentFrame: playbackState.currentFrame,
   };
 }
 
@@ -55,6 +58,9 @@ export function restoreSnapshot(snapshot: TimelineSnapshot): void {
   useTimelineSettingsStore.getState().setFps(snapshot.fps);
   useTimelineSettingsStore.getState().setScrollPosition(snapshot.scrollPosition);
   useTimelineSettingsStore.getState().setSnapEnabled(snapshot.snapEnabled);
+
+  // Restore playhead position
+  usePlaybackStore.getState().setCurrentFrame(snapshot.currentFrame);
 }
 
 /**
@@ -72,6 +78,7 @@ export function snapshotsEqual(a: TimelineSnapshot, b: TimelineSnapshot): boolea
     a.outPoint === b.outPoint &&
     a.fps === b.fps &&
     a.scrollPosition === b.scrollPosition &&
-    a.snapEnabled === b.snapEnabled
+    a.snapEnabled === b.snapEnabled &&
+    a.currentFrame === b.currentFrame
   );
 }

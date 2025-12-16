@@ -18,6 +18,7 @@ export interface TimelineSnapshot {
   fps: number;
   scrollPosition: number;
   snapEnabled: boolean;
+  currentFrame: number;
 }
 
 /**

@@ -5,7 +5,6 @@
  */
 
 import { memo, useCallback } from 'react';
-import { cn } from '@/lib/utils';
 import type { GraphKeyframePoint } from './types';
 
 interface GraphKeyframeProps {
@@ -71,13 +70,11 @@ export const GraphKeyframe = memo(function GraphKeyframe({
   const displayFrame = point.isDragging && previewValues ? previewValues.frame : point.keyframe.frame;
   const displayValue = point.isDragging && previewValues ? previewValues.value : point.keyframe.value;
 
+  const cursorStyle = disabled ? 'default' : 'pointer';
+
   return (
     <g
-      className={cn(
-        'graph-keyframe',
-        !disabled && 'cursor-grab',
-        point.isDragging && 'cursor-grabbing'
-      )}
+      className="graph-keyframe"
       style={{ touchAction: 'none' }}
     >
       {/* Hit area (larger invisible target) - uses pointer events */}
@@ -89,7 +86,7 @@ export const GraphKeyframe = memo(function GraphKeyframe({
         onPointerDown={handlePointerDown}
         onClick={handleClick}
         onDoubleClick={handleDoubleClick}
-        style={{ touchAction: 'none' }}
+        style={{ touchAction: 'none', cursor: cursorStyle }}
       />
 
       {/* Selection ring */}

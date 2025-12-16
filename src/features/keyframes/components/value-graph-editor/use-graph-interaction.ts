@@ -18,6 +18,9 @@ import { updateBezierFromHandle } from './graph-handles';
 /** Movement threshold in pixels before committing to drag (vs click) */
 const DRAG_THRESHOLD = 3;
 
+/** Snap threshold in pixels - keyframes snap when within this distance */
+const SNAP_THRESHOLD_PX = 8;
+
 /** Drag start state stored in ref to avoid stale closures */
 interface DragStartState {
   mouseX: number;
@@ -64,6 +67,16 @@ interface UseGraphInteractionOptions {
   onKeyframeMove?: (ref: KeyframeRef, newFrame: number, newValue: number) => void;
   /** Callback when bezier handle is moved */
   onBezierHandleMove?: (ref: KeyframeRef, bezier: BezierControlPoints) => void;
+  /** Callback when drag starts (for undo batching) */
+  onDragStart?: () => void;
+  /** Callback when drag ends (for undo batching) */
+  onDragEnd?: () => void;
+  /** Whether snapping is enabled */
+  snapEnabled?: boolean;
+  /** Snap targets for frames (other keyframe frames, playhead, etc.) */
+  snapFrameTargets?: number[];
+  /** Snap targets for values (other keyframe values, 0, min, max, etc.) */
+  snapValueTargets?: number[];
   /** Whether interaction is disabled */
   disabled?: boolean;
 }
@@ -77,6 +90,8 @@ interface UseGraphInteractionReturn {
   previewValues: { frame: number; value: number } | null;
   /** Currently dragging handle info */
   draggingHandle: { keyframeId: string; type: 'in' | 'out' } | null;
+  /** Current constraint axis when Shift is held ('x' = frame only, 'y' = value only, null = no constraint) */
+  constraintAxis: 'x' | 'y' | null;
   /** Handle keyframe pointer down */
   handleKeyframePointerDown: (point: GraphKeyframePoint, event: React.PointerEvent) => void;
   /** Handle keyframe click (legacy, for selection only) */
@@ -114,6 +129,11 @@ export function useGraphInteraction({
   onSelectionChange,
   onKeyframeMove,
   onBezierHandleMove,
+  onDragStart,
+  onDragEnd,
+  snapEnabled = false,
+  snapFrameTargets = [],
+  snapValueTargets = [],
   disabled = false,
 }: UseGraphInteractionOptions): UseGraphInteractionReturn {
   const [dragState, setDragState] = useState<GraphDragState | null>(null);
@@ -121,6 +141,7 @@ export function useGraphInteraction({
   const [isPendingDrag, setIsPendingDrag] = useState(false);
   const [previewValues, setPreviewValues] = useState<{ frame: number; value: number } | null>(null);
   const [draggingHandle, setDraggingHandle] = useState<{ keyframeId: string; type: 'in' | 'out' } | null>(null);
+  const [constraintAxis, setConstraintAxis] = useState<'x' | 'y' | null>(null);
 
   // Refs for stable values during drag
   const dragStartRef = useRef<DragStartState | null>(null);
@@ -128,10 +149,13 @@ export function useGraphInteraction({
   const svgRef = useRef<SVGSVGElement | null>(null);
 
   // Ref for latest callbacks to avoid stale closures
-  const callbacksRef = useRef({ onKeyframeMove, onBezierHandleMove, onSelectionChange, onViewportChange });
+  const callbacksRef = useRef({ onKeyframeMove, onBezierHandleMove, onSelectionChange, onViewportChange, onDragStart, onDragEnd });
   useEffect(() => {
-    callbacksRef.current = { onKeyframeMove, onBezierHandleMove, onSelectionChange, onViewportChange };
-  }, [onKeyframeMove, onBezierHandleMove, onSelectionChange, onViewportChange]);
+    callbacksRef.current = { onKeyframeMove, onBezierHandleMove, onSelectionChange, onViewportChange, onDragStart, onDragEnd };
+  }, [onKeyframeMove, onBezierHandleMove, onSelectionChange, onViewportChange, onDragStart, onDragEnd]);
+
+  // Track whether we've called onDragStart for the current drag operation
+  const dragStartCalledRef = useRef(false);
 
   // Memoized graph dimensions
   const graphDimensions = useMemo(() => {
@@ -154,6 +178,41 @@ export function useGraphInteraction({
     },
     [viewport, graphDimensions]
   );
+
+  // Snap a value to the nearest target within threshold
+  const snapToTargets = useCallback(
+    (value: number, targets: number[], thresholdInUnits: number): { snapped: number; didSnap: boolean } => {
+      if (!snapEnabled || targets.length === 0) {
+        return { snapped: value, didSnap: false };
+      }
+
+      let closestTarget = value;
+      let closestDistance = Infinity;
+
+      for (const target of targets) {
+        const distance = Math.abs(value - target);
+        if (distance < closestDistance && distance <= thresholdInUnits) {
+          closestDistance = distance;
+          closestTarget = target;
+        }
+      }
+
+      return {
+        snapped: closestDistance <= thresholdInUnits ? closestTarget : value,
+        didSnap: closestDistance <= thresholdInUnits,
+      };
+    },
+    [snapEnabled]
+  );
+
+  // Calculate snap thresholds in graph units (frames/values) based on pixel threshold
+  const snapThresholds = useMemo(() => {
+    const { graphWidth, graphHeight, frameRange, valueRange } = graphDimensions;
+    // Convert pixel threshold to graph units
+    const frameThreshold = (SNAP_THRESHOLD_PX / graphWidth) * frameRange;
+    const valueThreshold = (SNAP_THRESHOLD_PX / graphHeight) * valueRange;
+    return { frameThreshold, valueThreshold };
+  }, [graphDimensions]);
 
   // Handle keyframe pointer down (start potential drag)
   const handleKeyframePointerDown = useCallback(
@@ -271,6 +330,12 @@ export function useGraphInteraction({
         initialBezier: { ...bezier },
       };
 
+      // Call onDragStart for bezier handle drag (no threshold, starts immediately)
+      if (!dragStartCalledRef.current) {
+        dragStartCalledRef.current = true;
+        callbacksRef.current.onDragStart?.();
+      }
+
       setDraggingHandle({ keyframeId: handle.keyframeId, type: handle.type });
       setIsDragging(true);
       setDragState({
@@ -312,6 +377,11 @@ export function useGraphInteraction({
         // Check threshold before committing to drag
         if (!isDragging && (Math.abs(dx) > DRAG_THRESHOLD || Math.abs(dy) > DRAG_THRESHOLD)) {
           setIsDragging(true);
+          // Call onDragStart when we first exceed threshold
+          if (!dragStartCalledRef.current) {
+            dragStartCalledRef.current = true;
+            callbacksRef.current.onDragStart?.();
+          }
         }
 
         if (!isDragging && !((Math.abs(dx) > DRAG_THRESHOLD || Math.abs(dy) > DRAG_THRESHOLD))) {
@@ -335,9 +405,13 @@ export function useGraphInteraction({
         if (event.shiftKey) {
           if (Math.abs(dx) > Math.abs(dy)) {
             newValue = initialValue; // Lock Y (only change frame)
+            setConstraintAxis('x'); // Horizontal constraint (frame only)
           } else {
             newFrame = initialFrame; // Lock X (only change value)
+            setConstraintAxis('y'); // Vertical constraint (value only)
           }
+        } else {
+          setConstraintAxis(null);
         }
 
         // Bounds checking - clamp to valid frame range [0, maxFrame]
@@ -353,6 +427,17 @@ export function useGraphInteraction({
         }
         if (clampMaxValue !== undefined) {
           newValue = Math.min(clampMaxValue, newValue);
+        }
+
+        // Apply snapping if enabled (but not when Ctrl is held to temporarily disable)
+        if (snapEnabled && !event.ctrlKey && !event.metaKey) {
+          // Snap frame to targets
+          const frameSnap = snapToTargets(newFrame, snapFrameTargets, snapThresholds.frameThreshold);
+          newFrame = frameSnap.snapped;
+
+          // Snap value to targets
+          const valueSnap = snapToTargets(newValue, snapValueTargets, snapThresholds.valueThreshold);
+          newValue = valueSnap.snapped;
         }
 
         // Update preview values
@@ -405,7 +490,7 @@ export function useGraphInteraction({
         );
       }
     },
-    [disabled, dragState, isDragging, viewport, padding, maxFrame, clampMinValue, clampMaxValue, graphDimensions]
+    [disabled, dragState, isDragging, viewport, padding, maxFrame, clampMinValue, clampMaxValue, graphDimensions, snapEnabled, snapFrameTargets, snapValueTargets, snapThresholds, snapToTargets]
   );
 
   // Handle pointer up (SVG level)
@@ -423,6 +508,12 @@ export function useGraphInteraction({
       // If we never exceeded threshold, treat as click (selection only)
       // Selection was already handled in pointerDown, no additional action needed
 
+      // Call onDragEnd if we actually started a drag operation
+      if (dragStartCalledRef.current) {
+        dragStartCalledRef.current = false;
+        callbacksRef.current.onDragEnd?.();
+      }
+
       // Reset all drag state
       dragStartRef.current = null;
       bezierDragStartRef.current = null;
@@ -432,6 +523,7 @@ export function useGraphInteraction({
       setIsPendingDrag(false);
       setPreviewValues(null);
       setDraggingHandle(null);
+      setConstraintAxis(null);
     },
     [isPendingDrag, isDragging]
   );
@@ -542,6 +634,7 @@ export function useGraphInteraction({
     isDragging,
     previewValues,
     draggingHandle,
+    constraintAxis,
     handleKeyframePointerDown,
     handleKeyframeClick,
     handleBezierPointerDown,

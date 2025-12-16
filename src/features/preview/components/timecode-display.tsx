@@ -72,7 +72,7 @@ export function TimecodeDisplay({ fps, totalFrames }: TimecodeDisplayProps) {
         </span>
         <span className="text-muted-foreground/50">/</span>
         <span className="text-muted-foreground">
-          {showFrames ? formatFrameNumber(totalFrames) : formatTimecode(totalFrames, fps)}
+          {showFrames ? formatFrameNumber(Math.max(0, totalFrames - 1)) : formatTimecode(Math.max(0, totalFrames - 1), fps)}
         </span>
       </div>
     </div>
