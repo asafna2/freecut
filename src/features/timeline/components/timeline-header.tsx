@@ -115,13 +115,27 @@ export const TimelineHeader = memo(function TimelineHeader({ onZoomChange, onZoo
     momentumIdRef.current = requestAnimationFrame(momentumLoop);
   }, [applyZoom]);
 
+  // Convert between linear slider position (0-1) and logarithmic zoom level
+  // This gives finer control at low zoom levels
+  const sliderToZoom = useCallback((sliderValue: number) => {
+    // Map 0-1 to log scale: ZOOM_MIN to ZOOM_MAX
+    // Using exponential: zoom = min * (max/min)^slider
+    return ZOOM_MIN * Math.pow(ZOOM_MAX / ZOOM_MIN, sliderValue);
+  }, []);
+
+  const zoomToSlider = useCallback((zoom: number) => {
+    // Inverse of sliderToZoom: slider = log(zoom/min) / log(max/min)
+    return Math.log(zoom / ZOOM_MIN) / Math.log(ZOOM_MAX / ZOOM_MIN);
+  }, []);
+
   // Handle slider value change (while dragging)
   const handleSliderChange = useCallback((values: number[]) => {
-    const newZoom = values[0] ?? 1;
+    const sliderValue = values[0] ?? 0.5;
+    const newZoom = sliderToZoom(sliderValue);
     const now = performance.now();
     const timeDelta = now - lastZoomTimeRef.current;
 
-    // Calculate velocity based on change over time
+    // Calculate velocity based on change over time (in zoom space, not slider space)
     if (timeDelta > 0 && timeDelta < 100) {
       const valueDelta = newZoom - lastZoomValueRef.current;
       zoomVelocityRef.current = valueDelta / timeDelta * 16; // Normalize to ~60fps
@@ -132,7 +146,7 @@ export const TimelineHeader = memo(function TimelineHeader({ onZoomChange, onZoo
     isDraggingRef.current = true;
 
     applyZoom(newZoom);
-  }, [applyZoom]);
+  }, [applyZoom, sliderToZoom]);
 
   // Handle slider release - start momentum
   const handleSliderCommit = useCallback(() => {
@@ -350,12 +364,12 @@ export const TimelineHeader = memo(function TimelineHeader({ onZoomChange, onZoo
         </Button>
 
         <Slider
-          value={[zoomLevel]}
+          value={[zoomToSlider(zoomLevel)]}
           onValueChange={handleSliderChange}
           onValueCommit={handleSliderCommit}
-          min={0.01}
-          max={2}
-          step={0.01}
+          min={0}
+          max={1}
+          step={0.005}
           className="w-24"
         />
 
