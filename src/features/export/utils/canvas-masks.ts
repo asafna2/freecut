@@ -85,11 +85,15 @@ export function getMaskPath(
     svgPath = rotatePath(svgPath, transform.rotation, centerX, centerY);
   }
 
+  const maskType = mask.maskType ?? 'clip';
+  // Feather only applies to alpha masks - clip masks are always hard-edged
+  const feather = maskType === 'alpha' ? (mask.maskFeather ?? 0) : 0;
+
   return {
     path: svgPathToPath2D(svgPath),
     inverted: mask.maskInvert ?? false,
-    feather: mask.maskFeather ?? 0,
-    maskType: mask.maskType ?? 'clip',
+    feather,
+    maskType,
   };
 }
 
@@ -244,8 +248,16 @@ export function applyMasks(
   // Check if we have any alpha masks (need special handling)
   const hasAlphaMasks = masks.some((m) => m.maskType === 'alpha' || m.feather > 0);
 
+  log.debug('applyMasks decision', {
+    maskCount: masks.length,
+    hasAlphaMasks,
+    maskDetails: masks.map((m) => ({ type: m.maskType, feather: m.feather, inverted: m.inverted })),
+  });
+
   if (!hasAlphaMasks) {
-    // All clip masks - can use simple clipping
+    // All clip masks - can use simple clipping with Path2D.clip()
+    // This provides hard edges without anti-aliasing artifacts
+    log.debug('Using clip path approach (hard edges)');
     ctx.save();
     for (const mask of masks) {
       applyClipMask(ctx, mask.path, mask.inverted, canvas);
@@ -349,6 +361,8 @@ export function prepareMasks(
       frame,
       count: preparedMasks.length,
       types: preparedMasks.map((m) => m.maskType),
+      feathers: preparedMasks.map((m) => m.feather),
+      inverted: preparedMasks.map((m) => m.inverted),
     });
   }
 
