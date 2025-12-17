@@ -6,12 +6,31 @@ export interface MediaLibraryNotification {
 }
 
 /**
+ * Error types for media that cannot be accessed
+ */
+export type MediaErrorType =
+  | 'permission_denied'  // File handle permission expired
+  | 'file_missing'       // File moved or deleted from disk
+  | 'metadata_deleted';  // Media metadata deleted from IndexedDB
+
+/**
  * Information about a media file with a broken/invalid file handle
  */
 export interface BrokenMediaInfo {
   mediaId: string;
   fileName: string;
-  errorType: 'permission_denied' | 'file_missing';
+  errorType: MediaErrorType;
+}
+
+/**
+ * Information about a timeline clip that references deleted media
+ */
+export interface OrphanedClipInfo {
+  itemId: string;           // Timeline item ID
+  mediaId: string;          // Missing media ID
+  itemType: 'video' | 'audio' | 'image';
+  fileName: string;         // From item.label for matching
+  trackId: string;
 }
 
 export interface MediaLibraryState {
@@ -31,6 +50,10 @@ export interface MediaLibraryState {
   brokenMediaIds: string[];
   brokenMediaInfo: Map<string, BrokenMediaInfo>;
   showMissingMediaDialog: boolean;
+
+  // Orphaned clips tracking (clips referencing deleted media)
+  orphanedClips: OrphanedClipInfo[];
+  showOrphanedClipsDialog: boolean;
 }
 
 export interface MediaLibraryActions {
@@ -77,4 +100,19 @@ export interface MediaLibraryActions {
   ) => Promise<{ success: string[]; failed: string[] }>;
   openMissingMediaDialog: () => void;
   closeMissingMediaDialog: () => void;
+
+  // Orphaned clips management
+  setOrphanedClips: (clips: OrphanedClipInfo[]) => void;
+  clearOrphanedClips: () => void;
+  openOrphanedClipsDialog: () => void;
+  closeOrphanedClipsDialog: () => void;
+  /**
+   * Relink an orphaned clip to a different media item from the library.
+   * Updates the clip's mediaId, label, and source dimensions.
+   */
+  relinkOrphanedClip: (itemId: string, newMediaId: string) => Promise<boolean>;
+  /**
+   * Remove orphaned clips from the timeline.
+   */
+  removeOrphanedClips: (itemIds: string[]) => void;
 }

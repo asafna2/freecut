@@ -58,6 +58,20 @@ export function useWaveform({
 
   // Ref to track if generation is in progress
   const isGeneratingRef = useRef(false);
+  const lastMediaIdRef = useRef<string>(mediaId);
+
+  // Reset state when mediaId changes (e.g., after relinking orphaned clip)
+  useEffect(() => {
+    if (lastMediaIdRef.current !== mediaId) {
+      // Media ID changed - reset to load new waveform
+      lastMediaIdRef.current = mediaId;
+      isGeneratingRef.current = false;
+      setWaveform(waveformCache.getFromMemoryCacheSync(mediaId));
+      setIsLoading(false);
+      setProgress(waveformCache.getFromMemoryCacheSync(mediaId)?.isComplete ? 100 : 0);
+      setError(null);
+    }
+  }, [mediaId]);
 
   // Progress callback - using useEffectEvent so it doesn't need to be in effect deps
   const onProgress = useEffectEvent((p: number) => {

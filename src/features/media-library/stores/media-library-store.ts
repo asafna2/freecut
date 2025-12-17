@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
-import type { MediaLibraryState, MediaLibraryActions, MediaLibraryNotification, BrokenMediaInfo } from '../types';
+import type { MediaLibraryState, MediaLibraryActions, MediaLibraryNotification, BrokenMediaInfo, OrphanedClipInfo } from '../types';
 import type { MediaMetadata } from '@/types/storage';
 import { mediaLibraryService } from '../services/media-library-service';
 import { getMimeType } from '../utils/validation';
@@ -39,6 +39,10 @@ export const useMediaLibraryStore = create<
       brokenMediaIds: [],
       brokenMediaInfo: new Map<string, BrokenMediaInfo>(),
       showMissingMediaDialog: false,
+
+      // Orphaned clips tracking (clips referencing deleted media)
+      orphanedClips: [],
+      showOrphanedClipsDialog: false,
 
       // v3: Set current project context
       setCurrentProject: (projectId: string | null) => {
@@ -491,6 +495,99 @@ export const useMediaLibraryStore = create<
 
       openMissingMediaDialog: () => set({ showMissingMediaDialog: true }),
       closeMissingMediaDialog: () => set({ showMissingMediaDialog: false }),
+
+      // Orphaned clips management
+      setOrphanedClips: (clips: OrphanedClipInfo[]) => set({ orphanedClips: clips }),
+      clearOrphanedClips: () => set({ orphanedClips: [] }),
+      openOrphanedClipsDialog: () => set({ showOrphanedClipsDialog: true }),
+      closeOrphanedClipsDialog: () => set({ showOrphanedClipsDialog: false }),
+
+      relinkOrphanedClip: async (itemId: string, newMediaId: string) => {
+        try {
+          // Get the new media metadata
+          const newMedia = await mediaLibraryService.getMedia(newMediaId);
+          if (!newMedia) {
+            logger.error(`[MediaLibraryStore] relinkOrphanedClip: Media not found: ${newMediaId}`);
+            get().showNotification({
+              type: 'error',
+              message: 'Selected media not found',
+            });
+            return false;
+          }
+
+          // Import timeline actions dynamically to avoid circular dependency
+          const { updateItem } = await import('@/features/timeline/stores/timeline-actions');
+          const { useTimelineSettingsStore } = await import('@/features/timeline/stores/timeline-settings-store');
+
+          // Build updates for the timeline item
+          const fps = useTimelineSettingsStore.getState().fps;
+          const updates: Record<string, unknown> = {
+            mediaId: newMediaId,
+            label: newMedia.fileName,
+            // Clear cached URLs to force re-resolution
+            src: undefined,
+            thumbnailUrl: undefined,
+            // Clear waveform data for audio clips to force regeneration
+            waveformData: undefined,
+          };
+
+          // Update source dimensions for video/image items
+          if (newMedia.width > 0 && newMedia.height > 0) {
+            updates.sourceWidth = newMedia.width;
+            updates.sourceHeight = newMedia.height;
+          }
+
+          // Update source duration if available
+          if (newMedia.duration > 0) {
+            updates.sourceDuration = Math.round(newMedia.duration * fps);
+          }
+
+          // Update the timeline item
+          updateItem(itemId, updates);
+
+          // Clear any cached blob URLs for the old media
+          // The new media will be resolved on next render
+          logger.debug(`[MediaLibraryStore] Relinked clip ${itemId} to media ${newMediaId}`);
+
+          // Remove from orphaned clips list
+          set((state) => ({
+            orphanedClips: state.orphanedClips.filter((o) => o.itemId !== itemId),
+          }));
+
+          get().showNotification({
+            type: 'success',
+            message: `Clip relinked to "${newMedia.fileName}"`,
+          });
+
+          return true;
+        } catch (error) {
+          logger.error(`[MediaLibraryStore] relinkOrphanedClip error:`, error);
+          get().showNotification({
+            type: 'error',
+            message: error instanceof Error ? error.message : 'Failed to relink clip',
+          });
+          return false;
+        }
+      },
+
+      removeOrphanedClips: (itemIds: string[]) => {
+        // Import timeline actions dynamically to avoid circular dependency
+        import('@/features/timeline/stores/timeline-actions').then(({ removeItems }) => {
+          removeItems(itemIds);
+
+          // Remove from orphaned clips list
+          set((state) => ({
+            orphanedClips: state.orphanedClips.filter((o) => !itemIds.includes(o.itemId)),
+          }));
+
+          get().showNotification({
+            type: 'info',
+            message: `Removed ${itemIds.length} orphaned clip${itemIds.length !== 1 ? 's' : ''}`,
+          });
+        }).catch((error) => {
+          logger.error(`[MediaLibraryStore] removeOrphanedClips error:`, error);
+        });
+      },
     }),
     {
       name: 'MediaLibraryStore',

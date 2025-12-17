@@ -56,6 +56,17 @@ export const ClipWaveform = memo(function ClipWaveform({
 }: ClipWaveformProps) {
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const hasStartedLoadingRef = useRef(false);
+  const lastMediaIdRef = useRef<string | null>(null);
+
+  // Reset loading state when mediaId changes (e.g., after relinking)
+  useEffect(() => {
+    if (lastMediaIdRef.current !== null && lastMediaIdRef.current !== mediaId) {
+      // Media ID changed - reset to allow fresh loading
+      hasStartedLoadingRef.current = false;
+      setBlobUrl(null);
+    }
+    lastMediaIdRef.current = mediaId;
+  }, [mediaId]);
 
   // Load blob URL for the media - only once when first visible
   useEffect(() => {

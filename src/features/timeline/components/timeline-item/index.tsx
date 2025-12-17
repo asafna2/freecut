@@ -52,10 +52,18 @@ export const TimelineItem = memo(function TimelineItem({ item, timelineDuration 
   );
 
   // Granular selector: check if this item's media is broken (missing/permission denied)
+  // or orphaned (media metadata deleted from IndexedDB)
   const isBroken = useMediaLibraryStore(
     useCallback(
-      (s) => (item.mediaId ? s.brokenMediaIds.includes(item.mediaId) : false),
-      [item.mediaId]
+      (s) => {
+        if (!item.mediaId) return false;
+        // Check for broken file handles
+        if (s.brokenMediaIds.includes(item.mediaId)) return true;
+        // Check for orphaned clips (deleted media metadata)
+        if (s.orphanedClips.some((o) => o.itemId === item.id)) return true;
+        return false;
+      },
+      [item.mediaId, item.id]
     )
   );
 

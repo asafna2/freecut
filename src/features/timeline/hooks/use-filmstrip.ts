@@ -54,6 +54,21 @@ export function useFilmstrip({
   const [error, setError] = useState<string | null>(null);
 
   const isGeneratingRef = useRef(false);
+  const lastMediaIdRef = useRef<string>(mediaId);
+
+  // Reset state when mediaId changes (e.g., after relinking orphaned clip)
+  useEffect(() => {
+    if (lastMediaIdRef.current !== mediaId) {
+      // Media ID changed - reset to load new filmstrip
+      lastMediaIdRef.current = mediaId;
+      isGeneratingRef.current = false;
+      const cached = filmstripCache.getFromCacheSync(mediaId);
+      setFilmstrip(cached);
+      setIsLoading(false);
+      setProgress(cached?.isComplete ? 100 : (cached?.progress ?? 0));
+      setError(null);
+    }
+  }, [mediaId]);
 
   // Progress callback
   const onProgress = useEffectEvent((p: number) => {

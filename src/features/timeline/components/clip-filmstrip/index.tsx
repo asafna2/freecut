@@ -128,6 +128,9 @@ export const ClipFilmstrip = memo(function ClipFilmstrip({
   useEffect(() => {
     let mounted = true;
 
+    // Reset blob URL when mediaId changes to force fresh load
+    setBlobUrl(null);
+
     const loadBlobUrl = async () => {
       try {
         const url = await mediaLibraryService.getMediaBlobUrl(mediaId);

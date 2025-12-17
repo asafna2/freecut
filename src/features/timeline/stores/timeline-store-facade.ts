@@ -40,6 +40,8 @@ import type { ProjectTimeline } from '@/types/project';
 import { renderSingleFrame } from '@/features/export/utils/client-render-engine';
 import { convertTimelineToRemotion } from '@/features/export/utils/timeline-to-remotion';
 import { resolveMediaUrls } from '@/features/preview/utils/media-resolver';
+import { validateMediaReferences } from '@/features/timeline/utils/media-validation';
+import { useMediaLibraryStore } from '@/features/media-library/stores/media-library-store';
 
 
 /**
@@ -273,6 +275,15 @@ async function loadTimeline(projectId: string): Promise<void> {
 
     // Clear undo history when loading
     useTimelineCommandStore.getState().clearHistory();
+
+    // Validate media references after loading timeline
+    const loadedItems = useItemsStore.getState().items;
+    const orphans = await validateMediaReferences(loadedItems, projectId);
+    if (orphans.length > 0) {
+      logger.warn(`Found ${orphans.length} orphaned clip(s) referencing deleted media`);
+      useMediaLibraryStore.getState().setOrphanedClips(orphans);
+      useMediaLibraryStore.getState().openOrphanedClipsDialog();
+    }
 
     // Mark loading complete - signals player sync can proceed
     useTimelineSettingsStore.getState().setTimelineLoading(false);

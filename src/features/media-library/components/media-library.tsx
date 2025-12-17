@@ -24,6 +24,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { MediaGrid } from './media-grid';
 import { MissingMediaDialog } from './missing-media-dialog';
+import { OrphanedClipsDialog } from './orphaned-clips-dialog';
 import { useMediaLibraryStore } from '../stores/media-library-store';
 import { useTimelineStore } from '@/features/timeline/stores/timeline-store';
 
@@ -489,6 +490,9 @@ export const MediaLibrary = memo(function MediaLibrary({ onMediaSelect }: MediaL
 
       {/* Missing Media Dialog */}
       <MissingMediaDialog />
+
+      {/* Orphaned Clips Dialog */}
+      <OrphanedClipsDialog />
     </div>
   );
 });
