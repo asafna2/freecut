@@ -328,12 +328,41 @@ export const useItemsStore = create<ItemsState & ItemsActions>()(
         const isGif = item.type === 'image' && item.label?.toLowerCase().endsWith('.gif');
         if (item.type !== 'video' && item.type !== 'audio' && !isGif) return item;
 
-        return {
+        // For media items, recalculate sourceEnd to maintain consistency
+        // This ensures sourceEnd - sourceStart = durationInFrames * speed (within rounding)
+        // Without this, trimEnd + rate stretch creates inconsistent source boundaries
+        let sourceUpdate: { sourceEnd?: number; sourceStart?: number } = {};
+        if (isMediaItem(item)) {
+          // CRITICAL: Preserve sourceStart - rate stretch should NOT change source content
+          // Only speed and timeline duration change, not the source segment
+          const preservedSourceStart = item.sourceStart ?? 0;
+
+          // Recalculate sourceEnd based on preserved sourceStart
+          if (preservedSourceStart !== undefined) {
+            const newSourceEnd = preservedSourceStart + Math.round(newDuration * newSpeed);
+            // Only update if we have valid source info and the new value is reasonable
+            if (item.sourceDuration === undefined || newSourceEnd <= item.sourceDuration) {
+              sourceUpdate = {
+                sourceEnd: newSourceEnd,
+                // Explicitly preserve sourceStart to prevent any accidental modification
+                sourceStart: preservedSourceStart,
+              };
+            } else {
+              // Still preserve sourceStart even if sourceEnd can't be updated
+              sourceUpdate = { sourceStart: preservedSourceStart };
+            }
+          }
+        }
+
+        const result = {
           ...item,
           from: newFrom,
           durationInFrames: newDuration,
           speed: newSpeed,
+          ...sourceUpdate,
         } as typeof item;
+
+        return result;
       }),
     })),
 

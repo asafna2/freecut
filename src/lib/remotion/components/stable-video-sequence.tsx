@@ -49,6 +49,12 @@ interface VideoGroup {
  *   move, or undo should not cause remounts
  * - Uses first item's ID to differentiate sub-groups when clips are dragged apart
  * - This ensures Web Audio API connections stay intact across all operations
+ *
+ * RATE STRETCH HANDLING:
+ * - Clips with non-default speed (speed != 1) are placed in their own groups
+ * - This is because the sourceStart adjustment formula breaks for mixed-speed groups
+ * - The formula (sourceStart - itemOffset * speed) produces negative values when
+ *   a clip with speed > 1 is far from the group start
  */
 function groupByOrigin(items: EnrichedVideoItem[]): VideoGroup[] {
   // First, collect items by their origin key
@@ -82,8 +88,17 @@ function groupByOrigin(items: EnrichedVideoItem[]): VideoGroup[] {
 
     for (let i = 1; i < sorted.length; i++) {
       const item = sorted[i]!;
+      // Check if this item or any item in current group has non-default speed
+      // Rate-stretched clips must be in their own group because the sourceStart
+      // adjustment formula (sourceStart - itemOffset * speed) breaks when clips
+      // have different speeds - it can produce negative sourceStart values
+      const itemHasCustomSpeed = (item.speed ?? 1) !== 1;
+      const groupHasCustomSpeed = currentGroup.some(g => (g.speed ?? 1) !== 1);
+      const speedMismatch = itemHasCustomSpeed || groupHasCustomSpeed;
+
       // Adjacent if this item starts where previous ends (allow 1 frame tolerance for rounding)
-      if (item.from <= currentEnd + 1) {
+      // BUT also require same speed to be grouped together
+      if (item.from <= currentEnd + 1 && !speedMismatch) {
         currentGroup.push(item);
         currentEnd = Math.max(currentEnd, item.from + item.durationInFrames);
       } else {
