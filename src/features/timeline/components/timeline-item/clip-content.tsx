@@ -5,7 +5,6 @@ import { ClipWaveform } from '../clip-waveform';
 import {
   CLIP_LABEL_HEIGHT,
   VIDEO_WAVEFORM_HEIGHT,
-  AUDIO_WAVEFORM_HEIGHT,
 } from '@/features/timeline/constants';
 
 export interface ClipContentProps {
@@ -61,8 +60,8 @@ export const ClipContent = memo(function ClipContent({
             {item.label}
           </div>
         </div>
-        {/* Row 2: Waveform - fixed height */}
-        <div className="relative overflow-hidden" style={{ height: VIDEO_WAVEFORM_HEIGHT }}>
+        {/* Row 2: Waveform - fixed height with gradient bg */}
+        <div className="relative overflow-hidden bg-waveform-gradient" style={{ height: VIDEO_WAVEFORM_HEIGHT }}>
           <ClipWaveform
             mediaId={item.mediaId}
             clipWidth={clipWidth}
@@ -79,30 +78,27 @@ export const ClipContent = memo(function ClipContent({
     );
   }
 
-  // Audio clip 2-row layout: label | waveform
+  // Audio clip - waveform fills entire clip with overlayed label
   if (item.type === 'audio' && item.mediaId) {
     return (
-      <div className="absolute inset-0 flex flex-col">
-        {/* Row 1: Label */}
+      <div className="absolute inset-0 bg-waveform-gradient">
+        <ClipWaveform
+          mediaId={item.mediaId}
+          clipWidth={clipWidth}
+          sourceStart={sourceStart}
+          sourceDuration={sourceDuration}
+          trimStart={trimStart}
+          speed={speed}
+          fps={fps}
+          isVisible={isClipVisible}
+          pixelsPerSecond={pixelsPerSecond}
+        />
+        {/* Overlayed label */}
         <div
-          className="px-2 text-[11px] font-medium truncate"
-          style={{ height: CLIP_LABEL_HEIGHT, lineHeight: `${CLIP_LABEL_HEIGHT}px` }}
+          className="absolute top-0 left-0 max-w-full px-2 text-[11px] font-medium truncate"
+          style={{ lineHeight: `${CLIP_LABEL_HEIGHT}px` }}
         >
           {item.label}
-        </div>
-        {/* Row 2: Waveform */}
-        <div className="relative overflow-hidden" style={{ height: AUDIO_WAVEFORM_HEIGHT }}>
-          <ClipWaveform
-            mediaId={item.mediaId}
-            clipWidth={clipWidth}
-            sourceStart={sourceStart}
-            sourceDuration={sourceDuration}
-            trimStart={trimStart}
-            speed={speed}
-            fps={fps}
-            isVisible={isClipVisible}
-            pixelsPerSecond={pixelsPerSecond}
-          />
         </div>
       </div>
     );

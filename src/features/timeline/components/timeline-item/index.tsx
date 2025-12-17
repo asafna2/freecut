@@ -375,9 +375,9 @@ export const TimelineItem = memo(function TimelineItem({ item, timelineDuration 
   const itemColorClasses = useMemo(() => {
     switch (item.type) {
       case 'video':
-        return 'bg-timeline-video/30 border-timeline-video';
+        return 'bg-timeline-video border-timeline-video';
       case 'audio':
-        return 'bg-timeline-audio/30 border-timeline-audio';
+        return 'bg-timeline-audio border-timeline-audio';
       case 'image':
         return 'bg-timeline-image/30 border-timeline-image';
       case 'text':
@@ -387,7 +387,7 @@ export const TimelineItem = memo(function TimelineItem({ item, timelineDuration 
       case 'adjustment':
         return 'bg-purple-500/30 border-purple-400';
       default:
-        return 'bg-timeline-video/30 border-timeline-video';
+        return 'bg-timeline-video border-timeline-video';
     }
   }, [item.type]);
 
