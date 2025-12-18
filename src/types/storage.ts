@@ -37,6 +37,16 @@ export interface MediaMetadata {
   fps: number;
   codec: string;
   bitrate: number;
+  /**
+   * Audio codec identifier (e.g., 'aac', 'ec-3', 'ac-3')
+   * Only present for video files with audio tracks
+   */
+  audioCodec?: string;
+  /**
+   * Whether the audio codec is supported for waveform generation
+   * false for codecs like EC-3 (Dolby Digital Plus), AC-3, DTS that can't be decoded in browser
+   */
+  audioCodecSupported?: boolean;
   thumbnailId?: string;
   tags: string[];
   createdAt: number;

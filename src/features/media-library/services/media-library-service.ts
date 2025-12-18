@@ -175,6 +175,8 @@ export class MediaLibraryService {
       fps: (metadata as { fps?: number }).fps ?? 30,
       codec: (metadata as { codec?: string }).codec ?? 'unknown',
       bitrate: (metadata as { bitrate?: number }).bitrate ?? 0,
+      audioCodec: (metadata as { audioCodec?: string }).audioCodec,
+      audioCodecSupported: (metadata as { audioCodecSupported?: boolean }).audioCodecSupported ?? true,
       thumbnailId,
       tags: [],
       createdAt: Date.now(),

@@ -85,6 +85,9 @@ export const ClipWaveform = memo(function ClipWaveform({
     lastMediaIdRef.current = mediaId;
   }, [mediaId]);
 
+  // Track if audio codec is supported for waveform generation
+  const [audioCodecSupported, setAudioCodecSupported] = useState(true);
+
   // Load blob URL for the media - only once when first visible
   useEffect(() => {
     // Skip if already started loading (prevents re-triggering on visibility changes)
@@ -102,6 +105,19 @@ export const ClipWaveform = memo(function ClipWaveform({
 
     const loadBlobUrl = async () => {
       try {
+        // First check if audio codec is supported
+        const media = await mediaLibraryService.getMedia(mediaId);
+        if (!mounted) return;
+
+        // Check audioCodecSupported - default to true if not set (for existing media)
+        const codecSupported = media?.audioCodecSupported !== false;
+        setAudioCodecSupported(codecSupported);
+
+        if (!codecSupported) {
+          // Skip waveform generation for unsupported codecs
+          return;
+        }
+
         const url = await mediaLibraryService.getMediaBlobUrl(mediaId);
         if (mounted && url) {
           setBlobUrl(url);
@@ -190,6 +206,19 @@ export const ClipWaveform = memo(function ClipWaveform({
     },
     [peaks, duration, sampleRate, pixelsPerSecond, sourceStart, trimStart, speed, sourceDuration, height]
   );
+
+  // Show empty state for unsupported codecs (no skeleton, just flat line)
+  if (!audioCodecSupported) {
+    return (
+      <div ref={containerRef} className="absolute inset-0 flex items-center">
+        {/* Flat line to indicate no waveform available */}
+        <div
+          className="w-full h-[1px] bg-foreground/20"
+          style={{ marginTop: 0 }}
+        />
+      </div>
+    );
+  }
 
   // Show skeleton while loading or height not yet measured
   if (!peaks || peaks.length === 0 || height === 0) {

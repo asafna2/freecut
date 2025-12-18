@@ -17,6 +17,8 @@ interface MediabunnyVideoTrack {
 interface MediabunnyAudioTrack {
   channels?: number;
   sampleRate?: number;
+  codec?: string;
+  canDecode?: () => Promise<boolean>;
 }
 
 interface MediabunnyInput {
@@ -47,6 +49,8 @@ export interface VideoMetadata {
   fps: number;
   codec: string;
   bitrate: number;
+  audioCodec?: string;
+  audioCodecSupported?: boolean;
 }
 
 export interface AudioMetadata {
@@ -59,6 +63,33 @@ export interface AudioMetadata {
 export interface ImageMetadata {
   width: number;
   height: number;
+}
+
+/**
+ * Audio codecs that cannot be decoded by Web Audio API or mediabunny
+ * These are typically proprietary/licensed codecs not supported in browsers
+ */
+export const UNSUPPORTED_AUDIO_CODECS = [
+  'ec-3',   // Dolby Digital Plus (E-AC-3)
+  'ac-3',   // Dolby Digital (AC-3)
+  'dts',    // DTS
+  'dtsc',   // DTS Coherent Acoustics
+  'dtse',   // DTS Express
+  'dtsh',   // DTS-HD High Resolution
+  'dtsl',   // DTS-HD Master Audio
+  'truehd', // Dolby TrueHD
+  'mlpa',   // Dolby TrueHD (MLP)
+];
+
+/**
+ * Check if an audio codec is supported for waveform generation
+ */
+export function isAudioCodecSupported(codec: string | undefined): boolean {
+  if (!codec) return true; // No audio track, consider supported
+  const normalizedCodec = codec.toLowerCase().trim();
+  return !UNSUPPORTED_AUDIO_CODECS.some(unsupported =>
+    normalizedCodec.includes(unsupported)
+  );
 }
 
 /**
@@ -87,6 +118,11 @@ export async function extractVideoMetadata(
     // Get packet stats to compute FPS (read at most 50 packets)
     const packetStats = await videoTrack.computePacketStats(50);
 
+    // Get audio track info for codec detection
+    const audioTrack = await input.getPrimaryAudioTrack();
+    const audioCodec = audioTrack?.codec;
+    const audioCodecSupported = isAudioCodecSupported(audioCodec);
+
     return {
       duration: durationInSeconds || 0,
       width: videoTrack.displayWidth || 1920,
@@ -94,6 +130,8 @@ export async function extractVideoMetadata(
       fps: packetStats?.averagePacketRate || 30,
       codec: videoTrack.codec || 'unknown',
       bitrate: 0, // Not directly available from mediabunny API
+      audioCodec,
+      audioCodecSupported,
     };
   } catch (error) {
     console.warn('Failed to extract video metadata with mediabunny:', error);
@@ -284,6 +322,96 @@ export async function extractMetadata(
       fps: 30,
       codec: 'unknown',
       bitrate: 0,
+    };
+  }
+}
+
+/**
+ * Result of checking a file's audio codec support
+ */
+export interface AudioCodecCheckResult {
+  fileName: string;
+  audioCodec: string | undefined;
+  isSupported: boolean;
+}
+
+/**
+ * Check if a video file has a supported audio codec.
+ * This is a lightweight check that only reads the audio track metadata.
+ *
+ * @param file - The video file to check
+ * @returns AudioCodecCheckResult with codec info and support status
+ */
+export async function checkAudioCodecSupport(
+  file: File
+): Promise<AudioCodecCheckResult> {
+  const mimeType = getMimeType(file);
+
+  // Only check video files - audio files will be handled by Web Audio API directly
+  if (!mimeType.startsWith('video/')) {
+    return {
+      fileName: file.name,
+      audioCodec: undefined,
+      isSupported: true,
+    };
+  }
+
+  try {
+    const mb = await getMediabunny();
+
+    const input = new mb.Input({
+      formats: mb.ALL_FORMATS,
+      source: new mb.BlobSource(file),
+    });
+
+    // Capture console warnings to detect unsupported codecs
+    const warnings: string[] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => {
+      const message = args.join(' ');
+      warnings.push(message);
+      originalWarn.apply(console, args);
+    };
+
+    const audioTrack = await input.getPrimaryAudioTrack();
+
+    // Restore console.warn
+    console.warn = originalWarn;
+
+    const audioCodec = audioTrack?.codec;
+
+    // Check if we detected an unsupported codec from warnings
+    // The demuxer logs: "Unsupported audio codec (sample entry type 'ec-3')."
+    const unsupportedCodecMatch = warnings.find(w =>
+      w.includes('Unsupported audio codec')
+    )?.match(/sample entry type '([^']+)'/);
+    const detectedUnsupportedCodec = unsupportedCodecMatch?.[1];
+
+    // Use detected codec from warning if audioTrack is null (can't decode)
+    const finalCodec = audioCodec || detectedUnsupportedCodec;
+    const isSupported = audioTrack !== null && isAudioCodecSupported(finalCodec);
+
+    console.log('[checkAudioCodecSupport]', {
+      fileName: file.name,
+      audioCodec,
+      detectedUnsupportedCodec,
+      finalCodec,
+      audioTrackExists: audioTrack !== null,
+      isSupported,
+    });
+
+    return {
+      fileName: file.name,
+      audioCodec: finalCodec,
+      isSupported,
+    };
+  } catch (error) {
+    console.warn('Failed to check audio codec:', error);
+    // On error, assume supported to not block import
+    return {
+      fileName: file.name,
+      audioCodec: undefined,
+      isSupported: true,
     };
   }
 }

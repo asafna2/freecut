@@ -1,9 +1,10 @@
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
-import type { MediaLibraryState, MediaLibraryActions, MediaLibraryNotification, BrokenMediaInfo, OrphanedClipInfo } from '../types';
+import type { MediaLibraryState, MediaLibraryActions, MediaLibraryNotification, BrokenMediaInfo, OrphanedClipInfo, UnsupportedCodecFile } from '../types';
 import type { MediaMetadata } from '@/types/storage';
 import { mediaLibraryService } from '../services/media-library-service';
 import { getMimeType } from '../utils/validation';
+import { checkAudioCodecSupport } from '../utils/metadata-extractor';
 import { createLogger } from '@/lib/logger';
 
 const logger = createLogger('MediaLibraryStore');
@@ -43,6 +44,11 @@ export const useMediaLibraryStore = create<
       // Orphaned clips tracking (clips referencing deleted media)
       orphanedClips: [],
       showOrphanedClipsDialog: false,
+
+      // Unsupported audio codec confirmation
+      unsupportedCodecFiles: [],
+      showUnsupportedCodecDialog: false,
+      unsupportedCodecResolver: null,
 
       // v3: Set current project context
       setCurrentProject: (projectId: string | null) => {
@@ -115,6 +121,32 @@ export const useMediaLibraryStore = create<
               },
             ],
           });
+
+          // Pre-check audio codecs for video files
+          const unsupportedCodecFiles: UnsupportedCodecFile[] = [];
+          for (const handle of handles) {
+            const file = await handle.getFile();
+            const mimeType = getMimeType(file);
+            if (mimeType.startsWith('video/')) {
+              const codecCheck = await checkAudioCodecSupport(file);
+              if (!codecCheck.isSupported && codecCheck.audioCodec) {
+                unsupportedCodecFiles.push({
+                  fileName: file.name,
+                  audioCodec: codecCheck.audioCodec,
+                  handle,
+                });
+              }
+            }
+          }
+
+          // If unsupported codecs found, ask user for confirmation
+          if (unsupportedCodecFiles.length > 0) {
+            const confirmed = await get().confirmUnsupportedCodecs(unsupportedCodecFiles);
+            if (!confirmed) {
+              // User cancelled - don't import any files
+              return [];
+            }
+          }
 
           const results: MediaMetadata[] = [];
           const duplicateNames: string[] = [];
@@ -208,6 +240,32 @@ export const useMediaLibraryStore = create<
         if (!currentProjectId) {
           set({ error: 'No project selected' });
           return [];
+        }
+
+        // Pre-check audio codecs for video files
+        const unsupportedCodecFiles: UnsupportedCodecFile[] = [];
+        for (const handle of handles) {
+          const file = await handle.getFile();
+          const mimeType = getMimeType(file);
+          if (mimeType.startsWith('video/')) {
+            const codecCheck = await checkAudioCodecSupport(file);
+            if (!codecCheck.isSupported && codecCheck.audioCodec) {
+              unsupportedCodecFiles.push({
+                fileName: file.name,
+                audioCodec: codecCheck.audioCodec,
+                handle,
+              });
+            }
+          }
+        }
+
+        // If unsupported codecs found, ask user for confirmation
+        if (unsupportedCodecFiles.length > 0) {
+          const confirmed = await get().confirmUnsupportedCodecs(unsupportedCodecFiles);
+          if (!confirmed) {
+            // User cancelled - don't import any files
+            return [];
+          }
         }
 
         const results: MediaMetadata[] = [];
@@ -586,6 +644,29 @@ export const useMediaLibraryStore = create<
           });
         }).catch((error) => {
           logger.error(`[MediaLibraryStore] removeOrphanedClips error:`, error);
+        });
+      },
+
+      // Unsupported audio codec dialog actions
+      confirmUnsupportedCodecs: (files: UnsupportedCodecFile[]) => {
+        return new Promise<boolean>((resolve) => {
+          set({
+            unsupportedCodecFiles: files,
+            showUnsupportedCodecDialog: true,
+            unsupportedCodecResolver: resolve,
+          });
+        });
+      },
+
+      resolveUnsupportedCodecDialog: (confirmed: boolean) => {
+        const { unsupportedCodecResolver } = get();
+        if (unsupportedCodecResolver) {
+          unsupportedCodecResolver(confirmed);
+        }
+        set({
+          unsupportedCodecFiles: [],
+          showUnsupportedCodecDialog: false,
+          unsupportedCodecResolver: null,
         });
       },
     }),

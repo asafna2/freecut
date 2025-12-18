@@ -25,6 +25,7 @@ import {
 import { MediaGrid } from './media-grid';
 import { MissingMediaDialog } from './missing-media-dialog';
 import { OrphanedClipsDialog } from './orphaned-clips-dialog';
+import { UnsupportedAudioCodecDialog } from './unsupported-audio-codec-dialog';
 import { useMediaLibraryStore } from '../stores/media-library-store';
 import { useTimelineStore } from '@/features/timeline/stores/timeline-store';
 
@@ -65,6 +66,11 @@ export const MediaLibrary = memo(function MediaLibrary({ onMediaSelect }: MediaL
   const clearNotification = useMediaLibraryStore((s) => s.clearNotification);
   const brokenMediaIds = useMediaLibraryStore((s) => s.brokenMediaIds);
   const openMissingMediaDialog = useMediaLibraryStore((s) => s.openMissingMediaDialog);
+
+  // Unsupported codec dialog state
+  const unsupportedCodecFiles = useMediaLibraryStore((s) => s.unsupportedCodecFiles);
+  const showUnsupportedCodecDialog = useMediaLibraryStore((s) => s.showUnsupportedCodecDialog);
+  const resolveUnsupportedCodecDialog = useMediaLibraryStore((s) => s.resolveUnsupportedCodecDialog);
 
   // Load media items on mount and when project changes
   // Important: Always load on mount because HMR preserves store state (isLoading: true)
@@ -505,6 +511,17 @@ export const MediaLibrary = memo(function MediaLibrary({ onMediaSelect }: MediaL
 
       {/* Orphaned Clips Dialog */}
       <OrphanedClipsDialog />
+
+      {/* Unsupported Audio Codec Dialog */}
+      <UnsupportedAudioCodecDialog
+        open={showUnsupportedCodecDialog}
+        files={unsupportedCodecFiles.map((f) => ({
+          fileName: f.fileName,
+          audioCodec: f.audioCodec,
+        }))}
+        onConfirm={() => resolveUnsupportedCodecDialog(true)}
+        onCancel={() => resolveUnsupportedCodecDialog(false)}
+      />
     </div>
   );
 });

@@ -6,6 +6,15 @@ export interface MediaLibraryNotification {
 }
 
 /**
+ * Information about a file with an unsupported audio codec
+ */
+export interface UnsupportedCodecFile {
+  fileName: string;
+  audioCodec: string;
+  handle: FileSystemFileHandle;
+}
+
+/**
  * Error types for media that cannot be accessed
  */
 export type MediaErrorType =
@@ -54,6 +63,11 @@ export interface MediaLibraryState {
   // Orphaned clips tracking (clips referencing deleted media)
   orphanedClips: OrphanedClipInfo[];
   showOrphanedClipsDialog: boolean;
+
+  // Unsupported audio codec confirmation
+  unsupportedCodecFiles: UnsupportedCodecFile[];
+  showUnsupportedCodecDialog: boolean;
+  unsupportedCodecResolver: ((confirmed: boolean) => void) | null;
 }
 
 export interface MediaLibraryActions {
@@ -115,4 +129,12 @@ export interface MediaLibraryActions {
    * Remove orphaned clips from the timeline.
    */
   removeOrphanedClips: (itemIds: string[]) => void;
+
+  // Unsupported audio codec dialog
+  /**
+   * Show the unsupported codec dialog and wait for user response.
+   * Returns a promise that resolves to true if user confirms, false if cancelled.
+   */
+  confirmUnsupportedCodecs: (files: UnsupportedCodecFile[]) => Promise<boolean>;
+  resolveUnsupportedCodecDialog: (confirmed: boolean) => void;
 }
