@@ -305,10 +305,14 @@ export const useItemsStore = create<ItemsState & ItemsActions>()(
       // Calculate total duration
       const totalDuration = lastItem.from + lastItem.durationInFrames - firstItem.from;
 
-      // Create joined item (using first item as base)
+      // Create joined item (using first item as base, but take source/trim end bounds from last item)
+      // This is the inverse of split: first item provides start bounds, last item provides end bounds
       const joinedItem = {
         ...firstItem,
         durationInFrames: totalDuration,
+        // Take sourceEnd and trimEnd from the last item to maintain source continuity
+        sourceEnd: lastItem.sourceEnd,
+        trimEnd: lastItem.trimEnd,
       } as TimelineItem;
 
       // Remove all but first (by timeline position), update first

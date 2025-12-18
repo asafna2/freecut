@@ -682,6 +682,7 @@ export const TimelineItem = memo(function TimelineItem({ item, timelineDuration 
             hoveredEdge={hoveredEdge}
             isTrimming={isTrimming}
             isStretching={isStretching}
+            isBeingDragged={isBeingDragged}
           />
         </div>
       </ItemContextMenu>

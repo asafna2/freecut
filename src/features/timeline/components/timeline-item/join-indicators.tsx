@@ -9,6 +9,7 @@ interface JoinIndicatorsProps {
   hoveredEdge: 'start' | 'end' | null;
   isTrimming: boolean;
   isStretching: boolean;
+  isBeingDragged: boolean;
 }
 
 /**
@@ -23,10 +24,14 @@ export const JoinIndicators = memo(function JoinIndicators({
   hoveredEdge,
   isTrimming,
   isStretching,
+  isBeingDragged,
 }: JoinIndicatorsProps) {
+  // Hide join indicators when this item is being dragged (anchor or follower)
+  // This ensures indicators don't show when moving to a different track
   const showLeft = hasJoinableLeft &&
     !trackLocked &&
     !dragAffectsJoin.left &&
+    !isBeingDragged &&
     hoveredEdge !== 'start' &&
     !isTrimming &&
     !isStretching;
@@ -34,6 +39,7 @@ export const JoinIndicators = memo(function JoinIndicators({
   const showRight = hasJoinableRight &&
     !trackLocked &&
     !dragAffectsJoin.right &&
+    !isBeingDragged &&
     hoveredEdge !== 'end' &&
     !isTrimming &&
     !isStretching;
