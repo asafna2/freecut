@@ -130,6 +130,8 @@ export const Editor = memo(function Editor({ projectId, project }: EditorProps) 
   }, [projectId]);
 
   const handleExport = () => {
+    // Pause playback when opening export dialog
+    usePlaybackStore.getState().pause();
     setExportDialogOpen(true);
   };
 
