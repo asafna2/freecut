@@ -13,6 +13,7 @@ import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Switch } from '@/components/ui/switch';
 import {
   Monitor,
   Cloud,
@@ -26,12 +27,15 @@ import {
   HardDrive,
   Music,
   Video,
+  Scissors,
 } from 'lucide-react';
 import type { ExportSettings, ExportMode } from '@/types/export';
 import { useRender } from '../hooks/use-render';
 import { useClientRender } from '../hooks/use-client-render';
 import { useProjectStore } from '@/features/projects/stores/project-store';
 import { useSettingsStore } from '@/features/settings/stores/settings-store';
+import { useTimelineStore } from '@/features/timeline/stores/timeline-store';
+import { formatTimecode, framesToSeconds } from '@/utils/time-utils';
 import type { ClientVideoContainer, ClientAudioContainer } from '../utils/client-renderer';
 
 export interface ExportDialogProps {
@@ -83,6 +87,12 @@ export function ExportDialog({ open, onClose }: ExportDialogProps) {
   const projectWidth = useProjectStore((s) => s.currentProject?.metadata.width ?? 1920);
   const projectHeight = useProjectStore((s) => s.currentProject?.metadata.height ?? 1080);
 
+  // Timeline state for in/out points and duration calculation
+  const fps = useTimelineStore((s) => s.fps);
+  const items = useTimelineStore((s) => s.items);
+  const inPoint = useTimelineStore((s) => s.inPoint);
+  const outPoint = useTimelineStore((s) => s.outPoint);
+
   const serverApiUrl = useSettingsStore((s) => s.serverApiUrl);
   const setSetting = useSettingsStore((s) => s.setSetting);
 
@@ -99,6 +109,26 @@ export function ExportDialog({ open, onClose }: ExportDialogProps) {
   const [view, setView] = useState<DialogView>('settings');
   const [startTime, setStartTime] = useState<number | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [renderWholeProject, setRenderWholeProject] = useState(false);
+
+  // Calculate timeline duration from items
+  const timelineDurationFrames = useMemo(() => {
+    if (items.length === 0) return 0;
+    return Math.max(...items.map((item) => item.from + item.durationInFrames));
+  }, [items]);
+
+  // Check if in/out points are set
+  const hasInOutPoints = inPoint !== null && outPoint !== null && outPoint > inPoint;
+
+  // Calculate export range
+  const exportRange = useMemo(() => {
+    if (renderWholeProject || !hasInOutPoints) {
+      return { start: 0, end: timelineDurationFrames, duration: timelineDurationFrames };
+    }
+    const start = inPoint ?? 0;
+    const end = outPoint ?? timelineDurationFrames;
+    return { start, end, duration: end - start };
+  }, [renderWholeProject, hasInOutPoints, inPoint, outPoint, timelineDurationFrames]);
 
   const resolutionOptions = useMemo(
     () => getResolutionOptions(projectWidth, projectHeight),
@@ -181,6 +211,7 @@ export function ExportDialog({ open, onClose }: ExportDialogProps) {
       mode: exportMode,
       videoContainer: exportMode === 'video' ? videoContainer : undefined,
       audioContainer: exportMode === 'audio' ? audioContainer : undefined,
+      renderWholeProject,
     };
     await startExport(extendedSettings);
   };
@@ -358,6 +389,53 @@ export function ExportDialog({ open, onClose }: ExportDialogProps) {
                   Audio
                 </button>
               </div>
+            </div>
+
+            {/* Export Range Section */}
+            <div className="space-y-3 p-3 rounded-lg border border-border bg-muted/20">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Scissors className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm font-medium">Export Range</span>
+                </div>
+                {hasInOutPoints && (
+                  <div className="flex items-center gap-2">
+                    <Label htmlFor="render-whole" className="text-xs text-muted-foreground">
+                      Render whole project
+                    </Label>
+                    <Switch
+                      id="render-whole"
+                      checked={renderWholeProject}
+                      onCheckedChange={setRenderWholeProject}
+                    />
+                  </div>
+                )}
+              </div>
+              <div className="grid grid-cols-3 gap-3 text-sm">
+                <div>
+                  <div className="text-xs text-muted-foreground mb-0.5">In</div>
+                  <div className="font-mono text-foreground">
+                    {formatTimecode(exportRange.start, fps)}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground mb-0.5">Out</div>
+                  <div className="font-mono text-foreground">
+                    {formatTimecode(exportRange.end, fps)}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground mb-0.5">Duration</div>
+                  <div className="font-mono text-foreground">
+                    {formatTime(framesToSeconds(exportRange.duration, fps))}
+                  </div>
+                </div>
+              </div>
+              {hasInOutPoints && !renderWholeProject && (
+                <p className="text-xs text-muted-foreground">
+                  Exporting in/out range. Toggle above to export the full timeline.
+                </p>
+              )}
             </div>
 
             {/* Video Export Settings */}
