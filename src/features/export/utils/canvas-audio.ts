@@ -11,6 +11,24 @@ import { createLogger } from '@/lib/logger';
 
 const log = createLogger('CanvasAudio');
 
+// =============================================================================
+// PERFORMANCE OPTIMIZATION: Audio Decode Cache
+// =============================================================================
+
+/**
+ * Cache for decoded audio to avoid re-decoding the same source file.
+ * Key: source URL, Value: decoded audio data
+ */
+const audioDecodeCache = new Map<string, DecodedAudio>();
+
+/**
+ * Clear the audio decode cache (call after export completes)
+ */
+export function clearAudioDecodeCache(): void {
+  audioDecodeCache.clear();
+  log.debug('Audio decode cache cleared');
+}
+
 /**
  * Audio segment representing a timeline item's audio
  */
@@ -102,7 +120,7 @@ export function extractAudioSegments(composition: RemotionInputProps): AudioSegm
           volume: item.volume ?? 0, // dB
           fadeInFrames: item.audioFadeIn ?? 0,
           fadeOutFrames: item.audioFadeOut ?? 0,
-          speed: 1, // Audio items don't have speed in current types
+          speed: audioItem.speed ?? 1, // Playback speed from BaseTimelineItem
           muted: track.muted ?? false,
           type: 'audio',
         });
@@ -120,58 +138,176 @@ export function extractAudioSegments(composition: RemotionInputProps): AudioSegm
 }
 
 /**
- * Decode audio from a media source using Web Audio API.
+ * Decode audio from a media source using mediabunny for efficient range extraction.
+ * Only decodes the portion of audio actually needed, not the entire file.
  *
  * @param src - Source URL (blob URL or regular URL)
  * @param itemId - Item ID for logging
- * @returns Decoded audio data
+ * @param startTime - Start time in seconds (optional, defaults to 0)
+ * @param endTime - End time in seconds (optional, defaults to full duration)
+ * @returns Decoded audio data for the specified range
  */
 export async function decodeAudioFromSource(
   src: string,
-  itemId: string
+  itemId: string,
+  startTime?: number,
+  endTime?: number
 ): Promise<DecodedAudio> {
-  log.debug('Decoding audio', { itemId, src: src.substring(0, 50) });
+  // Check cache first (only for full file decodes for backward compatibility)
+  if (startTime === undefined && endTime === undefined) {
+    const cached = audioDecodeCache.get(src);
+    if (cached) {
+      log.debug('Using cached decoded audio', { itemId, src: src.substring(0, 50) });
+      return { ...cached, itemId };
+    }
+  }
+
+  log.debug('Decoding audio with mediabunny', {
+    itemId,
+    src: src.substring(0, 50),
+    startTime,
+    endTime,
+  });
 
   try {
-    // Fetch the audio data
+    // Try mediabunny first for efficient range extraction
+    const mb = await import('mediabunny');
+
+    // Fetch and create input
     const response = await fetch(src);
-    if (!response.ok) {
-      throw new Error(`Failed to fetch audio: ${response.status}`);
+    const blob = await response.blob();
+
+    const input = new mb.Input({
+      formats: mb.ALL_FORMATS,
+      source: new mb.BlobSource(blob),
+    });
+
+    const audioTrack = await input.getPrimaryAudioTrack();
+    if (!audioTrack) {
+      throw new Error('No audio track found');
     }
 
-    const arrayBuffer = await response.arrayBuffer();
+    const duration = await input.computeDuration();
+    const actualStartTime = startTime ?? 0;
+    const actualEndTime = endTime ?? duration;
 
-    // Decode using Web Audio API
-    // Use OfflineAudioContext to avoid "AudioContext not allowed to start" warning
-    // OfflineAudioContext doesn't require user gesture unlike regular AudioContext
-    const offlineContext = new OfflineAudioContext(2, 1, 48000);
-    const audioBuffer = await offlineContext.decodeAudioData(arrayBuffer);
-
-    // Extract samples per channel
-    const samples: Float32Array[] = [];
-    for (let i = 0; i < audioBuffer.numberOfChannels; i++) {
-      samples.push(audioBuffer.getChannelData(i));
-    }
-
-    log.debug('Decoded audio', {
+    log.debug('Extracting audio range', {
       itemId,
-      sampleRate: audioBuffer.sampleRate,
-      channels: audioBuffer.numberOfChannels,
-      duration: audioBuffer.duration,
+      startTime: actualStartTime,
+      endTime: actualEndTime,
+      totalDuration: duration,
+    });
+
+    // Create audio sample sink and extract only needed range
+    const sink = new mb.AudioSampleSink(audioTrack);
+
+    // Collect audio samples for the range
+    const audioBuffers: AudioBuffer[] = [];
+    let totalFrames = 0;
+    let sampleRate = 48000;
+    let channels = 2;
+
+    for await (const sample of sink.samples(actualStartTime, actualEndTime)) {
+      const audioBuffer = sample.toAudioBuffer();
+      audioBuffers.push(audioBuffer);
+      totalFrames += audioBuffer.length;
+      sampleRate = audioBuffer.sampleRate;
+      channels = audioBuffer.numberOfChannels;
+      sample.close();
+    }
+
+    // Combine all audio buffers into single Float32Arrays
+    const samples: Float32Array[] = [];
+    for (let c = 0; c < channels; c++) {
+      samples.push(new Float32Array(totalFrames));
+    }
+
+    let offset = 0;
+    for (const buffer of audioBuffers) {
+      for (let c = 0; c < channels; c++) {
+        const channelData = buffer.getChannelData(c % buffer.numberOfChannels);
+        samples[c]!.set(channelData, offset);
+      }
+      offset += buffer.length;
+    }
+
+    const result: DecodedAudio = {
+      itemId,
+      sampleRate,
+      channels,
+      samples,
+      duration: actualEndTime - actualStartTime,
+    };
+
+    log.debug('Decoded audio with mediabunny', {
+      itemId,
+      sampleRate,
+      channels,
+      duration: result.duration,
       samples: samples[0]?.length,
     });
 
-    return {
-      itemId,
-      sampleRate: audioBuffer.sampleRate,
-      channels: audioBuffer.numberOfChannels,
-      samples,
-      duration: audioBuffer.duration,
-    };
+    // Cache if full file decode
+    if (startTime === undefined && endTime === undefined) {
+      audioDecodeCache.set(src, result);
+    }
+
+    return result;
   } catch (error) {
-    log.error('Failed to decode audio', { itemId, error });
-    throw error;
+    // Fall back to Web Audio API for full decode
+    log.warn('Mediabunny audio decode failed, using fallback', { itemId, error });
+    return decodeAudioFallback(src, itemId);
   }
+}
+
+/**
+ * Fallback audio decoder using Web Audio API (decodes entire file)
+ */
+async function decodeAudioFallback(src: string, itemId: string): Promise<DecodedAudio> {
+  // Check cache
+  const cached = audioDecodeCache.get(src);
+  if (cached) {
+    log.debug('Using cached decoded audio (fallback)', { itemId });
+    return { ...cached, itemId };
+  }
+
+  log.debug('Decoding audio with Web Audio API fallback', { itemId, src: src.substring(0, 50) });
+
+  const response = await fetch(src);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch audio: ${response.status}`);
+  }
+
+  const arrayBuffer = await response.arrayBuffer();
+
+  const offlineContext = new OfflineAudioContext(2, 1, 48000);
+  const audioBuffer = await offlineContext.decodeAudioData(arrayBuffer);
+
+  const samples: Float32Array[] = [];
+  for (let i = 0; i < audioBuffer.numberOfChannels; i++) {
+    samples.push(audioBuffer.getChannelData(i));
+  }
+
+  const result: DecodedAudio = {
+    itemId,
+    sampleRate: audioBuffer.sampleRate,
+    channels: audioBuffer.numberOfChannels,
+    samples,
+    duration: audioBuffer.duration,
+  };
+
+  // Cache the result
+  audioDecodeCache.set(src, result);
+
+  log.debug('Decoded audio (fallback)', {
+    itemId,
+    sampleRate: audioBuffer.sampleRate,
+    channels: audioBuffer.numberOfChannels,
+    duration: audioBuffer.duration,
+    samples: samples[0]?.length,
+  });
+
+  return result;
 }
 
 /**
@@ -245,41 +381,114 @@ export function applyFades(
 }
 
 /**
- * Apply speed change to audio samples.
- * Note: This uses simple linear interpolation which WILL change pitch.
- * For pitch-preserved speed change, a more complex algorithm (WSOLA/phase vocoder) is needed.
+ * Apply speed change to audio samples with pitch preservation using SoundTouch algorithm.
+ * Uses the low-level SoundTouch API for offline processing, which provides the same
+ * WSOLA-based time stretching that browsers use for `preservesPitch`.
  *
- * @param samples - Input audio samples
+ * @param samples - Input audio samples (mono)
  * @param speed - Playback rate (1.0 = normal, 2.0 = double speed, 0.5 = half speed)
- * @param sampleRate - Sample rate for logging
+ * @param sampleRate - Sample rate for the audio
  */
-export function applySpeed(
+export async function applySpeed(
   samples: Float32Array,
   speed: number,
   sampleRate: number
-): Float32Array {
+): Promise<Float32Array> {
   if (speed === 1.0) return samples;
+  if (samples.length === 0) return samples;
 
-  // Log warning about pitch change
-  log.warn('Audio speed change will affect pitch - no pitch correction in client export', {
-    speed,
-    sampleRate,
-  });
+  log.debug('Applying pitch-preserved speed change (SoundTouch)', { speed, sampleRate });
 
-  const outputLength = Math.floor(samples.length / speed);
-  const output = new Float32Array(outputLength);
+  try {
+    // Dynamically import SoundTouchJS
+    const soundtouch = await import('soundtouchjs');
 
-  for (let i = 0; i < outputLength; i++) {
-    const sourceIndex = i * speed;
-    const index0 = Math.floor(sourceIndex);
-    const index1 = Math.min(index0 + 1, samples.length - 1);
-    const fraction = sourceIndex - index0;
+    // Create SoundTouch processor
+    const st = new soundtouch.SoundTouch();
 
-    // Linear interpolation
-    output[i] = samples[index0]! * (1 - fraction) + samples[index1]! * fraction;
+    // Set tempo (speed change) while keeping pitch at 1.0
+    st.tempo = speed;
+    st.pitch = 1.0;
+    st.rate = 1.0;
+
+    // SoundTouch processes interleaved stereo, so we need to convert
+    // mono to stereo (duplicate channel) for processing
+    const stereoInput = new Float32Array(samples.length * 2);
+    for (let i = 0; i < samples.length; i++) {
+      stereoInput[i * 2] = samples[i]!;     // Left
+      stereoInput[i * 2 + 1] = samples[i]!; // Right (duplicate)
+    }
+
+    // Create a source that feeds samples to SoundTouch
+    let inputOffset = 0;
+    const source = {
+      extract: (target: Float32Array, numFrames: number): number => {
+        const samplesToRead = Math.min(numFrames * 2, stereoInput.length - inputOffset);
+        if (samplesToRead <= 0) return 0;
+
+        for (let i = 0; i < samplesToRead; i++) {
+          target[i] = stereoInput[inputOffset + i]!;
+        }
+        inputOffset += samplesToRead;
+        return samplesToRead / 2; // Return number of frames
+      }
+    };
+
+    // Create filter to process audio
+    const filter = new soundtouch.SimpleFilter(source, st);
+
+    // Calculate expected output length
+    const expectedOutputLength = Math.floor(samples.length / speed);
+    const stereoOutput = new Float32Array(expectedOutputLength * 2);
+
+    // Extract processed samples in chunks
+    let outputOffset = 0;
+    const chunkSize = 4096;
+    const chunk = new Float32Array(chunkSize * 2);
+
+    while (outputOffset < stereoOutput.length) {
+      const framesExtracted = filter.extract(chunk, chunkSize);
+      if (framesExtracted === 0) break;
+
+      const samplesToWrite = Math.min(framesExtracted * 2, stereoOutput.length - outputOffset);
+      for (let i = 0; i < samplesToWrite; i++) {
+        stereoOutput[outputOffset + i] = chunk[i]!;
+      }
+      outputOffset += framesExtracted * 2;
+    }
+
+    // Convert back to mono (take left channel)
+    const actualOutputLength = Math.floor(outputOffset / 2);
+    const output = new Float32Array(actualOutputLength);
+    for (let i = 0; i < actualOutputLength; i++) {
+      output[i] = stereoOutput[i * 2]!;
+    }
+
+    log.debug('SoundTouch time stretch complete', {
+      inputLength: samples.length,
+      outputLength: output.length,
+      expectedLength: expectedOutputLength,
+      speed,
+    });
+
+    return output;
+  } catch (error) {
+    log.warn('SoundTouch failed, falling back to simple resampling', { error });
+
+    // Fallback: simple resampling (will change pitch)
+    const outputLength = Math.floor(samples.length / speed);
+    const output = new Float32Array(outputLength);
+
+    for (let i = 0; i < outputLength; i++) {
+      const sourceIndex = i * speed;
+      const index0 = Math.floor(sourceIndex);
+      const index1 = Math.min(index0 + 1, samples.length - 1);
+      const fraction = sourceIndex - index0;
+      output[i] = samples[index0]! * (1 - fraction) + samples[index1]! * fraction;
+    }
+
+    return output;
   }
-
-  return output;
 }
 
 /**
@@ -439,36 +648,34 @@ export async function processAudio(
     }
 
     try {
-      // Decode audio
-      const decoded = await decodeAudioFromSource(segment.src, segment.itemId);
+      // Calculate the time range we actually need from the source
+      const sourceStartTime = segment.sourceStartFrame / fps;
+      // Account for speed: at 2x speed, we need twice as much source audio
+      const sourceDurationNeeded = (segment.durationFrames / fps) * segment.speed;
+      const sourceEndTime = sourceStartTime + sourceDurationNeeded;
+
+      // Decode ONLY the needed range using mediabunny (huge performance improvement!)
+      const decoded = await decodeAudioFromSource(
+        segment.src,
+        segment.itemId,
+        sourceStartTime,
+        sourceEndTime
+      );
 
       // Process each channel
+      // Note: decoded audio is already trimmed to the range we requested
       const processedChannels: Float32Array[] = [];
 
       for (let c = 0; c < decoded.channels; c++) {
         let channelSamples = decoded.samples[c]!;
 
-        // Extract the relevant portion based on trim
-        const sourceStartSample = Math.floor(
-          (segment.sourceStartFrame / fps) * decoded.sampleRate
-        );
-        const durationSamples = Math.floor(
-          (segment.durationFrames / fps) * decoded.sampleRate
-        );
+        // Since we decoded exactly the range we need with mediabunny,
+        // we don't need to slice - the audio is already the exact portion needed.
+        // Just apply speed, volume, and fades.
 
-        // Handle speed change (affects how much source audio we need)
-        const sourceNeededSamples = Math.floor(durationSamples * segment.speed);
-
-        // Extract portion
-        const endSample = Math.min(
-          sourceStartSample + sourceNeededSamples,
-          channelSamples.length
-        );
-        channelSamples = channelSamples.slice(sourceStartSample, endSample);
-
-        // Apply speed (with pitch change warning)
+        // Apply speed with pitch preservation (using SoundTouch)
         if (segment.speed !== 1.0) {
-          channelSamples = applySpeed(channelSamples, segment.speed, decoded.sampleRate);
+          channelSamples = await applySpeed(channelSamples, segment.speed, decoded.sampleRate);
         }
 
         // Apply volume

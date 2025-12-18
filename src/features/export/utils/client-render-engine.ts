@@ -48,7 +48,7 @@ import {
   type ActiveTransition,
   type TransitionCanvasSettings,
 } from './canvas-transitions';
-import { processAudio, createAudioBuffer, hasAudioContent } from './canvas-audio';
+import { processAudio, createAudioBuffer, hasAudioContent, clearAudioDecodeCache } from './canvas-audio';
 import { gifFrameCache, type CachedGifFrames } from '../../timeline/services/gif-frame-cache';
 
 const log = createLogger('ClientRenderEngine');
@@ -206,6 +206,177 @@ class TextMeasurementCache {
   }
 }
 
+// =============================================================================
+// PERFORMANCE OPTIMIZATION: Mediabunny Video Decoder
+// =============================================================================
+
+/**
+ * Video frame extractor using mediabunny for precise frame access.
+ *
+ * This replaces HTML5 video element seeking which is slow and imprecise.
+ * Benefits:
+ * - Precise frame-by-frame access (no seek delays)
+ * - Pre-decoded frames for instant access
+ * - No 500ms timeout fallbacks needed
+ */
+class VideoFrameExtractor {
+  private sink: any = null; // VideoSampleSink
+  private input: any = null; // Input
+  private videoTrack: any = null;
+  private duration: number = 0;
+  private ready: boolean = false;
+
+  constructor(
+    private src: string,
+    private itemId: string
+  ) {}
+
+  /**
+   * Initialize the extractor - must be called before getFrame()
+   */
+  async init(): Promise<boolean> {
+    try {
+      const mb = await import('mediabunny');
+
+      // Fetch the video data from blob URL
+      const response = await fetch(this.src);
+      const blob = await response.blob();
+
+      // Create input from blob
+      this.input = new mb.Input({
+        formats: mb.ALL_FORMATS,
+        source: new mb.BlobSource(blob),
+      });
+
+      // Get video track
+      this.videoTrack = await this.input.getPrimaryVideoTrack();
+      if (!this.videoTrack) {
+        log.warn('No video track found', { itemId: this.itemId });
+        return false;
+      }
+
+      // Get duration
+      this.duration = await this.input.computeDuration();
+
+      // Create video sample sink for frame extraction
+      this.sink = new mb.VideoSampleSink(this.videoTrack);
+
+      this.ready = true;
+      log.debug('VideoFrameExtractor initialized', {
+        itemId: this.itemId,
+        duration: this.duration,
+        width: this.videoTrack.displayWidth,
+        height: this.videoTrack.displayHeight,
+      });
+
+      return true;
+    } catch (error) {
+      log.error('Failed to initialize VideoFrameExtractor', { itemId: this.itemId, error });
+      return false;
+    }
+  }
+
+  /**
+   * Draw a frame at the specified timestamp directly to canvas
+   * This method properly manages VideoSample lifecycle by closing immediately after draw.
+   *
+   * @param ctx - Canvas context to draw to
+   * @param timestamp - Time in seconds
+   * @param x - X position to draw
+   * @param y - Y position to draw
+   * @param width - Width to draw
+   * @param height - Height to draw
+   * @returns true if frame was drawn, false if failed
+   */
+  async drawFrame(
+    ctx: OffscreenCanvasRenderingContext2D,
+    timestamp: number,
+    x: number,
+    y: number,
+    width: number,
+    height: number
+  ): Promise<boolean> {
+    if (!this.ready || !this.sink) {
+      return false;
+    }
+
+    let sample: any = null;
+    let videoFrame: VideoFrame | null = null;
+    try {
+      // Clamp timestamp to valid range
+      const clampedTime = Math.max(0, Math.min(timestamp, this.duration - 0.01));
+
+      // Get the video sample at this timestamp
+      sample = await this.sink.getSample(clampedTime);
+      if (!sample) {
+        return false;
+      }
+
+      // Get the underlying VideoFrame (native WebCodecs type)
+      // VideoFrame is a valid CanvasImageSource for drawImage()
+      videoFrame = sample.toVideoFrame();
+      if (!videoFrame) {
+        return false;
+      }
+
+      // Draw to canvas - VideoFrame is a valid image source
+      ctx.drawImage(videoFrame, x, y, width, height);
+
+      return true;
+    } catch (error) {
+      log.error('Failed to draw frame', { itemId: this.itemId, timestamp, error });
+      return false;
+    } finally {
+      // Close VideoFrame first (it's a copy, needs separate cleanup)
+      if (videoFrame) {
+        try {
+          videoFrame.close();
+        } catch {
+          // Ignore close errors
+        }
+      }
+      // Then close the sample
+      if (sample) {
+        try {
+          sample.close();
+        } catch {
+          // Ignore close errors
+        }
+      }
+    }
+  }
+
+  /**
+   * Get video dimensions
+   */
+  getDimensions(): { width: number; height: number } {
+    if (!this.videoTrack) {
+      return { width: 1920, height: 1080 };
+    }
+    return {
+      width: this.videoTrack.displayWidth,
+      height: this.videoTrack.displayHeight,
+    };
+  }
+
+  /**
+   * Get video duration in seconds
+   */
+  getDuration(): number {
+    return this.duration;
+  }
+
+  /**
+   * Clean up resources
+   */
+  dispose(): void {
+    this.sink = null;
+    this.input = null;
+    this.videoTrack = null;
+    this.ready = false;
+  }
+}
+
 export interface RenderEngineOptions {
   settings: ClientExportSettings;
   composition: RemotionInputProps;
@@ -341,9 +512,13 @@ export async function renderComposition(options: RenderEngineOptions): Promise<C
   });
 
   // Create video source from OUTPUT canvas (at export resolution)
+  // Set keyFrameInterval to ensure proper GOP structure
+  // Use 'realtime' latencyMode to disable B-frames and ensure monotonic timestamps
   const videoSource = new CanvasSource(outputCanvas as unknown as HTMLCanvasElement, {
     codec: settings.codec,
     bitrate: settings.videoBitrate ?? 10_000_000,
+    keyFrameInterval: 2, // Keyframe every 2 seconds for better seeking
+    latencyMode: 'realtime', // Disables B-frames, ensures monotonic decode order
   });
 
   // Add video track
@@ -443,7 +618,13 @@ export async function renderComposition(options: RenderEngineOptions): Promise<C
       const frameDuration = 1 / fps;
 
       // Add frame to video source (from output canvas)
-      videoSource.add(timestamp, frameDuration);
+      // Force first frame to be a keyframe to ensure proper GOP structure
+      // IMPORTANT: Must await to ensure frames are processed in order
+      if (frame === 0) {
+        await videoSource.add(timestamp, frameDuration, { keyFrame: true });
+      } else {
+        await videoSource.add(timestamp, frameDuration);
+      }
 
       // Report progress
       const progress = Math.round((frame / totalFrames) * 100);
@@ -495,6 +676,7 @@ export async function renderComposition(options: RenderEngineOptions): Promise<C
 
     // Cleanup
     frameRenderer.dispose();
+    clearAudioDecodeCache();
 
     return {
       blob,
@@ -505,6 +687,7 @@ export async function renderComposition(options: RenderEngineOptions): Promise<C
   } catch (error) {
     // Cleanup on error
     frameRenderer.dispose();
+    clearAudioDecodeCache();
 
     // Attempt to cancel the output on error
     try {
@@ -562,17 +745,27 @@ async function createCompositionRenderer(
   // Build lookup maps
   const keyframesMap = buildKeyframesMap(keyframes);
 
-  // Pre-load video elements
+  // === PERFORMANCE OPTIMIZATION: Use mediabunny for video decoding ===
+  // VideoFrameExtractor provides precise frame access without seek delays
+  const videoExtractors = new Map<string, VideoFrameExtractor>();
+  // Keep video elements as fallback if mediabunny fails
   const videoElements = new Map<string, HTMLVideoElement>();
+
   for (const track of tracks) {
     for (const item of track.items ?? []) {
       if (item.type === 'video') {
         const videoItem = item as VideoItem;
         if (videoItem.src) {
-          log.debug('Creating video element', {
+          log.debug('Creating VideoFrameExtractor', {
             itemId: item.id,
             src: videoItem.src.substring(0, 80),
           });
+
+          // Create mediabunny extractor (primary)
+          const extractor = new VideoFrameExtractor(videoItem.src, item.id);
+          videoExtractors.set(item.id, extractor);
+
+          // Also create fallback video element in case mediabunny fails
           const video = document.createElement('video');
           video.src = videoItem.src;
           video.muted = true;
@@ -640,44 +833,73 @@ async function createCompositionRenderer(
   }
   const clipMap = buildClipMap(allClips);
 
+  // Track which videos successfully use mediabunny (for render decisions)
+  const useMediabunny = new Set<string>();
+
   return {
     async preload() {
       log.debug('Preloading media', {
-        videoCount: videoElements.size,
+        videoCount: videoExtractors.size,
         imageCount: imageElements.size,
       });
 
       // Wait for images
       await Promise.all(imageLoadPromises);
 
-      // Wait for videos
-      const videoLoadPromises = Array.from(videoElements.entries()).map(
-        ([itemId, video]) =>
-          new Promise<void>((resolve) => {
-            const timeout = setTimeout(() => {
-              log.warn('Video load timeout', { itemId });
-              resolve();
-            }, 10000);
-
-            if (video.readyState >= 2) {
-              clearTimeout(timeout);
-              resolve();
-            } else {
-              video.addEventListener('loadeddata', () => {
-                clearTimeout(timeout);
-                resolve();
-              }, { once: true });
-              video.addEventListener('error', () => {
-                clearTimeout(timeout);
-                log.error('Video load error', { itemId });
-                resolve();
-              }, { once: true });
-              video.load();
-            }
-          })
+      // === Initialize mediabunny video extractors (primary method) ===
+      const extractorInitPromises = Array.from(videoExtractors.entries()).map(
+        async ([itemId, extractor]) => {
+          const success = await extractor.init();
+          if (success) {
+            useMediabunny.add(itemId);
+            log.info('Using mediabunny for video', { itemId: itemId.substring(0, 8) });
+          } else {
+            log.warn('Falling back to HTML5 video', { itemId: itemId.substring(0, 8) });
+          }
+        }
       );
 
-      await Promise.all(videoLoadPromises);
+      await Promise.all(extractorInitPromises);
+
+      log.info('Video initialization complete', {
+        mediabunny: useMediabunny.size,
+        fallback: videoExtractors.size - useMediabunny.size,
+      });
+
+      // === Load fallback video elements for items that failed mediabunny ===
+      const fallbackVideoIds = Array.from(videoElements.keys()).filter(id => !useMediabunny.has(id));
+
+      if (fallbackVideoIds.length > 0) {
+        const videoLoadPromises = fallbackVideoIds.map(
+          (itemId) => {
+            const video = videoElements.get(itemId)!;
+            return new Promise<void>((resolve) => {
+              const timeout = setTimeout(() => {
+                log.warn('Video load timeout', { itemId });
+                resolve();
+              }, 10000);
+
+              if (video.readyState >= 2) {
+                clearTimeout(timeout);
+                resolve();
+              } else {
+                video.addEventListener('loadeddata', () => {
+                  clearTimeout(timeout);
+                  resolve();
+                }, { once: true });
+                video.addEventListener('error', () => {
+                  clearTimeout(timeout);
+                  log.error('Video load error', { itemId });
+                  resolve();
+                }, { once: true });
+                video.load();
+              }
+            });
+          }
+        );
+
+        await Promise.all(videoLoadPromises);
+      }
 
       // Load GIF frames for animated GIFs
       if (gifItems.length > 0) {
@@ -999,6 +1221,14 @@ async function createCompositionRenderer(
     },
 
     dispose() {
+      // Clean up mediabunny video extractors
+      for (const extractor of videoExtractors.values()) {
+        extractor.dispose();
+      }
+      videoExtractors.clear();
+      useMediabunny.clear();
+
+      // Clean up fallback video elements
       for (const video of videoElements.values()) {
         video.pause();
         video.onerror = null;
@@ -1071,7 +1301,7 @@ async function createCompositionRenderer(
   }
 
   /**
-   * Render video item
+   * Render video item using mediabunny (fast) or HTML5 video element (fallback)
    * @param sourceFrameOffset - Optional offset to add to the source frame (in frames, not seconds)
    */
   async function renderVideoItem(
@@ -1083,30 +1313,59 @@ async function createCompositionRenderer(
     videoElements: Map<string, HTMLVideoElement>,
     sourceFrameOffset: number = 0
   ): Promise<void> {
+    // Calculate source time
+    const localFrame = frame - item.from;
+    const localTime = localFrame / fps;
+    const sourceStart = item.sourceStart ?? item.trimStart ?? 0;
+    const speed = item.speed ?? 1;
+    const adjustedSourceStart = sourceStart + sourceFrameOffset;
+    const sourceTime = adjustedSourceStart / fps + localTime * speed;
+
+    // === TRY MEDIABUNNY FIRST (fast, precise frame access) ===
+    if (useMediabunny.has(item.id)) {
+      const extractor = videoExtractors.get(item.id);
+      if (extractor) {
+        const clampedTime = Math.max(0, Math.min(sourceTime, extractor.getDuration() - 0.01));
+        const dims = extractor.getDimensions();
+        const drawDimensions = calculateMediaDrawDimensions(
+          dims.width,
+          dims.height,
+          transform,
+          canvas
+        );
+
+        // Draw frame directly to canvas (handles sample lifecycle properly)
+        const success = await extractor.drawFrame(
+          ctx,
+          clampedTime,
+          drawDimensions.x,
+          drawDimensions.y,
+          drawDimensions.width,
+          drawDimensions.height
+        );
+
+        if (success) {
+          // Debug logging (only in development)
+          if (import.meta.env.DEV && (frame < 5 || frame % 60 === 0)) {
+            log.debug(`VIDEO DRAW (mediabunny) frame=${frame} sourceTime=${clampedTime.toFixed(2)}s`);
+          }
+          return;
+        }
+        // If frame draw failed, fall through to HTML5 fallback
+        log.warn('Mediabunny frame draw failed, using fallback', { itemId: item.id, frame });
+      }
+    }
+
+    // === FALLBACK TO HTML5 VIDEO ELEMENT (slower, seeks required) ===
     const video = videoElements.get(item.id);
     if (!video) {
       if (frame === 0) log.warn('Video element not found', { itemId: item.id });
       return;
     }
 
-    // Calculate source time
-    // Use sourceStart as primary - it contains the full source offset including:
-    // 1. Original position from split operations
-    // 2. Additional trim from IO markers
-    const localFrame = frame - item.from;
-    const localTime = localFrame / fps;
-    const sourceStart = item.sourceStart ?? item.trimStart ?? 0;
-    const speed = item.speed ?? 1;
-    // Apply source frame offset (used for transitions to center playback)
-    // Don't clamp adjustedSourceStart - allow negative values and let final clamp handle it
-    // This ensures the offset takes effect even for clips with low sourceStart
-    const adjustedSourceStart = sourceStart + sourceFrameOffset;
-    const sourceTime = adjustedSourceStart / fps + localTime * speed;
     const clampedTime = Math.max(0, Math.min(sourceTime, video.duration - 0.01));
 
-    // === PERFORMANCE: Optimized seek tolerance and timeouts ===
-    // Tolerance: ~1 frame at 30fps (0.034s) - skip seeks for small differences
-    // Timeout: 150ms is usually enough for local blob URLs
+    // Optimized seek tolerance and timeouts
     const SEEK_TOLERANCE = 0.034;
     const SEEK_TIMEOUT = 150;
     const READY_TIMEOUT = 300;
@@ -1115,14 +1374,12 @@ async function createCompositionRenderer(
     if (needsSeek) {
       video.currentTime = clampedTime;
 
-      // Wait for seeked event with optimized timeout
       await new Promise<void>((resolve) => {
         const onSeeked = () => {
           video.removeEventListener('seeked', onSeeked);
           resolve();
         };
         video.addEventListener('seeked', onSeeked);
-        // Optimized timeout fallback
         setTimeout(() => {
           video.removeEventListener('seeked', onSeeked);
           resolve();
@@ -1142,9 +1399,7 @@ async function createCompositionRenderer(
         };
         video.addEventListener('canplay', checkReady);
         video.addEventListener('loadeddata', checkReady);
-        // Check immediately in case it's already ready
         checkReady();
-        // Optimized timeout fallback
         setTimeout(() => {
           video.removeEventListener('canplay', checkReady);
           video.removeEventListener('loadeddata', checkReady);
@@ -1153,13 +1408,11 @@ async function createCompositionRenderer(
       });
     }
 
-    // Final check - skip if still not ready
     if (video.readyState < 2) {
       if (import.meta.env.DEV && frame < 5) log.warn(`Video not ready after waiting: frame=${frame} readyState=${video.readyState}`);
       return;
     }
 
-    // Calculate draw dimensions
     const drawDimensions = calculateMediaDrawDimensions(
       video.videoWidth,
       video.videoHeight,
@@ -1169,7 +1422,7 @@ async function createCompositionRenderer(
 
     // Debug logging (only in development)
     if (import.meta.env.DEV && (frame < 5 || frame % 30 === 0)) {
-      log.debug(`VIDEO DRAW frame=${frame} sourceTime=${clampedTime.toFixed(2)}s readyState=${video.readyState} videoW=${video.videoWidth}`);
+      log.debug(`VIDEO DRAW (fallback) frame=${frame} sourceTime=${clampedTime.toFixed(2)}s readyState=${video.readyState}`);
     }
 
     ctx.drawImage(
