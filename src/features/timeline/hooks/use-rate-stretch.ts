@@ -343,18 +343,21 @@ export function useRateStretch(item: TimelineItem, timelineDuration: number, tra
       const isLoopingMedia = currentItem.type === 'image'; // GIFs (images) can loop infinitely
 
       // Use the actual available source frames for this clip
-      // For trimmed/split clips, this is sourceEnd - sourceStart (the segment being used)
-      // For untrimmed clips, use sourceDuration (full source file)
-      // Fall back to durationInFrames * speed only if no source info is available
+      // IMPORTANT: Always prefer sourceDuration (original file duration) over sourceEnd - sourceStart
+      // to avoid accumulating rounding errors across multiple rate stretch operations.
+      // sourceEnd is recalculated each time and can drift due to rounding in duration * speed.
+      // sourceDuration is the ground truth from the original source file.
       let sourceDuration: number;
-      if (currentItem.sourceEnd !== undefined && currentItem.sourceStart !== undefined) {
-        // Trimmed clip: use the actual source segment
+      if (currentItem.sourceDuration) {
+        // Use original source file duration (most accurate, no rounding drift)
+        // Subtract sourceStart to get available frames from current position
+        const sourceStart = currentItem.sourceStart ?? 0;
+        sourceDuration = currentItem.sourceDuration - sourceStart;
+      } else if (currentItem.sourceEnd !== undefined && currentItem.sourceStart !== undefined) {
+        // Fallback for clips without sourceDuration metadata
         sourceDuration = currentItem.sourceEnd - currentItem.sourceStart;
-      } else if (currentItem.sourceDuration) {
-        // Untrimmed clip: use full source duration
-        sourceDuration = currentItem.sourceDuration;
       } else {
-        // Fallback: estimate from current state
+        // Last resort: estimate from current state
         sourceDuration = Math.round(currentItem.durationInFrames * currentSpeed);
       }
 

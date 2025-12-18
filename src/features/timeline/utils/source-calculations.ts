@@ -99,9 +99,13 @@ export function calculateSpeed(sourceDuration: number, timelineDuration: number)
 /**
  * Clamp speed to valid range and round to 2 decimal places.
  */
+/**
+ * Clamp speed to valid range without rounding.
+ * Speed is stored with full precision for accurate calculations.
+ * UI should format to 2 decimal places for display only.
+ */
 export function clampSpeed(speed: number): number {
-  const clamped = Math.max(MIN_SPEED, Math.min(MAX_SPEED, speed));
-  return Math.round(clamped * 100) / 100;
+  return Math.max(MIN_SPEED, Math.min(MAX_SPEED, speed));
 }
 
 /**

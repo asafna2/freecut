@@ -143,6 +143,50 @@ function groupByOrigin(items: EnrichedVideoItem[]): VideoGroup[] {
  * 2. Memoizes the RENDERED OUTPUT so renderItem isn't called every frame
  * This prevents re-renders of canvas-based effects like halftone on every frame.
  */
+/**
+ * Custom comparison for GroupRenderer to ensure re-render when item properties change.
+ * Default React.memo shallow comparison only checks reference equality, which may miss
+ * cases where group.items contains items with changed properties (like speed after rate stretch).
+ */
+function areGroupPropsEqual(
+  prevProps: { group: VideoGroup; renderItem: (item: EnrichedVideoItem) => React.ReactNode },
+  nextProps: { group: VideoGroup; renderItem: (item: EnrichedVideoItem) => React.ReactNode }
+): boolean {
+  // Quick reference check first
+  if (prevProps.group === nextProps.group && prevProps.renderItem === nextProps.renderItem) {
+    return true;
+  }
+
+  // If renderItem changed, need to re-render
+  if (prevProps.renderItem !== nextProps.renderItem) {
+    return false;
+  }
+
+  // Check if group structure changed
+  if (prevProps.group.originKey !== nextProps.group.originKey ||
+      prevProps.group.minFrom !== nextProps.group.minFrom ||
+      prevProps.group.maxEnd !== nextProps.group.maxEnd ||
+      prevProps.group.items.length !== nextProps.group.items.length) {
+    return false;
+  }
+
+  // Deep check: compare item properties that affect rendering
+  for (let i = 0; i < prevProps.group.items.length; i++) {
+    const prevItem = prevProps.group.items[i]!;
+    const nextItem = nextProps.group.items[i]!;
+    if (prevItem.id !== nextItem.id ||
+        prevItem.speed !== nextItem.speed ||
+        prevItem.sourceStart !== nextItem.sourceStart ||
+        prevItem.sourceEnd !== nextItem.sourceEnd ||
+        prevItem.from !== nextItem.from ||
+        prevItem.durationInFrames !== nextItem.durationInFrames) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 const GroupRenderer: React.FC<{
   group: VideoGroup;
   renderItem: (item: EnrichedVideoItem) => React.ReactNode;
@@ -161,11 +205,11 @@ const GroupRenderer: React.FC<{
 
   // Create a fingerprint of item properties that affect playback calculations.
   // This ensures adjustedItem recalculates when speed/source bounds change (e.g., after rate stretch).
-  // Without this, the useMemo might use stale values if group.items reference doesn't change.
-  const itemsFingerprint = useMemo(() =>
-    group.items.map(i => `${i.id}:${i.speed ?? 1}:${i.sourceStart ?? 0}:${i.sourceEnd ?? ''}:${i.from}:${i.durationInFrames}`).join('|'),
-    [group.items]
-  );
+  // CRITICAL: Compute inline (not memoized) to ensure it always reflects current group.items values.
+  // Using useMemo here could miss updates if React.memo on GroupRenderer doesn't re-render.
+  const itemsFingerprint = group.items
+    .map(i => `${i.id}:${i.speed ?? 1}:${i.sourceStart ?? 0}:${i.sourceEnd ?? ''}:${i.from}:${i.durationInFrames}`)
+    .join('|');
 
   // Memoize the adjusted item based on active item's identity.
   // Only recalculates when crossing split boundaries (activeItemId changes).
@@ -214,7 +258,7 @@ const GroupRenderer: React.FC<{
   }, [adjustedItem, renderItem]);
 
   return <>{renderedContent}</>;
-});
+}, areGroupPropsEqual);
 
 GroupRenderer.displayName = 'GroupRenderer';
 
