@@ -1,4 +1,4 @@
-import { useCallback, useMemo, memo } from 'react';
+import { useCallback, useMemo, memo, useRef } from 'react';
 import { Sparkles, Plus, Eye, EyeOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -475,15 +475,25 @@ export const EffectsSection = memo(function EffectsSection({ items }: EffectsSec
     [itemIds, removeEffect]
   );
 
+  // Ref to blur trigger button when dropdown closes (prevents space key from reopening)
+  const dropdownTriggerRef = useRef<HTMLButtonElement>(null);
+
+  const handleDropdownOpenChange = useCallback((open: boolean) => {
+    if (!open) {
+      // Blur the trigger button when menu closes so space key triggers play/pause instead
+      dropdownTriggerRef.current?.blur();
+    }
+  }, []);
+
   if (visualItems.length === 0) return null;
 
   return (
     <PropertySection title="Effects" icon={Sparkles} defaultOpen={true}>
       {/* Add Effect Dropdown + Toggle All */}
       <div className="px-2 pb-2 flex gap-1">
-        <DropdownMenu>
+        <DropdownMenu onOpenChange={handleDropdownOpenChange}>
           <DropdownMenuTrigger asChild>
-            <Button variant="outline" size="sm" className="flex-1 h-7 text-xs">
+            <Button ref={dropdownTriggerRef} variant="outline" size="sm" className="flex-1 h-7 text-xs">
               <Plus className="w-3 h-3 mr-1" />
               Add Effect
             </Button>
