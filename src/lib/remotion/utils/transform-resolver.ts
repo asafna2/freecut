@@ -103,8 +103,6 @@ export function toTransformStyle(
     transformOrigin: 'center center',
     opacity: resolved.opacity,
     borderRadius: resolved.cornerRadius > 0 ? resolved.cornerRadius : undefined,
-    // Always clip content to item bounds (WYSIWYG - matches gizmo bounds)
-    overflow: 'hidden',
     willChange: 'transform', // Hint for GPU acceleration
   };
 }

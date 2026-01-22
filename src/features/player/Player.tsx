@@ -266,7 +266,33 @@ const PlayerInner = forwardRef<PlayerRef, PlayerProps>(
 
     // State
     const [isFullscreen, setIsFullscreen] = useState(false);
+    const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
     const containerRef = useRef<HTMLDivElement>(null);
+
+    // Measure container size for scaling
+    useEffect(() => {
+      const container = containerRef.current;
+      if (!container) return;
+
+      const observer = new ResizeObserver((entries) => {
+        const entry = entries[0];
+        if (entry) {
+          setContainerSize({
+            width: entry.contentRect.width,
+            height: entry.contentRect.height,
+          });
+        }
+      });
+
+      observer.observe(container);
+      // Initial measurement
+      setContainerSize({
+        width: container.clientWidth,
+        height: container.clientHeight,
+      });
+
+      return () => observer.disconnect();
+    }, []);
     
     // Get player methods
     const player = usePlayer(durationInFrames, { loop, onEnded });
@@ -343,18 +369,46 @@ const PlayerInner = forwardRef<PlayerRef, PlayerProps>(
     return (
       <div
         ref={containerRef}
-        className={`relative bg-black overflow-hidden ${className || ''}`}
+        className={`relative bg-black ${className || ''}`}
         style={{
-          width,
-          height,
           ...style,
+          overflow: 'hidden',
         }}
         data-player-container
       >
-        {/* Video content */}
-        <div className="absolute inset-0 flex items-center justify-center">
-          {children}
-        </div>
+        {/* Video content - canvas rendered at native size, scaled to fit via CSS */}
+        {(() => {
+          const scale = containerSize.width > 0 && containerSize.height > 0
+            ? Math.min(containerSize.width / width, containerSize.height / height)
+            : 1;
+          const scaledWidth = width * scale;
+          const scaledHeight = height * scale;
+          return (
+            <div
+              style={{
+                position: 'absolute',
+                left: '50%',
+                top: '50%',
+                width: scaledWidth,
+                height: scaledHeight,
+                marginLeft: -scaledWidth / 2,
+                marginTop: -scaledHeight / 2,
+                overflow: 'hidden',
+              }}
+            >
+              <div
+                style={{
+                  width,
+                  height,
+                  transform: `scale(${scale})`,
+                  transformOrigin: 'top left',
+                }}
+              >
+                {children}
+              </div>
+            </div>
+          );
+        })()}
         
         {/* Controls overlay */}
         {controls && (

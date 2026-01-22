@@ -1,5 +1,4 @@
 import { useRef, useEffect, useLayoutEffect, useState, useMemo, useCallback, memo } from 'react';
-import { useShallow } from 'zustand/react/shallow';
 import { Player, type PlayerRef } from '@/features/player';
 import { usePlaybackStore } from '@/features/preview/stores/playback-store';
 import { useTimelineStore } from '@/features/timeline/stores/timeline-store';
@@ -10,8 +9,28 @@ import { GizmoOverlay } from './gizmo-overlay';
 import type { RemotionInputProps } from '@/types/export';
 import { isMarqueeJustFinished } from '@/hooks/use-marquee-selection';
 
+// GPU rendering imports
+import { GPUVideoPreview, BufferedGPUPreview } from '@/features/gpu/components';
+
 // Preload media files ahead of the playhead to reduce buffering
 const PRELOAD_AHEAD_SECONDS = 5;
+
+// GPU rendering mode:
+// - 'off': Always use HTML5 video (current behavior, most stable)
+// - 'scrubbing': GPU for paused/scrubbing, HTML5 for playback
+// - 'always': Always use GPU (slow without buffering)
+// - 'buffered': WASM-powered buffered GPU playback (experimental)
+//
+// 'buffered' mode uses a Rust/WASM ring buffer with A/V sync for smooth
+// GPU-accelerated playback. This enables effects during playback.
+//
+// GPU playback is slow without pre-rendered frame cache. HTML5 video uses
+// browser's native decoder which is optimized. GPU path is for:
+// - Frame-accurate scrubbing (when paused)
+// - Export rendering
+// - Effects that CSS can't do (LUTs, GPU blur, blend modes)
+// Change this value to switch GPU rendering mode
+const GPU_MODE = 'off' as 'off' | 'scrubbing' | 'always' | 'buffered';
 
 interface VideoPreviewProps {
   project: {
@@ -173,9 +192,9 @@ export const VideoPreview = memo(function VideoPreview({ project, containerSize 
 
   // Granular selectors - avoid subscribing to currentFrame here to prevent re-renders
   const fps = useTimelineStore((s) => s.fps);
-  const tracks = useTimelineStore(useShallow((s) => s.tracks));
-  const items = useTimelineStore(useShallow((s) => s.items));
-  const transitions = useTimelineStore(useShallow((s) => s.transitions));
+  const tracks = useTimelineStore((s) => s.tracks);
+  const items = useTimelineStore((s) => s.items);
+  const transitions = useTimelineStore((s) => s.transitions);
   const zoom = usePlaybackStore((s) => s.zoom);
 
   // Custom Player integration (hook handles bidirectional sync)
@@ -305,6 +324,10 @@ export const VideoPreview = memo(function VideoPreview({ project, containerSize 
   const tracksFingerprint = useMemo(() => {
     return resolvedTracks.map(track => ({
       id: track.id,
+      order: track.order,
+      visible: track.visible,
+      solo: track.solo,
+      muted: track.muted,
       items: track.items.map(item => {
         const src = 'src' in item ? item.src : undefined;
         return {
@@ -499,7 +522,7 @@ export const VideoPreview = memo(function VideoPreview({ project, containerSize 
           <div
             ref={setPlayerContainerRefCallback}
             data-player-container
-            className="relative overflow-hidden shadow-2xl"
+            className="relative shadow-2xl"
             style={{
               width: `${playerSize.width}px`,
               height: `${playerSize.height}px`,
@@ -522,22 +545,63 @@ export const VideoPreview = memo(function VideoPreview({ project, containerSize 
               </div>
             )}
 
-            <Player
-              ref={playerRef}
-              durationInFrames={totalFrames}
-              fps={fps}
-              autoPlay={false}
-              loop={false}
-              controls={false}
-              style={{
-                width: '100%',
-                height: '100%',
-              }}
-              onFrameChange={handleFrameChange}
-              onPlayStateChange={handlePlayStateChange}
-            >
-              <MainComposition {...inputProps} />
-            </Player>
+            {/* GPU mode: 'always' = GPU only, 'scrubbing' = GPU when paused, 'buffered' = WASM buffered, 'off' = HTML5 only */}
+            {GPU_MODE === 'buffered' ? (
+              // WASM-buffered GPU playback (experimental)
+              (() => {
+                const videoItems = items.filter((item) => item.type === 'video');
+                const firstVideo = videoItems[0];
+                const videoSrc = firstVideo?.mediaId ? resolvedUrls.get(firstVideo.mediaId) ?? '' : '';
+                return (
+                  <BufferedGPUPreview
+                    src={videoSrc}
+                    currentFrame={usePlaybackStore.getState().currentFrame}
+                    fps={fps}
+                    width={Math.round(playerSize.width)}
+                    height={Math.round(playerSize.height)}
+                    isPlaying={usePlaybackStore.getState().isPlaying}
+                    backgroundColor={project.backgroundColor}
+                    onFrameRendered={handleFrameChange}
+                    onError={(err) => console.error('[Buffered GPU Preview]', err)}
+                  />
+                );
+              })()
+            ) : GPU_MODE === 'always' || (GPU_MODE === 'scrubbing' && !usePlaybackStore.getState().isPlaying) ? (
+              <GPUVideoPreview
+                items={items.filter((item) => item.type === 'video').map((item) => ({
+                  ...item,
+                  type: 'video' as const,
+                  src: resolvedUrls.get(item.mediaId ?? '') ?? '',
+                }))}
+                tracks={tracks}
+                currentFrame={usePlaybackStore.getState().currentFrame}
+                fps={fps}
+                width={Math.round(playerSize.width)}
+                height={Math.round(playerSize.height)}
+                backgroundColor={project.backgroundColor}
+                onFrameRendered={handleFrameChange}
+                onError={(err) => console.error('[GPU Preview]', err)}
+              />
+            ) : (
+              <Player
+                ref={playerRef}
+                durationInFrames={totalFrames}
+                fps={fps}
+                width={project.width}
+                height={project.height}
+                autoPlay={false}
+                loop={false}
+                controls={false}
+                style={{
+                  width: '100%',
+                  height: '100%',
+                }}
+                onFrameChange={handleFrameChange}
+                onPlayStateChange={handlePlayStateChange}
+              >
+                <MainComposition {...inputProps} />
+              </Player>
+            )}
           </div>
 
           <GizmoOverlay

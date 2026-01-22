@@ -1,10 +1,10 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { AbsoluteFill, interpolate } from '@/features/player/composition';
+import { AbsoluteFill, interpolate, useSequenceContext } from '@/features/player/composition';
 import { Rect, Circle, Triangle, Ellipse, Star, Polygon, Heart } from '@/lib/shapes';
 import { useGizmoStore } from '@/features/preview/stores/gizmo-store';
 import { usePlaybackStore } from '@/features/preview/stores/playback-store';
 import { useDebugStore } from '@/features/editor/stores/debug-store';
-import { useVideoConfig, useCurrentFrame, useIsPlaying } from '../hooks/use-remotion-compat';
+import { useVideoConfig, useIsPlaying } from '../hooks/use-remotion-compat';
 import type { TimelineItem, VideoItem, TextItem, ShapeItem } from '@/types/timeline';
 import type { TransformProperties } from '@/types/transform';
 import { DebugOverlay } from './debug-overlay';
@@ -19,6 +19,7 @@ import {
   getSafeTrimBefore,
   DEFAULT_SPEED,
 } from '@/features/timeline/utils/source-calculations';
+import { useVideoSourcePool } from '@/features/player/video/VideoSourcePoolContext';
 
 /** Mask information passed from composition to items */
 export interface MaskInfo {
@@ -40,10 +41,12 @@ const videoAudioContexts = new WeakMap<HTMLVideoElement, AudioContext>();
  */
 function useVideoAudioVolume(item: VideoItem & { _sequenceFrameOffset?: number }, muted: boolean): number {
   const { fps } = useVideoConfig();
-  const sequenceFrame = useCurrentFrame();
+  // Get local frame from Sequence context (0-based within this Sequence)
+  const sequenceContext = useSequenceContext();
+  const sequenceFrame = sequenceContext?.localFrame ?? 0;
 
   // Adjust frame for shared Sequences (split clips)
-  // In a shared Sequence, useCurrentFrame() returns frame relative to the shared Sequence start,
+  // In a shared Sequence, localFrame is relative to the shared Sequence start,
   // not relative to this specific item. _sequenceFrameOffset corrects this.
   const frame = sequenceFrame - (item._sequenceFrameOffset ?? 0);
 
@@ -134,34 +137,198 @@ function isGifUrl(url: string): boolean {
 }
 
 /**
- * Native HTML5 video component for preview mode.
- * Uses native video element instead of Remotion's OffthreadVideo to avoid
- * dependency on Remotion's SharedAudioContext.
+ * Native HTML5 video component for preview mode using VideoSourcePool.
+ * Uses pooled video elements instead of creating new ones per clip.
+ * Split clips from the same source share video elements for efficiency.
  */
 const NativePreviewVideo: React.FC<{
+  itemId: string;
   src: string;
   safeTrimBefore: number;
   playbackRate: number;
   audioVolume: number;
   onError: (error: Error) => void;
   containerRef: React.RefObject<HTMLDivElement | null>;
-}> = ({ src, safeTrimBefore, playbackRate, audioVolume, onError, containerRef }) => {
-  const frame = useCurrentFrame();
+}> = ({ itemId, src, safeTrimBefore, playbackRate, audioVolume, onError, containerRef }) => {
+  // Get local frame from Sequence context (not global frame from Clock)
+  // The Sequence provides localFrame which is 0-based within this sequence
+  const sequenceContext = useSequenceContext();
+  const frame = sequenceContext?.localFrame ?? 0;
   const { fps } = useVideoConfig();
-  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const pool = useVideoSourcePool();
+  const elementRef = useRef<HTMLVideoElement | null>(null);
   const lastSyncTimeRef = useRef<number>(Date.now());
   const needsInitialSyncRef = useRef<boolean>(true);
   const lastFrameRef = useRef<number>(-1);
+  const [isReady, setIsReady] = useState(false);
 
   // Get playing state from our clock
   const isPlaying = useIsPlaying();
 
   // Calculate target time in the source video
-  const targetTime = (safeTrimBefore / fps) + (frame / fps);
+  // safeTrimBefore is in SOURCE frames (where playback starts in the source)
+  // frame is in TIMELINE frames (current position within the Sequence)
+  // For seeking, we need: sourceStart + localFrame * speed
+  // The playbackRate affects how many source frames we advance per timeline frame
+  const targetTime = (safeTrimBefore / fps) + (frame * playbackRate / fps);
+
+  // DEBUG mode (set to false for production)
+  const DEBUG = false;
+  const shortId = itemId?.slice(0, 8) ?? 'no-id';
+
+  // Acquire element from pool on mount
+  useEffect(() => {
+    // Guard: itemId and src are required
+    if (!itemId || !src) {
+      console.error('[NativePreviewVideo] Missing itemId or src');
+      return;
+    }
+
+    if (DEBUG) console.log(`[NativePreviewVideo ${shortId}] acquiring element for:`, src);
+
+    // Ensure source is preloaded
+    pool.preloadSource(src).catch((error) => {
+      console.warn(`[NativePreviewVideo] Failed to preload ${src}:`, error);
+    });
+
+    // Acquire element for this clip
+    const element = pool.acquireForClip(itemId, src);
+    if (!element) {
+      console.error(`[NativePreviewVideo] Failed to acquire element for ${itemId}`);
+      return;
+    }
+
+    if (DEBUG) console.log(`[NativePreviewVideo ${shortId}] acquired:`, element.readyState);
+
+    // CRITICAL: Unmute video element immediately after acquisition
+    // Pool creates elements muted, and we need audio to work.
+    // This must happen here (not just in volume effect) because when crossing
+    // split boundaries, itemId changes causing this effect to re-run, but
+    // the volume effect won't re-run if audioVolume hasn't changed.
+    element.muted = false;
+
+    // Also resume AudioContext if this element was previously connected
+    // (e.g., when crossing split boundary and reusing the same video element)
+    if (connectedVideoElements.has(element)) {
+      const audioContext = videoAudioContexts.get(element);
+      if (audioContext?.state === 'suspended') {
+        audioContext.resume();
+      }
+    }
+
+    // Pause immediately - will be played based on isPlaying state
+    element.pause();
+    elementRef.current = element;
+
+    // Set up event listeners
+    const handleCanPlay = () => {
+      if (DEBUG) console.log(`[NativePreviewVideo ${shortId}] canplay:`, element.readyState);
+      setIsReady(true);
+    };
+    const handleSeeked = () => {
+      if (DEBUG) console.log(`[NativePreviewVideo ${shortId}] seeked:`, element.currentTime);
+      if (element.readyState >= 3) {
+        setIsReady(true);
+      }
+    };
+    const handleError = () => {
+      const error = new Error(`Video error: ${element.error?.message || 'Unknown'}`);
+      onError(error);
+    };
+    // Prevent black frames when video reaches its natural end
+    // Seek back slightly to show the last frame
+    const handleEnded = () => {
+      if (DEBUG) console.log(`[NativePreviewVideo ${shortId}] ended, seeking to last frame`);
+      if (element.duration && element.duration > 0.1) {
+        element.currentTime = element.duration - 0.05;
+      }
+    };
+
+    element.addEventListener('canplay', handleCanPlay);
+    element.addEventListener('seeked', handleSeeked);
+    element.addEventListener('error', handleError);
+    element.addEventListener('ended', handleEnded);
+
+    // Mount element into container
+    const container = containerRef.current;
+    if (container && element.parentElement !== container) {
+      element.style.width = '100%';
+      element.style.height = '100%';
+      element.style.objectFit = 'contain';
+      element.style.display = 'block';
+      element.style.position = 'absolute';
+      element.style.top = '0';
+      element.style.left = '0';
+      element.id = `pooled-video-${itemId}`;
+      container.appendChild(element);
+
+      if (DEBUG) {
+        console.log(`[NativePreviewVideo ${shortId}] mounted to container`);
+      }
+    }
+
+    // Seek to initial position - need to calculate here since deps don't include targetTime
+    // Use playbackRate to correctly calculate source position for speed-adjusted clips
+    const initialTargetTime = (safeTrimBefore / fps) + (frame * playbackRate / fps);
+    if (DEBUG) {
+      console.log(`[NativePreviewVideo ${shortId}] initial seek to:`, initialTargetTime.toFixed(3),
+        'safeTrimBefore:', safeTrimBefore, 'frame:', frame, 'playbackRate:', playbackRate,
+        'fps:', fps,
+        'videoDuration:', element.duration?.toFixed(3),
+        'seekPastEnd:', initialTargetTime > element.duration);
+    }
+    // Clamp to video duration to avoid seeking past end
+    const clampedTime = Math.min(initialTargetTime, (element.duration || Infinity) - 0.1);
+    element.currentTime = clampedTime;
+
+    // Force a frame render by doing a quick play/pause - some browsers need this
+    // to actually display the video frame after seeking
+    const forceFrameRender = () => {
+      if (element.paused && element.readyState >= 2) {
+        element.play().then(() => {
+          element.pause();
+          if (DEBUG) console.log(`[NativePreviewVideo ${shortId}] forced frame render`);
+        }).catch(() => {
+          // Ignore - autoplay might be blocked
+        });
+      }
+    };
+
+    // Try after a short delay to allow the seek to complete
+    setTimeout(forceFrameRender, 100);
+
+    // Check if already ready
+    if (element.readyState >= 3) {
+      setIsReady(true);
+    }
+
+    return () => {
+      element.removeEventListener('canplay', handleCanPlay);
+      element.removeEventListener('seeked', handleSeeked);
+      element.removeEventListener('error', handleError);
+      element.removeEventListener('ended', handleEnded);
+
+      // Pause and remove from DOM
+      element.pause();
+      if (element.parentElement) {
+        element.parentElement.removeChild(element);
+      }
+
+      // Release back to pool
+      pool.releaseClip(itemId);
+      elementRef.current = null;
+      setIsReady(false);
+
+      if (DEBUG) console.log(`[NativePreviewVideo ${shortId}] released`);
+    };
+    // Note: frame, fps, targetTime intentionally NOT in deps - we only want to acquire once on mount
+    // Ongoing seeking is handled by the separate sync effect
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [itemId, src, pool, onError, containerRef, shortId]);
 
   // Sync video playback with timeline
   useEffect(() => {
-    const video = videoRef.current;
+    const video = elementRef.current;
     if (!video) return;
 
     // Set playback rate
@@ -171,15 +338,55 @@ const NativePreviewVideo: React.FC<{
     const frameChanged = frame !== lastFrameRef.current;
     lastFrameRef.current = frame;
 
+    // Check if we're in premount phase (frame < 0 means clip hasn't started yet)
+    // During premount, we should NOT play - just prepare the video at the start position
+    const isPremounted = frame < 0;
+
     // Guard: Only seek if video has enough data loaded
     const canSeek = video.readyState >= 1;
 
-    if (isPlaying) {
+    // During premount, seek to the start of the clip (frame 0 position), not negative time
+    // This ensures the video is ready at the correct starting frame when playback reaches this clip
+    const effectiveTargetTime = isPremounted
+      ? (safeTrimBefore / fps) // Start position of this clip in source video
+      : targetTime;
+
+    // Clamp target time to video duration to prevent seeking past the end
+    // This prevents black frames when the clip extends to the edge of the source
+    const videoDuration = video.duration || Infinity;
+    const clampedTargetTime = Math.min(Math.max(0, effectiveTargetTime), videoDuration - 0.05);
+
+    // DEBUG: Log when approaching end of video
+    if (DEBUG && targetTime > videoDuration - 1) {
+      console.log(`[NativePreviewVideo ${shortId}] NEAR END:`, {
+        targetTime: targetTime.toFixed(2),
+        videoDuration: videoDuration.toFixed(2),
+        clampedTargetTime: clampedTargetTime.toFixed(2),
+        frame,
+        playbackRate,
+        safeTrimBefore,
+        fps,
+      });
+    }
+
+    // During premount, always pause - don't play until clip is actually visible
+    if (isPremounted) {
+      if (!video.paused) {
+        video.pause();
+      }
+      // Seek to start position so video is ready when playback reaches this clip
+      if (canSeek && Math.abs(video.currentTime - clampedTargetTime) > 0.1) {
+        video.currentTime = clampedTargetTime;
+      }
+      return;
+    }
+
+    if (isPlaying && isReady) {
       const currentTime = video.currentTime;
       const now = Date.now();
 
       // Calculate drift direction: positive = video ahead, negative = video behind
-      const drift = currentTime - targetTime;
+      const drift = currentTime - clampedTargetTime;
       const timeSinceLastSync = now - lastSyncTimeRef.current;
 
       // Determine if we need to seek:
@@ -190,7 +397,7 @@ const NativePreviewVideo: React.FC<{
 
       if (needsSync && canSeek) {
         try {
-          video.currentTime = targetTime;
+          video.currentTime = clampedTargetTime;
           lastSyncTimeRef.current = now;
           needsInitialSyncRef.current = false;
         } catch {
@@ -212,24 +419,35 @@ const NativePreviewVideo: React.FC<{
       // Only seek when paused if frame actually changed (user is scrubbing)
       if (frameChanged && canSeek) {
         try {
-          video.currentTime = targetTime;
+          video.currentTime = clampedTargetTime;
         } catch {
           // Seek failed - video may not be ready yet
         }
       }
     }
-  }, [frame, fps, isPlaying, playbackRate, safeTrimBefore, targetTime]);
+  }, [frame, fps, isPlaying, isReady, playbackRate, safeTrimBefore, targetTime]);
 
   // Update volume using Web Audio API for values > 1
   useEffect(() => {
-    const video = videoRef.current;
+    const video = elementRef.current;
     if (!video) return;
+
+    // CRITICAL: Unmute video element - pool creates them muted
+    // This must happen regardless of volume path (native or Web Audio)
+    video.muted = false;
 
     // Check if already connected to Web Audio API
     if (connectedVideoElements.has(video)) {
       const gainNode = videoGainNodes.get(video);
+      const audioContext = videoAudioContexts.get(video);
       if (gainNode) {
         gainNode.gain.value = audioVolume;
+      }
+      // CRITICAL: Resume AudioContext if suspended - browser autoplay policy
+      // After split, the component remounts but the video element and AudioContext
+      // may be reused. The AudioContext can be suspended and needs to be resumed.
+      if (audioContext?.state === 'suspended') {
+        audioContext.resume();
       }
       return;
     }
@@ -262,17 +480,34 @@ const NativePreviewVideo: React.FC<{
     }
   }, [audioVolume]);
 
+  // Guard: itemId is required for rendering
+  if (!itemId) {
+    return <div style={{ width: '100%', height: '100%', backgroundColor: '#1a1a1a' }} />;
+  }
+
+  // DEBUG: Give container a unique ID so we can verify in DOM
+  const containerId = `video-container-${itemId}`;
+
+  // When premounted, frame will be negative. Hide the video until it's visible.
+  // frame < 0 means we're premounted but not yet at the clip's start
+  const isVisible = frame >= 0;
+
   return (
-    <div ref={containerRef} style={{ width: '100%', height: '100%' }}>
-      <video
-        ref={videoRef}
-        src={src}
-        preload="auto"
-        muted={false}
-        playsInline
-        onError={(e) => onError(new Error((e.target as HTMLVideoElement)?.error?.message || 'Video error'))}
-        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-      />
+    <div
+      ref={containerRef}
+      id={containerId}
+      data-item-id={itemId}
+      style={{
+        width: '100%',
+        height: '100%',
+        position: 'relative',
+        // Hide when premounted (frame < 0), show when visible
+        visibility: isVisible ? 'visible' : 'hidden',
+        // border: '5px solid lime', // DEBUG: make container visible
+        // backgroundColor: 'rgba(255,0,0,0.3)', // DEBUG: red tint
+      }}
+    >
+      {/* Video element is mounted here by the useEffect */}
     </div>
   );
 };
@@ -394,10 +629,11 @@ const VideoContent: React.FC<{
     );
   }
 
-  // Use native HTML5 video - no Remotion dependency
+  // Use native HTML5 video with VideoSourcePool for element reuse
   // Export uses Canvas + WebCodecs (client-render-engine.ts), not Remotion's renderer
   return (
     <NativePreviewVideo
+      itemId={item.id}
       src={item.src!}
       safeTrimBefore={safeTrimBefore}
       playbackRate={playbackRate}
@@ -749,6 +985,7 @@ export const Item = React.memo<ItemProps>(({ item, muted = false, masks = [] }) 
   const showDebugOverlay = useDebugStore((s) => s.showVideoDebugOverlay);
 
   if (item.type === 'video') {
+
     // Guard against missing src (media resolution failed)
     if (!item.src) {
       return (
@@ -937,7 +1174,7 @@ export const Item = React.memo<ItemProps>(({ item, muted = false, masks = [] }) 
         style={{
           width: '100%',
           height: '100%',
-          objectFit: 'cover'
+          objectFit: 'contain'
         }}
       />
     );

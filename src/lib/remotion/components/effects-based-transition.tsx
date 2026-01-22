@@ -1,6 +1,6 @@
 import React, { useMemo, useRef, useEffect } from 'react';
-import { AbsoluteFill, Sequence, interpolate, spring } from '@/features/player/composition';
-import { useCurrentFrame, useVideoConfig, useIsPlaying } from '../hooks/use-remotion-compat';
+import { AbsoluteFill, Sequence, interpolate, spring, useSequenceContext } from '@/features/player/composition';
+import { useVideoConfig, useIsPlaying } from '../hooks/use-remotion-compat';
 import type { VideoItem, ImageItem, AdjustmentItem } from '@/types/timeline';
 import type { Transition, WipeDirection, SlideDirection, FlipDirection } from '@/types/transition';
 import { resolveTransform, toTransformStyle, getSourceDimensions } from '../utils/transform-resolver';
@@ -25,13 +25,16 @@ const NativeTransitionVideo: React.FC<{
   playbackRate: number;
   fps: number;
 }> = ({ src, sourceStart, playbackRate, fps }) => {
-  const frame = useCurrentFrame();
+  // Get local frame from Sequence context (0-based within this Sequence)
+  const sequenceContext = useSequenceContext();
+  const frame = sequenceContext?.localFrame ?? 0;
   const isPlaying = useIsPlaying();
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const lastFrameRef = useRef<number>(-1);
 
   // Calculate target time in the source video
-  const targetTime = (sourceStart / fps) + (frame / fps);
+  // playbackRate affects how many source frames we advance per timeline frame
+  const targetTime = (sourceStart / fps) + (frame * playbackRate / fps);
 
   // Sync video playback with timeline
   useEffect(() => {
@@ -71,7 +74,7 @@ const NativeTransitionVideo: React.FC<{
       preload="auto"
       muted
       playsInline
-      style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+      style={{ width: '100%', height: '100%', objectFit: 'contain' }}
     />
   );
 };
@@ -266,7 +269,9 @@ const ClipContent: React.FC<{
   /** Debug label for logging */
   debugLabel?: string;
 }> = ({ clip, sourceStartOffset = 0, canvasWidth, canvasHeight, fps, adjustmentLayers, clipGlobalFrom, debugLabel }) => {
-  const frame = useCurrentFrame();
+  // Get local frame from Sequence context (0-based within this Sequence)
+  const sequenceContext = useSequenceContext();
+  const frame = sequenceContext?.localFrame ?? 0;
 
   // Convert local frame to global frame for adjustment layer timing
   const globalFrame = frame + clipGlobalFrom;
@@ -413,7 +418,7 @@ const ClipContent: React.FC<{
           style={{
             width: '100%',
             height: '100%',
-            objectFit: 'cover',
+            objectFit: 'contain',
           }}
           alt=""
         />
@@ -504,8 +509,10 @@ const TransitionOverlay: React.FC<{
   canvasHeight: number;
   fps: number;
 }> = ({ transition, isOutgoing, children, zIndex, canvasWidth, canvasHeight, fps }) => {
-  const frame = useCurrentFrame();
-  // frame is already local to the parent Sequence (0 to durationInFrames - 1)
+  // Get local frame from Sequence context (0-based within this Sequence)
+  const sequenceContext = useSequenceContext();
+  const frame = sequenceContext?.localFrame ?? 0;
+  // frame is local to the parent Sequence (0 to durationInFrames - 1)
   // Calculate progress based on timing: linear or spring
   const rawProgress = useMemo(() => {
     if (transition.timing === 'spring') {
