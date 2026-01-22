@@ -17,7 +17,25 @@ export type DataType = 'color' | 'alpha' | 'number' | 'vec2' | 'vec4' | 'texture
 /**
  * Parameter types for node controls
  */
-export type ParamType = 'number' | 'boolean' | 'color' | 'select';
+export type ParamType = 'number' | 'boolean' | 'color' | 'select' | 'string';
+
+/**
+ * Blend modes for compositing
+ */
+export type BlendMode =
+  | 'normal'
+  | 'multiply'
+  | 'screen'
+  | 'overlay'
+  | 'add'
+  | 'subtract'
+  | 'difference'
+  | 'darken'
+  | 'lighten'
+  | 'color-dodge'
+  | 'color-burn'
+  | 'hard-light'
+  | 'soft-light';
 
 /**
  * Input socket definition
@@ -41,6 +59,7 @@ export interface NodeOutput {
  * Parameter definition for user-adjustable values
  */
 export interface ParamDef {
+  name?: string;
   type: ParamType;
   value: unknown;
   default: unknown;
@@ -72,12 +91,16 @@ export interface Connection {
  * WGSL shader fragment for a node
  */
 export interface WGSLFragment {
-  /** Uniform declarations */
-  uniforms?: string;
-  /** Main shader function */
-  code: string;
+  /** Uniform declarations (string format for legacy nodes) */
+  uniforms?: string | Record<string, string>;
+  /** Main shader code / function body */
+  code?: string;
+  /** Main shader code (alternative name) */
+  main?: string;
+  /** Helper functions to include */
+  functions?: string;
   /** Entry point function name */
-  entryPoint: string;
+  entryPoint?: string;
 }
 
 /**
