@@ -22,3 +22,6 @@ export * from './media-source-manager';
 
 // Prefetch
 export * from './prefetch';
+
+// GPU Texture Import
+export * from './texture-import';
