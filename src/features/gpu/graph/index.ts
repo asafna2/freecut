@@ -28,5 +28,8 @@ export { ShaderGraphBuilder } from './shader-graph';
 // Node registry
 export { NodeRegistry, globalRegistry } from './node-registry';
 
+// Graph compiler
+export { GraphCompiler, globalCompiler } from './compiler';
+
 // Built-in nodes
 export * from './nodes';
