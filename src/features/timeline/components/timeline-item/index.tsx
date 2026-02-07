@@ -28,6 +28,7 @@ export interface TimelineItemProps {
   item: TimelineItemType;
   timelineDuration?: number;
   trackLocked?: boolean;
+  trackHidden?: boolean;
 }
 
 /**
@@ -43,7 +44,7 @@ export interface TimelineItemProps {
  * - Trim handles (start/end) for media trimming
  * - Grid snapping support
  */
-export const TimelineItem = memo(function TimelineItem({ item, timelineDuration = 30, trackLocked = false }: TimelineItemProps) {
+export const TimelineItem = memo(function TimelineItem({ item, timelineDuration = 30, trackLocked = false, trackHidden = false }: TimelineItemProps) {
   const { timeToPixels, pixelsToFrame, pixelsPerSecond } = useTimelineZoomContext();
 
   // Granular selector: only re-render when THIS item's selection state changes
@@ -608,8 +609,8 @@ export const TimelineItem = memo(function TimelineItem({ item, timelineDuration 
             left: `${visualLeft}px`,
             width: `${visualWidth}px`,
             transform: isDragging && !isAltDrag ? `translate(${dragOffset.x}px, ${dragOffset.y}px)` : undefined,
-            opacity: isDragging && !isAltDrag ? DRAG_OPACITY : trackLocked ? 0.6 : 1,
-            pointerEvents: isDragging ? 'none' : 'auto',
+            opacity: isDragging && !isAltDrag ? DRAG_OPACITY : trackHidden ? 0.3 : trackLocked ? 0.6 : 1,
+            pointerEvents: isDragging || trackHidden ? 'none' : 'auto',
             zIndex: isBeingDragged ? 50 : undefined,
             contentVisibility: 'auto',
             containIntrinsicSize: `0 ${CLIP_HEIGHT}px`,

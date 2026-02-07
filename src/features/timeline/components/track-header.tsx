@@ -1,6 +1,6 @@
 import { useEffect, useRef, memo } from 'react';
 import { Button } from '@/components/ui/button';
-import { Eye, Lock, GripVertical, Volume2, VolumeX, Radio } from 'lucide-react';
+import { Eye, EyeOff, Lock, GripVertical, Volume2, VolumeX, Radio } from 'lucide-react';
 import type { TimelineTrack } from '@/types/timeline';
 import { useTrackDrag, trackDragOffsetRef } from '../hooks/use-track-drag';
 import { useSelectionStore } from '@/features/editor/stores/selection-store';
@@ -141,9 +141,11 @@ export const TrackHeader = memo(function TrackHeader({
           }}
           onMouseDown={(e) => e.stopPropagation()}
         >
-          <Eye
-            className={`w-1 h-1 ${!track.visible ? 'opacity-30' : ''}`}
-          />
+          {track.visible ? (
+            <Eye className="w-1 h-1" />
+          ) : (
+            <EyeOff className="w-1 h-1 opacity-50" />
+          )}
         </Button>
 
         {/* Audio Mute Button */}

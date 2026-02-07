@@ -19,6 +19,7 @@ import { Trash2 } from 'lucide-react';
 export interface TransitionItemProps {
   transition: Transition;
   trackHeight: number;
+  trackHidden?: boolean;
 }
 
 /**
@@ -34,6 +35,7 @@ const EDGE_HOVER_ZONE = 6;
 export const TransitionItem = memo(function TransitionItem({
   transition,
   trackHeight,
+  trackHidden = false,
 }: TransitionItemProps) {
   const { frameToPixels } = useTimelineZoomContext();
   const fps = useTimelineStore((s: TimelineState) => s.fps);
@@ -252,6 +254,8 @@ export const TransitionItem = memo(function TransitionItem({
             top: `${overlayTop}px`,
             height: `${overlayHeight}px`,
             zIndex: isResizing ? 50 : 10,
+            opacity: trackHidden ? 0.3 : undefined,
+            pointerEvents: trackHidden ? 'none' : undefined,
             cursor,
           }}
           onMouseDown={handleMouseDown}

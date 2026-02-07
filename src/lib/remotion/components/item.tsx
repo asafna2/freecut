@@ -489,8 +489,8 @@ const NativePreviewVideo: React.FC<{
         width: '100%',
         height: '100%',
         position: 'relative',
-        // Hide when premounted (frame < 0), show when visible
-        visibility: isVisible ? 'visible' : 'hidden',
+        // Hide when premounted (frame < 0), otherwise inherit parent visibility
+        visibility: isVisible ? undefined : 'hidden',
         // border: '5px solid lime', // DEBUG: make container visible
         // backgroundColor: 'rgba(255,0,0,0.3)', // DEBUG: red tint
       }}

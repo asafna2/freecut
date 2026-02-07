@@ -595,14 +595,14 @@ export const TimelineTrack = memo(function TimelineTrack({ track }: TimelineTrac
             </div>
           ))}
 
-          {/* Render all items for this track - always visible in timeline UI */}
+          {/* Render all items for this track - dimmed when track is hidden */}
           {trackItems.map((item) => (
-            <TimelineItem key={item.id} item={item} timelineDuration={30} trackLocked={track.locked} />
+            <TimelineItem key={item.id} item={item} timelineDuration={30} trackLocked={track.locked} trackHidden={!track.visible} />
           ))}
 
           {/* Render transitions for this track */}
           {trackTransitions.map((transition) => (
-            <TransitionItem key={transition.id} transition={transition} trackHeight={track.height} />
+            <TransitionItem key={transition.id} transition={transition} trackHeight={track.height} trackHidden={!track.visible} />
           ))}
 
           {/* Locked track overlay indicator */}
