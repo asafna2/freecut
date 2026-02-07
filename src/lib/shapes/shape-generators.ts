@@ -193,25 +193,40 @@ export function makePolygon(options: {
 
 /**
  * Generate a heart path
- * The heart width is approximately 1.1x the height
+ * Port of Remotion's makeHeart algorithm using 7 cubic bezier segments.
+ * The heart width equals height * 1.1.
  */
 export function makeHeart(options: { height: number }): ShapeResult {
   const { height } = options;
   const width = height * 1.1;
 
-  // Heart shape using bezier curves
-  const cx = width / 2;
-  const top = height * 0.3;
-  const bottom = height;
+  const bottomControlPointX = (23 / 110) * width;
+  const bottomControlPointY = (69 / 100) * height;
+  const bottomLeftControlPointY = (60 / 100) * height;
+  const topLeftControlPoint = (13 / 100) * height;
+  const topBezierWidth = (29 / 110) * width;
+  const topRightControlPointX = (15 / 110) * width;
+  const innerControlPointX = (5 / 110) * width;
+  const innerControlPointY = (7 / 100) * height;
+  const depth = (17 / 100) * height;
 
-  const path =
-    `M ${cx} ${top} ` +
-    // Left side
-    `C ${cx * 0.3} ${top * 0.3}, 0 ${top}, 0 ${height * 0.45} ` +
-    `C 0 ${height * 0.65}, ${cx * 0.5} ${height * 0.85}, ${cx} ${bottom} ` +
-    // Right side
-    `C ${cx * 1.5} ${height * 0.85}, ${width} ${height * 0.65}, ${width} ${height * 0.45} ` +
-    `C ${width} ${top}, ${cx * 1.7} ${top * 0.3}, ${cx} ${top} Z`;
+  const path = [
+    // Start at bottom tip
+    `M ${width / 2} ${height}`,
+    // Bottom-left curve up to left side
+    `C ${width / 2 - bottomControlPointX} ${bottomControlPointY}, 0 ${bottomLeftControlPointY}, 0 ${height / 4}`,
+    // Left lobe: up to top-left peak
+    `C 0 ${topLeftControlPoint}, ${width / 4 - topBezierWidth / 2} 0, ${width / 4} 0`,
+    // Left lobe inner: down to center dip
+    `C ${width / 4 + topBezierWidth / 2} 0, ${width / 2 - innerControlPointX} ${innerControlPointY}, ${width / 2} ${depth}`,
+    // Right lobe inner: up from center dip to top-right peak
+    `C ${width / 2 + innerControlPointX} ${innerControlPointY}, ${width / 2 + topRightControlPointX} 0, ${(width / 4) * 3} 0`,
+    // Right lobe: from top-right peak down to right side
+    `C ${(width / 4) * 3 + topBezierWidth / 2} 0, ${width} ${topLeftControlPoint}, ${width} ${height / 4}`,
+    // Bottom-right curve down to bottom tip
+    `C ${width} ${bottomLeftControlPointY}, ${width / 2 + bottomControlPointX} ${bottomControlPointY}, ${width / 2} ${height}`,
+    'Z',
+  ].join(' ');
 
   return { path, width, height };
 }
