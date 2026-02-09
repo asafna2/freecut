@@ -49,10 +49,16 @@ interface VideoAudioSegment {
   muted: boolean;
   audioFadeIn: number;
   audioFadeOut: number;
+  crossfadeFadeIn?: number;
+  crossfadeFadeOut?: number;
 }
 
 function getVideoTrimBefore(item: EnrichedVideoItem): number {
   return item.sourceStart ?? item.trimStart ?? item.offset ?? 0;
+}
+
+function hasExplicitTrimStart(item: EnrichedVideoItem): boolean {
+  return item.sourceStart !== undefined || item.trimStart !== undefined || item.offset !== undefined;
 }
 
 function isContinuousAudioTransition(left: EnrichedVideoItem, right: EnrichedVideoItem): boolean {
@@ -68,14 +74,25 @@ function isContinuousAudioTransition(left: EnrichedVideoItem, right: EnrichedVid
   if (left.originId && right.originId && left.originId !== right.originId) return false;
 
   const expectedRightFrom = left.from + left.durationInFrames;
-  if (right.from !== expectedRightFrom) return false;
+  if (Math.abs(right.from - expectedRightFrom) > 2) return false;
 
   const leftTrim = getVideoTrimBefore(left);
   const rightTrim = getVideoTrimBefore(right);
-  const expectedRightTrim = leftTrim + Math.round(left.durationInFrames * leftSpeed);
+  const computedLeftSourceEnd = leftTrim + Math.round(left.durationInFrames * leftSpeed);
+  const storedLeftSourceEnd = left.sourceEnd;
+  const computedContinuous = Math.abs(rightTrim - computedLeftSourceEnd) <= 2;
+  const storedContinuous = storedLeftSourceEnd !== undefined
+    ? Math.abs(rightTrim - storedLeftSourceEnd) <= 2
+    : false;
 
-  // Allow tiny rounding drift from split/rate math.
-  return Math.abs(rightTrim - expectedRightTrim) <= 1;
+  // Accept either computed or stored continuity - stored sourceEnd can become stale
+  // after downstream trim/rate edits, while computed value remains reliable.
+  if (computedContinuous || storedContinuous) return true;
+
+  // Legacy fallback: when right split metadata is missing explicit trim start,
+  // but clips are adjacent and from the same lineage/source, treat as continuous.
+  const rightMissingTrimStart = !hasExplicitTrimStart(right);
+  return rightMissingTrimStart;
 }
 
 /** Props for MaskDefinitions component */
@@ -450,6 +467,43 @@ export const MainComposition: React.FC<CompositionInputProps> = ({ tracks, trans
     const clipsById = new Map(videoAudioItems.map((item) => [item.id, item]));
     const resolvedWindows = resolveTransitionWindows(transitions, clipsById);
     const extensionByClipId = new Map<string, ClipAudioExtension>();
+    const resolvedTrimBeforeById = new Map<string, number>();
+
+    // Build per-clip trim starts with fallback continuity repair for legacy split metadata.
+    const sortedByTrackAndTime = videoAudioItems.toSorted((a, b) => {
+      if (a.trackId !== b.trackId) return a.trackId.localeCompare(b.trackId);
+      if (a.from !== b.from) return a.from - b.from;
+      return a.id.localeCompare(b.id);
+    });
+
+    const previousByTrack = new Map<string, EnrichedVideoItem>();
+    for (const clip of sortedByTrackAndTime) {
+      const explicitTrimBefore = getVideoTrimBefore(clip);
+      let resolvedTrimBefore = explicitTrimBefore;
+
+      if (!hasExplicitTrimStart(clip)) {
+        const previous = previousByTrack.get(clip.trackId);
+        if (previous) {
+          const previousSpeed = previous.speed ?? 1;
+          const clipSpeed = clip.speed ?? 1;
+          const sameSpeed = Math.abs(previousSpeed - clipSpeed) <= 0.0001;
+          const sameMedia = (previous.mediaId && clip.mediaId && previous.mediaId === clip.mediaId)
+            || (!!previous.src && !!clip.src && previous.src === clip.src);
+          const adjacent = Math.abs(clip.from - (previous.from + previous.durationInFrames)) <= 2;
+          const sameOrigin = previous.originId && clip.originId
+            ? previous.originId === clip.originId
+            : true;
+
+          if (sameSpeed && sameMedia && adjacent && sameOrigin) {
+            const previousTrimBefore = resolvedTrimBeforeById.get(previous.id) ?? getVideoTrimBefore(previous);
+            resolvedTrimBefore = previousTrimBefore + Math.round(previous.durationInFrames * previousSpeed);
+          }
+        }
+      }
+
+      resolvedTrimBeforeById.set(clip.id, resolvedTrimBefore);
+      previousByTrack.set(clip.trackId, clip);
+    }
 
     const ensureExtension = (clipId: string): ClipAudioExtension => {
       const existing = extensionByClipId.get(clipId);
@@ -482,12 +536,18 @@ export const MainComposition: React.FC<CompositionInputProps> = ({ tracks, trans
       }
     }
 
-    const expandedSegments: VideoAudioSegment[] = [];
+    type ExpandedVideoAudioSegment = VideoAudioSegment & {
+      clip: EnrichedVideoItem;
+      beforeFrames: number;
+      afterFrames: number;
+    };
+
+    const expandedSegments: ExpandedVideoAudioSegment[] = [];
     for (const item of videoAudioItems) {
       if (!item.src) continue;
 
       const playbackRate = item.speed ?? 1;
-      const baseTrimBefore = getVideoTrimBefore(item);
+      const baseTrimBefore = resolvedTrimBeforeById.get(item.id) ?? getVideoTrimBefore(item);
       const extension = extensionByClipId.get(item.id) ?? { before: 0, after: 0 };
       const maxBeforeBySource = playbackRate > 0 ? Math.floor(baseTrimBefore / playbackRate) : 0;
       const before = Math.max(0, Math.min(extension.before, maxBeforeBySource));
@@ -496,6 +556,7 @@ export const MainComposition: React.FC<CompositionInputProps> = ({ tracks, trans
       expandedSegments.push({
         key: `video-audio-${item.id}`,
         itemId: item.id,
+        clip: item,
         src: item.src,
         from: item.from - before,
         durationInFrames: item.durationInFrames + before + after,
@@ -505,13 +566,79 @@ export const MainComposition: React.FC<CompositionInputProps> = ({ tracks, trans
         muted: item.muted || !item.trackVisible,
         audioFadeIn: before === 0 ? (item.audioFadeIn ?? 0) : 0,
         audioFadeOut: after === 0 ? (item.audioFadeOut ?? 0) : 0,
+        crossfadeFadeIn: before > 0 ? before : undefined,
+        crossfadeFadeOut: after > 0 ? after : undefined,
+        beforeFrames: before,
+        afterFrames: after,
       });
     }
 
-    return expandedSegments.toSorted((a, b) => {
+    const sortedSegments = expandedSegments.toSorted((a, b) => {
       if (a.from !== b.from) return a.from - b.from;
       return a.key.localeCompare(b.key);
     });
+
+    // Split clips can be fully continuous in source audio. Merge those boundaries
+    // into one stable segment to avoid handoff re-sync clicks/pauses between items.
+    const canMergeContinuousBoundary = (
+      left: ExpandedVideoAudioSegment,
+      right: ExpandedVideoAudioSegment
+    ): boolean => {
+      if (!isContinuousAudioTransition(left.clip, right.clip)) return false;
+      if (left.src !== right.src) return false;
+      if (Math.abs(left.playbackRate - right.playbackRate) > 0.0001) return false;
+      if (Math.abs(left.volumeDb - right.volumeDb) > 0.0001) return false;
+      if (left.muted !== right.muted) return false;
+      if (left.afterFrames !== 0 || right.beforeFrames !== 0) return false;
+
+      return true;
+    };
+
+    const mergedSegments: VideoAudioSegment[] = [];
+    let active: ExpandedVideoAudioSegment | null = null;
+
+    const toPublicSegment = (segment: ExpandedVideoAudioSegment): VideoAudioSegment => ({
+      key: segment.key,
+      itemId: segment.itemId,
+      src: segment.src,
+      from: segment.from,
+      durationInFrames: segment.durationInFrames,
+      trimBefore: segment.trimBefore,
+      playbackRate: segment.playbackRate,
+      volumeDb: segment.volumeDb,
+      muted: segment.muted,
+      audioFadeIn: segment.audioFadeIn,
+      audioFadeOut: segment.audioFadeOut,
+      crossfadeFadeIn: segment.crossfadeFadeIn,
+      crossfadeFadeOut: segment.crossfadeFadeOut,
+    });
+
+    for (const segment of sortedSegments) {
+      if (!active) {
+        active = { ...segment };
+        continue;
+      }
+
+      if (canMergeContinuousBoundary(active, segment)) {
+        const mergedEnd = segment.from + segment.durationInFrames;
+        active.durationInFrames = mergedEnd - active.from;
+        active.key = `${active.key}__${segment.clip.id}`;
+        active.audioFadeOut = segment.audioFadeOut;
+        active.crossfadeFadeOut = segment.crossfadeFadeOut;
+        active.clip = segment.clip;
+        active.afterFrames = segment.afterFrames;
+        continue;
+      }
+
+      mergedSegments.push(toPublicSegment(active));
+      active = { ...segment };
+    }
+
+    if (active) {
+      mergedSegments.push(toPublicSegment(active));
+    }
+
+    return mergedSegments;
   }, [videoAudioItems, transitions]);
 
   // Active masks: shapes with isMask: true
@@ -646,6 +773,8 @@ export const MainComposition: React.FC<CompositionInputProps> = ({ tracks, trans
                 durationInFrames={segment.durationInFrames}
                 audioFadeIn={segment.audioFadeIn}
                 audioFadeOut={segment.audioFadeOut}
+                crossfadeFadeIn={segment.crossfadeFadeIn}
+                crossfadeFadeOut={segment.crossfadeFadeOut}
               />
             </Sequence>
           );

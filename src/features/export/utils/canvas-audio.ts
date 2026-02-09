@@ -43,6 +43,7 @@ interface AudioSegment {
   volume: number;            // -60 to +12 dB
   fadeInFrames: number;
   fadeOutFrames: number;
+  useEqualPowerFades: boolean;
   speed: number;             // Playback rate
   muted: boolean;
   type: 'video' | 'audio';
@@ -94,6 +95,10 @@ function extractAudioSegments(composition: CompositionInputProps): AudioSegment[
     return item.sourceStart ?? item.trimStart ?? item.offset ?? 0;
   };
 
+  const hasExplicitTrimStart = (item: VideoItem): boolean => {
+    return item.sourceStart !== undefined || item.trimStart !== undefined || item.offset !== undefined;
+  };
+
   const isContinuousAudioTransition = (left: VideoItem, right: VideoItem): boolean => {
     const leftSpeed = left.speed ?? 1;
     const rightSpeed = right.speed ?? 1;
@@ -106,13 +111,21 @@ function extractAudioSegments(composition: CompositionInputProps): AudioSegment[
     if (left.originId && right.originId && left.originId !== right.originId) return false;
 
     const expectedRightFrom = left.from + left.durationInFrames;
-    if (right.from !== expectedRightFrom) return false;
+    if (Math.abs(right.from - expectedRightFrom) > 2) return false;
 
     const leftTrim = getVideoTrimBefore(left);
     const rightTrim = getVideoTrimBefore(right);
-    const expectedRightTrim = leftTrim + Math.round(left.durationInFrames * leftSpeed);
+    const computedLeftSourceEnd = leftTrim + Math.round(left.durationInFrames * leftSpeed);
+    const storedLeftSourceEnd = left.sourceEnd;
+    const computedContinuous = Math.abs(rightTrim - computedLeftSourceEnd) <= 2;
+    const storedContinuous = storedLeftSourceEnd !== undefined
+      ? Math.abs(rightTrim - storedLeftSourceEnd) <= 2
+      : false;
 
-    return Math.abs(rightTrim - expectedRightTrim) <= 1;
+    if (computedContinuous || storedContinuous) return true;
+
+    const rightMissingTrimStart = !hasExplicitTrimStart(right);
+    return rightMissingTrimStart;
   };
 
   for (const track of tracks) {
@@ -143,6 +156,7 @@ function extractAudioSegments(composition: CompositionInputProps): AudioSegment[
           volume: item.volume ?? 0, // dB
           fadeInFrames: item.audioFadeIn ?? 0,
           fadeOutFrames: item.audioFadeOut ?? 0,
+          useEqualPowerFades: false,
           speed: audioItem.speed ?? 1, // Playback speed from BaseTimelineItem
           muted: track.muted ?? false,
           type: 'audio',
@@ -180,11 +194,59 @@ function extractAudioSegments(composition: CompositionInputProps): AudioSegment[
     }
   }
 
-  const expandedVideoSegments: AudioSegment[] = [];
+  const resolvedTrimBeforeById = new Map<string, number>();
+  const sortableVideoEntries = Array.from(videoById.entries()).map(([id, entry]) => ({
+    id,
+    trackId: entry.trackId,
+    item: entry.item,
+  }));
+  const sortedByTrackAndTime = sortableVideoEntries.toSorted((a, b) => {
+    if (a.trackId !== b.trackId) return a.trackId.localeCompare(b.trackId);
+    if (a.item.from !== b.item.from) return a.item.from - b.item.from;
+    return a.id.localeCompare(b.id);
+  });
+
+  const previousByTrack = new Map<string, VideoItem>();
+  for (const entry of sortedByTrackAndTime) {
+    const clip = entry.item;
+    const explicitTrimBefore = getVideoTrimBefore(clip);
+    let resolvedTrimBefore = explicitTrimBefore;
+
+    if (!hasExplicitTrimStart(clip)) {
+      const previous = previousByTrack.get(entry.trackId);
+      if (previous) {
+        const previousSpeed = previous.speed ?? 1;
+        const clipSpeed = clip.speed ?? 1;
+        const sameSpeed = Math.abs(previousSpeed - clipSpeed) <= 0.0001;
+        const sameMedia = (previous.mediaId && clip.mediaId && previous.mediaId === clip.mediaId)
+          || (!!previous.src && !!clip.src && previous.src === clip.src);
+        const adjacent = Math.abs(clip.from - (previous.from + previous.durationInFrames)) <= 2;
+        const sameOrigin = previous.originId && clip.originId
+          ? previous.originId === clip.originId
+          : true;
+
+        if (sameSpeed && sameMedia && adjacent && sameOrigin) {
+          const previousTrimBefore = resolvedTrimBeforeById.get(previous.id) ?? getVideoTrimBefore(previous);
+          resolvedTrimBefore = previousTrimBefore + Math.round(previous.durationInFrames * previousSpeed);
+        }
+      }
+    }
+
+    resolvedTrimBeforeById.set(clip.id, resolvedTrimBefore);
+    previousByTrack.set(entry.trackId, clip);
+  }
+
+  type ExpandedVideoAudioSegment = AudioSegment & {
+    clip: VideoItem;
+    beforeFrames: number;
+    afterFrames: number;
+  };
+
+  const expandedVideoSegments: ExpandedVideoAudioSegment[] = [];
   for (const [, entry] of videoById) {
     const videoItem = entry.item;
     const speed = videoItem.speed ?? 1;
-    const baseTrimBefore = getVideoTrimBefore(videoItem);
+    const baseTrimBefore = resolvedTrimBeforeById.get(videoItem.id) ?? getVideoTrimBefore(videoItem);
     const extension = extensionByClipId.get(videoItem.id) ?? { before: 0, after: 0 };
     const maxBeforeBySource = speed > 0 ? Math.floor(baseTrimBefore / speed) : 0;
     const before = Math.max(0, Math.min(extension.before, maxBeforeBySource));
@@ -193,20 +255,85 @@ function extractAudioSegments(composition: CompositionInputProps): AudioSegment[
     expandedVideoSegments.push({
       itemId: videoItem.id,
       trackId: entry.trackId,
+      clip: videoItem,
       src: videoItem.src,
       startFrame: videoItem.from - before,
       durationFrames: videoItem.durationInFrames + before + after,
       sourceStartFrame: baseTrimBefore - (before * speed),
       volume: videoItem.volume ?? 0,
-      fadeInFrames: before === 0 ? (videoItem.audioFadeIn ?? 0) : 0,
-      fadeOutFrames: after === 0 ? (videoItem.audioFadeOut ?? 0) : 0,
+      fadeInFrames: before > 0 ? before : (videoItem.audioFadeIn ?? 0),
+      fadeOutFrames: after > 0 ? after : (videoItem.audioFadeOut ?? 0),
+      useEqualPowerFades: before > 0 || after > 0,
       speed,
       muted: entry.muted,
       type: 'video',
+      beforeFrames: before,
+      afterFrames: after,
     });
   }
 
-  segments.push(...expandedVideoSegments, ...audioOnlySegments);
+  const sortedVideoSegments = expandedVideoSegments.toSorted((a, b) => {
+    if (a.startFrame !== b.startFrame) return a.startFrame - b.startFrame;
+    return a.itemId.localeCompare(b.itemId);
+  });
+
+  const canMergeContinuousBoundary = (
+    left: ExpandedVideoAudioSegment,
+    right: ExpandedVideoAudioSegment
+  ): boolean => {
+    if (!isContinuousAudioTransition(left.clip, right.clip)) return false;
+    if (left.src !== right.src) return false;
+    if (Math.abs(left.speed - right.speed) > 0.0001) return false;
+    if (Math.abs(left.volume - right.volume) > 0.0001) return false;
+    if (left.muted !== right.muted) return false;
+    if (left.afterFrames !== 0 || right.beforeFrames !== 0) return false;
+    return true;
+  };
+
+  const mergedVideoSegments: AudioSegment[] = [];
+  let active: ExpandedVideoAudioSegment | null = null;
+
+  const toAudioSegment = (segment: ExpandedVideoAudioSegment): AudioSegment => ({
+    itemId: segment.itemId,
+    trackId: segment.trackId,
+    src: segment.src,
+    startFrame: segment.startFrame,
+    durationFrames: segment.durationFrames,
+    sourceStartFrame: segment.sourceStartFrame,
+    volume: segment.volume,
+    fadeInFrames: segment.fadeInFrames,
+    fadeOutFrames: segment.fadeOutFrames,
+    useEqualPowerFades: segment.useEqualPowerFades,
+    speed: segment.speed,
+    muted: segment.muted,
+    type: segment.type,
+  });
+
+  for (const segment of sortedVideoSegments) {
+    if (!active) {
+      active = { ...segment };
+      continue;
+    }
+
+    if (canMergeContinuousBoundary(active, segment)) {
+      const mergedEnd = segment.startFrame + segment.durationFrames;
+      active.durationFrames = mergedEnd - active.startFrame;
+      active.fadeOutFrames = segment.fadeOutFrames;
+      active.useEqualPowerFades = segment.useEqualPowerFades;
+      active.clip = segment.clip;
+      active.afterFrames = segment.afterFrames;
+      continue;
+    }
+
+    mergedVideoSegments.push(toAudioSegment(active));
+    active = { ...segment };
+  }
+
+  if (active) {
+    mergedVideoSegments.push(toAudioSegment(active));
+  }
+
+  segments.push(...mergedVideoSegments, ...audioOnlySegments);
 
   log.info('Extracted audio segments', {
     count: segments.length,
@@ -773,7 +900,12 @@ export async function processAudio(
 
         // Apply fades
         if (fadeInSamples > 0 || fadeOutSamples > 0) {
-          channelSamples = applyFades(channelSamples, fadeInSamples, fadeOutSamples, false);
+          channelSamples = applyFades(
+            channelSamples,
+            fadeInSamples,
+            fadeOutSamples,
+            segment.useEqualPowerFades
+          );
         }
 
         // Resample to target sample rate
