@@ -73,7 +73,21 @@ function useCustomPlayer(
 
     try {
       if (isPlaying && !wasPlaying) {
-        playerRef.current.play();
+        // Always resume from the store playhead, not the hover-preview (gray) playhead.
+        const { currentFrame, setPreviewFrame } = usePlaybackStore.getState();
+        ignorePlayerUpdatesRef.current = true;
+        playerRef.current.seekTo(currentFrame);
+        setPreviewFrame(null);
+        requestAnimationFrame(() => {
+          // If playback was toggled off before this frame, do not start.
+          if (!usePlaybackStore.getState().isPlaying) {
+            ignorePlayerUpdatesRef.current = false;
+            return;
+          }
+          playerRef.current?.play();
+          ignorePlayerUpdatesRef.current = false;
+        });
+        return;
       } else if (!isPlaying && wasPlaying) {
         playerRef.current.pause();
       }
