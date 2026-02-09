@@ -6,7 +6,7 @@
  */
 
 import { useState, useCallback, useRef } from 'react';
-import type { ExportSettings, ExtendedExportSettings } from '@/types/export';
+import type { ExportSettings, ExtendedExportSettings, CompositionInputProps } from '@/types/export';
 import type { RenderProgress, ClientRenderResult, ClientVideoContainer, ClientAudioContainer } from '../utils/client-renderer';
 import {
   mapToClientSettings,
@@ -23,6 +23,19 @@ import { useTimelineStore } from '@/features/timeline/stores/timeline-store';
 import { useProjectStore } from '@/features/projects/stores/project-store';
 import { resolveMediaUrls } from '@/features/preview/utils/media-resolver';
 import { createLogger } from '@/lib/logger';
+import type {
+  ExportRenderWorkerRequest,
+  ExportRenderWorkerResponse,
+} from '../workers/export-render-worker.types';
+import {
+  appendExportTelemetry,
+  mapFallbackReasonToUi,
+  readExportTelemetry,
+  summarizeExportTelemetry,
+  type ExportExecutionEngine,
+  type ExportTelemetryEvent,
+  type ExportTelemetrySummary,
+} from '../utils/export-telemetry';
 
 const log = createLogger('useClientRender');
 
@@ -45,6 +58,10 @@ interface UseClientRenderReturn {
   status: ClientRenderStatus;
   error: string | null;
   result: ClientRenderResult | null;
+  executionEngine: ExportExecutionEngine | null;
+  executionDetail: string | null;
+  lastTelemetry: ExportTelemetryEvent | null;
+  telemetrySummary: ExportTelemetrySummary | null;
 
   // Actions
   startExport: (settings: ExportSettings | ExtendedExportSettings) => Promise<void>;
@@ -65,9 +82,27 @@ export function useClientRender(): UseClientRenderReturn {
   const [status, setStatus] = useState<ClientRenderStatus>('idle');
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ClientRenderResult | null>(null);
+  const [executionEngine, setExecutionEngine] = useState<ExportExecutionEngine | null>(null);
+  const [executionDetail, setExecutionDetail] = useState<string | null>(null);
+  const [lastTelemetry, setLastTelemetry] = useState<ExportTelemetryEvent | null>(null);
+  const [telemetrySummary, setTelemetrySummary] = useState<ExportTelemetrySummary | null>(() => {
+    const events = readExportTelemetry();
+    if (events.length === 0) return null;
+    return summarizeExportTelemetry(events);
+  });
 
   // AbortController for cancellation
   const abortControllerRef = useRef<AbortController | null>(null);
+  const exportWorkerRef = useRef<Worker | null>(null);
+  const exportWorkerRequestIdRef = useRef<string | null>(null);
+
+  const terminateExportWorker = useCallback(() => {
+    if (exportWorkerRef.current) {
+      exportWorkerRef.current.terminate();
+      exportWorkerRef.current = null;
+    }
+    exportWorkerRequestIdRef.current = null;
+  }, []);
 
   /**
    * Handle progress updates from the render engine
@@ -103,17 +138,130 @@ export function useClientRender(): UseClientRenderReturn {
     return 'mode' in settings;
   };
 
+  const renderOnMainThread = useCallback(async (
+    exportMode: 'video' | 'audio',
+    clientSettings: ReturnType<typeof mapToClientSettings>,
+    composition: CompositionInputProps,
+    signal: AbortSignal
+  ): Promise<ClientRenderResult> => {
+    if (exportMode === 'audio') {
+      return renderAudioOnly({
+        settings: clientSettings,
+        composition,
+        onProgress: handleProgress,
+        signal,
+      });
+    }
+
+    return renderComposition({
+      settings: clientSettings,
+      composition,
+      onProgress: handleProgress,
+      signal,
+    });
+  }, [handleProgress]);
+
+  const renderInWorker = useCallback(async (
+    clientSettings: ReturnType<typeof mapToClientSettings>,
+    composition: CompositionInputProps,
+    signal: AbortSignal
+  ): Promise<ClientRenderResult> => {
+    if (typeof Worker === 'undefined') {
+      throw new Error('WORKER_UNAVAILABLE');
+    }
+
+    return new Promise<ClientRenderResult>((resolve, reject) => {
+      if (signal.aborted) {
+        reject(new DOMException('Render cancelled', 'AbortError'));
+        return;
+      }
+
+      const requestId = `export-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const worker = new Worker(
+        new URL('../workers/export-render.worker.ts', import.meta.url),
+        { type: 'module' }
+      );
+
+      exportWorkerRef.current = worker;
+      exportWorkerRequestIdRef.current = requestId;
+
+      const cleanup = () => {
+        signal.removeEventListener('abort', onAbort);
+        terminateExportWorker();
+      };
+
+      const onAbort = () => {
+        const cancelMessage: ExportRenderWorkerRequest = {
+          type: 'cancel',
+          requestId,
+        };
+        worker.postMessage(cancelMessage);
+      };
+
+      signal.addEventListener('abort', onAbort, { once: true });
+
+      worker.onmessage = (event: MessageEvent<ExportRenderWorkerResponse>) => {
+        const response = event.data;
+        if (response.requestId !== requestId) {
+          return;
+        }
+
+        switch (response.type) {
+          case 'progress':
+            handleProgress(response.progress);
+            break;
+          case 'complete':
+            cleanup();
+            resolve(response.result);
+            break;
+          case 'cancelled':
+            cleanup();
+            reject(new DOMException('Render cancelled', 'AbortError'));
+            break;
+          case 'error':
+            cleanup();
+            reject(new Error(response.error));
+            break;
+        }
+      };
+
+      worker.onerror = (event) => {
+        cleanup();
+        reject(new Error(`EXPORT_WORKER_RUNTIME_ERROR:${event.message}`));
+      };
+
+      const startMessage: ExportRenderWorkerRequest = {
+        type: 'start',
+        requestId,
+        settings: clientSettings,
+        composition,
+      };
+      worker.postMessage(startMessage);
+    });
+  }, [handleProgress, terminateExportWorker]);
+
   /**
    * Start client-side export
    */
   const startExport = useCallback(
     async (settings: ExportSettings | ExtendedExportSettings) => {
+      const exportStartTime = typeof performance !== 'undefined' ? performance.now() : Date.now();
+      let usedEngine: ExportExecutionEngine | null = null;
+      let fallbackReasonRaw: string | null = null;
+      let exportModeForTelemetry: 'video' | 'audio' = 'video';
+      let clientSettingsForTelemetry: ReturnType<typeof mapToClientSettings> | null = null;
+      let totalFramesForTelemetry = 0;
+      let succeeded = false;
+      let cancelled = false;
+
       try {
         setIsExporting(true);
         setProgress(0);
         setError(null);
         setResult(null);
         setStatus('preparing');
+        setExecutionEngine(null);
+        setExecutionDetail(null);
 
         // Create abort controller for cancellation
         abortControllerRef.current = new AbortController();
@@ -131,6 +279,7 @@ export function useClientRender(): UseClientRenderReturn {
 
         // Determine export mode and container from extended settings
         const exportMode = isExtendedSettings(settings) ? settings.mode : 'video';
+        exportModeForTelemetry = exportMode;
         const videoContainer = isExtendedSettings(settings) ? settings.videoContainer : undefined;
         const audioContainer = isExtendedSettings(settings) ? settings.audioContainer : undefined;
         const renderWholeProject = isExtendedSettings(settings) ? settings.renderWholeProject : false;
@@ -156,6 +305,7 @@ export function useClientRender(): UseClientRenderReturn {
 
         // Map settings to client-compatible settings
         const clientSettings = mapToClientSettings(settings, fps);
+        clientSettingsForTelemetry = clientSettings;
 
         // Override container if specified in extended settings
         if (exportMode === 'video' && videoContainer) {
@@ -227,6 +377,7 @@ export function useClientRender(): UseClientRenderReturn {
         }));
         const totalCompositionItems = composition.tracks.reduce((sum, t) => sum + (t.items?.length ?? 0), 0);
         const compositionDuration = composition.durationInFrames ?? 0;
+        totalFramesForTelemetry = compositionDuration;
 
         log.debug('Composition created', {
           durationInFrames: compositionDuration,
@@ -276,28 +427,46 @@ export function useClientRender(): UseClientRenderReturn {
 
         // Run the render based on export mode
         let renderResult: ClientRenderResult;
+        const signal = abortControllerRef.current.signal;
 
-        if (exportMode === 'audio') {
-          // Audio-only export
-          renderResult = await renderAudioOnly({
-            settings: clientSettings,
-            composition,
-            onProgress: handleProgress,
-            signal: abortControllerRef.current.signal,
+        try {
+          usedEngine = 'worker';
+          setExecutionEngine('worker');
+          setExecutionDetail('Worker thread rendering');
+          renderResult = await renderInWorker(clientSettings, composition, signal);
+        } catch (workerError) {
+          if (workerError instanceof DOMException && workerError.name === 'AbortError') {
+            throw workerError;
+          }
+
+          const workerMessage = workerError instanceof Error
+            ? workerError.message
+            : String(workerError);
+
+          const shouldFallbackToMainThread = workerMessage.startsWith('WORKER_REQUIRES_MAIN_THREAD:')
+            || workerMessage.startsWith('WORKER_UNAVAILABLE')
+            || workerMessage.startsWith('EXPORT_WORKER_RUNTIME_ERROR:');
+
+          if (!shouldFallbackToMainThread) {
+            throw workerError;
+          }
+
+          log.warn('Worker export unavailable for this composition, falling back to main thread', {
+            reason: workerMessage,
           });
-        } else {
-          // Video export (includes audio)
-          renderResult = await renderComposition({
-            settings: clientSettings,
-            composition,
-            onProgress: handleProgress,
-            signal: abortControllerRef.current.signal,
-          });
+
+          usedEngine = 'main-thread';
+          fallbackReasonRaw = workerMessage;
+          setExecutionEngine('main-thread');
+          setExecutionDetail(mapFallbackReasonToUi(workerMessage));
+
+          renderResult = await renderOnMainThread(exportMode, clientSettings, composition, signal);
         }
 
         setResult(renderResult);
         setStatus('completed');
         setProgress(100);
+        succeeded = true;
 
         log.debug('Render completed', {
           fileSize: formatBytes(renderResult.fileSize),
@@ -307,6 +476,7 @@ export function useClientRender(): UseClientRenderReturn {
         if (err instanceof DOMException && err.name === 'AbortError') {
           log.debug('Render cancelled');
           setStatus('cancelled');
+          cancelled = true;
         } else {
           log.error('Export error:', err);
           const message = err instanceof Error ? err.message : 'Failed to export';
@@ -314,23 +484,66 @@ export function useClientRender(): UseClientRenderReturn {
           setStatus('failed');
         }
       } finally {
+        const exportEndTime = typeof performance !== 'undefined' ? performance.now() : Date.now();
+        const durationMs = Math.max(0, Math.round(exportEndTime - exportStartTime));
+
+        if (usedEngine && clientSettingsForTelemetry) {
+          const telemetryEvent: ExportTelemetryEvent = {
+            timestamp: Date.now(),
+            success: succeeded,
+            cancelled,
+            durationMs,
+            engine: usedEngine,
+            fallbackReason: fallbackReasonRaw,
+            exportMode: exportModeForTelemetry,
+            container: clientSettingsForTelemetry.container,
+            codec: exportModeForTelemetry === 'audio'
+              ? (clientSettingsForTelemetry.audioCodec ?? 'audio')
+              : clientSettingsForTelemetry.codec,
+            fps: clientSettingsForTelemetry.fps,
+            width: clientSettingsForTelemetry.resolution.width,
+            height: clientSettingsForTelemetry.resolution.height,
+            totalFrames: totalFramesForTelemetry,
+          };
+
+          appendExportTelemetry(telemetryEvent);
+          const summary = summarizeExportTelemetry(readExportTelemetry());
+          setLastTelemetry(telemetryEvent);
+          setTelemetrySummary(summary);
+
+          log.info('Export telemetry recorded', {
+            event: telemetryEvent,
+            summary,
+          });
+        }
+
+        terminateExportWorker();
         setIsExporting(false);
         abortControllerRef.current = null;
       }
     },
-    [handleProgress]
+    [renderInWorker, renderOnMainThread, terminateExportWorker]
   );
 
   /**
    * Cancel the current export
    */
   const cancelExport = useCallback(() => {
+    if (exportWorkerRef.current && exportWorkerRequestIdRef.current) {
+      const cancelMessage: ExportRenderWorkerRequest = {
+        type: 'cancel',
+        requestId: exportWorkerRequestIdRef.current,
+      };
+      exportWorkerRef.current.postMessage(cancelMessage);
+    }
+
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       setStatus('cancelled');
       setIsExporting(false);
     }
-  }, []);
+    terminateExportWorker();
+  }, [terminateExportWorker]);
 
   /**
    * Download the rendered video/audio
@@ -366,6 +579,7 @@ export function useClientRender(): UseClientRenderReturn {
    * Reset state
    */
   const resetState = useCallback(() => {
+    terminateExportWorker();
     setIsExporting(false);
     setProgress(0);
     setRenderedFrames(undefined);
@@ -373,8 +587,10 @@ export function useClientRender(): UseClientRenderReturn {
     setStatus('idle');
     setError(null);
     setResult(null);
+    setExecutionEngine(null);
+    setExecutionDetail(null);
     abortControllerRef.current = null;
-  }, []);
+  }, [terminateExportWorker]);
 
   /**
    * Get supported codecs for the current resolution
@@ -409,6 +625,10 @@ export function useClientRender(): UseClientRenderReturn {
     status,
     error,
     result,
+    executionEngine,
+    executionDetail,
+    lastTelemetry,
+    telemetrySummary,
     startExport,
     cancelExport,
     downloadVideo,

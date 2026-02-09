@@ -40,6 +40,22 @@ export interface ActiveTransition {
 }
 
 /**
+ * Pre-resolved transition windows for fast per-frame lookups.
+ * Build once per render, then reuse for every frame.
+ */
+export interface TransitionFrameIndex {
+  windows: ReturnType<typeof resolveTransitionWindows>;
+}
+
+/**
+ * Transition data needed for one frame.
+ */
+export interface TransitionFrameState {
+  activeTransitions: ActiveTransition[];
+  transitionClipIds: Set<string>;
+}
+
+/**
  * Build a map of clip IDs to clips for quick lookup.
  */
 export function buildClipMap(
@@ -50,6 +66,62 @@ export function buildClipMap(
     map.set(clip.id, clip);
   }
   return map;
+}
+
+/**
+ * Build an index of resolved transition windows once before rendering.
+ */
+export function createTransitionFrameIndex(
+  transitions: Transition[],
+  clipMap: Map<string, TimelineItem>
+): TransitionFrameIndex {
+  return {
+    windows: resolveTransitionWindows(transitions, clipMap),
+  };
+}
+
+/**
+ * Resolve active transitions and participating clip IDs for one frame.
+ * Uses pre-resolved windows to avoid expensive recomputation per frame.
+ */
+export function getTransitionFrameState(
+  index: TransitionFrameIndex,
+  frame: number,
+  fps: number
+): TransitionFrameState {
+  const activeTransitions: ActiveTransition[] = [];
+  const transitionClipIds = new Set<string>();
+
+  for (const window of index.windows) {
+    if (frame < window.startFrame || frame >= window.endFrame) continue;
+
+    const localFrame = frame - window.startFrame;
+    const progress = calculateProgress(
+      localFrame,
+      window.durationInFrames,
+      window.transition.timing,
+      fps,
+      window.transition.bezierPoints
+    );
+
+    activeTransitions.push({
+      transition: window.transition,
+      leftClip: window.leftClip,
+      rightClip: window.rightClip,
+      progress,
+      transitionStart: window.startFrame,
+      transitionEnd: window.endFrame,
+      durationInFrames: window.durationInFrames,
+      leftPortion: window.leftPortion,
+      rightPortion: window.rightPortion,
+      cutPoint: window.cutPoint,
+    });
+
+    transitionClipIds.add(window.transition.leftClipId);
+    transitionClipIds.add(window.transition.rightClipId);
+  }
+
+  return { activeTransitions, transitionClipIds };
 }
 
 /**
@@ -67,36 +139,8 @@ export function findActiveTransitions(
   frame: number,
   fps: number
 ): ActiveTransition[] {
-  const active: ActiveTransition[] = [];
-
-  const resolvedWindows = resolveTransitionWindows(transitions, clipMap);
-  for (const window of resolvedWindows) {
-    if (frame < window.startFrame || frame >= window.endFrame) continue;
-
-    const localFrame = frame - window.startFrame;
-    const progress = calculateProgress(
-      localFrame,
-      window.durationInFrames,
-      window.transition.timing,
-      fps,
-      window.transition.bezierPoints
-    );
-
-    active.push({
-      transition: window.transition,
-      leftClip: window.leftClip,
-      rightClip: window.rightClip,
-      progress,
-      transitionStart: window.startFrame,
-      transitionEnd: window.endFrame,
-      durationInFrames: window.durationInFrames,
-      leftPortion: window.leftPortion,
-      rightPortion: window.rightPortion,
-      cutPoint: window.cutPoint,
-    });
-  }
-
-  return active;
+  const index = createTransitionFrameIndex(transitions, clipMap);
+  return getTransitionFrameState(index, frame, fps).activeTransitions;
 }
 
 /**
@@ -480,12 +524,14 @@ export function renderTransition(
   const presentation = transition.presentation;
   const direction = transition.direction;
 
-  log.debug('Rendering transition', {
-    presentation,
-    direction,
-    progress,
-    duration: transition.durationInFrames,
-  });
+  if (import.meta.env.DEV) {
+    log.debug('Rendering transition', {
+      presentation,
+      direction,
+      progress,
+      duration: transition.durationInFrames,
+    });
+  }
 
   // Try registry renderer first
   const renderer = transitionRegistry.getRenderer(presentation);
@@ -557,15 +603,12 @@ export function getTransitionClipIds(
   clipMap: Map<string, TimelineItem>,
   frame: number
 ): Set<string> {
+  const index = createTransitionFrameIndex(transitions, clipMap);
   const clipIds = new Set<string>();
-
-  const resolvedWindows = resolveTransitionWindows(transitions, clipMap);
-  for (const window of resolvedWindows) {
-    if (frame >= window.startFrame && frame < window.endFrame) {
-      clipIds.add(window.transition.leftClipId);
-      clipIds.add(window.transition.rightClipId);
-    }
+  for (const window of index.windows) {
+    if (frame < window.startFrame || frame >= window.endFrame) continue;
+    clipIds.add(window.transition.leftClipId);
+    clipIds.add(window.transition.rightClipId);
   }
-
   return clipIds;
 }

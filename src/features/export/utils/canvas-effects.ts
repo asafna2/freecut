@@ -165,9 +165,9 @@ function applyRGBSplit(
   const greenCanvas = new OffscreenCanvas(width, height);
   const blueCanvas = new OffscreenCanvas(width, height);
 
-  const redCtx = redCanvas.getContext('2d')!;
-  const greenCtx = greenCanvas.getContext('2d')!;
-  const blueCtx = blueCanvas.getContext('2d')!;
+  const redCtx = redCanvas.getContext('2d', { willReadFrequently: true })!;
+  const greenCtx = greenCanvas.getContext('2d', { willReadFrequently: true })!;
+  const blueCtx = blueCanvas.getContext('2d', { willReadFrequently: true })!;
 
   // Draw source to each with offset
   // Red channel - shift right

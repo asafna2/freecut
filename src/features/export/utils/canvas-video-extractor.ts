@@ -14,11 +14,11 @@ const log = createLogger('VideoFrameExtractor');
 
 /** Types for dynamically imported mediabunny module */
 interface MediabunnySink {
-  getSample(timestamp: number): Promise<MediabunnySample | null>;
+  samples(startTimestamp?: number, endTimestamp?: number): AsyncGenerator<MediabunnySample, void, unknown>;
 }
 
 interface MediabunnySample {
-  data: ArrayBuffer;
+  timestamp: number;
   toVideoFrame(): VideoFrame | null;
   close(): void;
 }
@@ -33,14 +33,24 @@ interface MediabunnyVideoTrack {
   duration: number;
   displayWidth: number;
   displayHeight: number;
+  canDecode?: () => Promise<boolean>;
 }
 
 export class VideoFrameExtractor {
+  private static readonly TIMESTAMP_EPSILON = 1e-4;
+
   private sink: MediabunnySink | null = null;
   private input: MediabunnyInput | null = null;
   private videoTrack: MediabunnyVideoTrack | null = null;
   private duration: number = 0;
   private ready: boolean = false;
+  private drawFailureCount = 0;
+  private sampleIterator: AsyncGenerator<MediabunnySample, void, unknown> | null = null;
+  private currentSample: MediabunnySample | null = null;
+  private nextSample: MediabunnySample | null = null;
+  private iteratorDone = false;
+  private lastRequestedTimestamp: number | null = null;
+  private sampleLoopError: unknown = null;
 
   constructor(
     private src: string,
@@ -69,6 +79,16 @@ export class VideoFrameExtractor {
       if (!this.videoTrack) {
         log.warn('No video track found', { itemId: this.itemId });
         return false;
+      }
+
+      if (typeof this.videoTrack.canDecode === 'function') {
+        const decodable = await this.videoTrack.canDecode();
+        if (!decodable) {
+          log.warn('Video track is not decodable via mediabunny/WebCodecs', {
+            itemId: this.itemId,
+          });
+          return false;
+        }
       }
 
       // Get duration
@@ -108,33 +128,33 @@ export class VideoFrameExtractor {
       return false;
     }
 
-    let sample: MediabunnySample | null = null;
+    const maxTime = Math.max(0, this.duration - 0.001);
+    const clampedTime = Math.max(0, Math.min(timestamp, maxTime));
     let videoFrame: VideoFrame | null = null;
-    try {
-      // Clamp timestamp to valid range
-      const clampedTime = Math.max(0, Math.min(timestamp, this.duration - 0.01));
+    let lastError: unknown = this.sampleLoopError;
 
-      // Get the video sample at this timestamp
-      sample = await this.sink.getSample(clampedTime);
+    try {
+      await this.ensureSampleForTimestamp(clampedTime);
+      const sample = this.currentSample;
       if (!sample) {
-        return false;
+        return this.reportDrawFailure(timestamp, clampedTime, lastError);
       }
 
-      // Get the underlying VideoFrame (native WebCodecs type)
       videoFrame = sample.toVideoFrame();
       if (!videoFrame) {
-        return false;
+        lastError = new Error('Decoded sample could not be converted to VideoFrame');
+        this.sampleLoopError = lastError;
+        return this.reportDrawFailure(timestamp, clampedTime, lastError);
       }
 
-      // Draw to canvas - VideoFrame is a valid image source
       ctx.drawImage(videoFrame, x, y, width, height);
-
+      this.drawFailureCount = 0;
       return true;
     } catch (error) {
-      log.error('Failed to draw frame', { itemId: this.itemId, timestamp, error });
-      return false;
+      lastError = error;
+      this.sampleLoopError = error;
+      return this.reportDrawFailure(timestamp, clampedTime, lastError);
     } finally {
-      // Close VideoFrame first (it's a copy, needs separate cleanup)
       if (videoFrame) {
         try {
           videoFrame.close();
@@ -142,15 +162,115 @@ export class VideoFrameExtractor {
           // Ignore close errors
         }
       }
-      // Then close the sample
-      if (sample) {
-        try {
-          sample.close();
-        } catch {
-          // Ignore close errors
-        }
-      }
     }
+  }
+
+  private async ensureSampleForTimestamp(timestamp: number): Promise<void> {
+    if (!this.sink) return;
+
+    // Use a forward sample stream instead of samplesAtTimestamps/getSample.
+    // Mediabunny's timestamp-based path can flush decoders at GOP boundaries;
+    // for some files that leads to repeated "key frame required after flush".
+    if (!this.sampleIterator) {
+      this.resetSampleIterator(timestamp, 'init');
+    } else if (
+      this.lastRequestedTimestamp !== null
+      && timestamp + VideoFrameExtractor.TIMESTAMP_EPSILON < this.lastRequestedTimestamp
+    ) {
+      // Timeline time moved backward for this clip (rare during export). Restart stream.
+      this.resetSampleIterator(timestamp, 'backward');
+    }
+
+    this.lastRequestedTimestamp = timestamp;
+
+    while (true) {
+      const candidate = await this.peekNextSample();
+      if (!candidate) break;
+      if (candidate.timestamp <= timestamp + VideoFrameExtractor.TIMESTAMP_EPSILON) {
+        this.closeSample(this.currentSample);
+        this.currentSample = candidate;
+        this.nextSample = null;
+        continue;
+      }
+      break;
+    }
+  }
+
+  private async peekNextSample(): Promise<MediabunnySample | null> {
+    if (this.nextSample) {
+      return this.nextSample;
+    }
+    if (!this.sampleIterator || this.iteratorDone) {
+      return null;
+    }
+
+    const nextResult = await this.sampleIterator.next();
+    if (nextResult.done) {
+      this.iteratorDone = true;
+      return null;
+    }
+
+    this.nextSample = nextResult.value;
+    return this.nextSample;
+  }
+
+  private resetSampleIterator(startTimestamp: number, reason: 'init' | 'backward'): void {
+    this.closeStreamState();
+    if (!this.sink) return;
+
+    if (reason === 'backward') {
+      log.debug('Restarting mediabunny sample stream after backward time request', {
+        itemId: this.itemId,
+        startTimestamp,
+      });
+    }
+
+    this.sampleIterator = this.sink.samples(startTimestamp, Infinity);
+    this.iteratorDone = false;
+    this.lastRequestedTimestamp = null;
+  }
+
+  private closeStreamState(): void {
+    if (this.sampleIterator) {
+      void this.sampleIterator.return?.();
+    }
+    this.sampleIterator = null;
+    this.iteratorDone = true;
+    this.lastRequestedTimestamp = null;
+    this.sampleLoopError = null;
+    this.closeSample(this.currentSample);
+    this.closeSample(this.nextSample);
+    this.currentSample = null;
+    this.nextSample = null;
+  }
+
+  private closeSample(sample: MediabunnySample | null): void {
+    if (!sample) return;
+    try {
+      sample.close();
+    } catch {
+      // Ignore close errors
+    }
+  }
+
+  private reportDrawFailure(timestamp: number, clampedTime: number, error: unknown): boolean {
+    this.drawFailureCount += 1;
+    const shouldWarn = this.drawFailureCount <= 3 || this.drawFailureCount % 20 === 0;
+    const logData = {
+      itemId: this.itemId,
+      timestamp,
+      clampedTime,
+      duration: this.duration,
+      failures: this.drawFailureCount,
+      error: error instanceof Error ? error.message : String(error),
+    };
+
+    if (shouldWarn) {
+      log.warn('Mediabunny frame extraction failed', logData);
+    } else {
+      log.debug('Mediabunny frame extraction failed', logData);
+    }
+    return false;
   }
 
   /**
@@ -177,9 +297,17 @@ export class VideoFrameExtractor {
    * Clean up resources
    */
   dispose(): void {
+    this.closeStreamState();
+
+    try {
+      this.input?.close();
+    } catch {
+      // Ignore close errors
+    }
     this.sink = null;
     this.input = null;
     this.videoTrack = null;
     this.ready = false;
+    this.drawFailureCount = 0;
   }
 }

@@ -24,6 +24,8 @@ import {
   Music,
   Video,
   Scissors,
+  Cpu,
+  TrendingUp,
 } from 'lucide-react';
 import type { ExportSettings, ExportMode } from '@/types/export';
 import { useClientRender } from '../hooks/use-client-render';
@@ -50,6 +52,11 @@ function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function formatDurationMs(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  return `${(ms / 1000).toFixed(2)}s`;
 }
 
 /**
@@ -138,6 +145,10 @@ export function ExportDialog({ open, onClose }: ExportDialogProps) {
     totalFrames,
     status,
     error,
+    executionEngine,
+    executionDetail,
+    lastTelemetry,
+    telemetrySummary,
     startExport,
     cancelExport,
     downloadVideo,
@@ -255,6 +266,11 @@ export function ExportDialog({ open, onClose }: ExportDialogProps) {
 
   const preventClose = view === 'progress' || view === 'complete';
   const fileSize = clientRender.result?.fileSize;
+  const executionEngineLabel = executionEngine === 'worker'
+    ? 'Worker Thread'
+    : executionEngine === 'main-thread'
+      ? 'Main Thread (Fallback)'
+      : 'Starting...';
 
   // Dynamic title and description
   const getTitle = () => {
@@ -584,7 +600,18 @@ export function ExportDialog({ open, onClose }: ExportDialogProps) {
                     <span className="font-medium tabular-nums">{formatTime(elapsedSeconds)}</span>
                   </div>
                 )}
+                <div className="flex items-center gap-2 text-sm">
+                  <Cpu className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                  <span className="text-muted-foreground">Engine:</span>
+                  <span className="font-medium">{executionEngineLabel}</span>
+                </div>
               </div>
+
+              {executionDetail && (
+                <p className="text-xs text-muted-foreground">
+                  {executionDetail}
+                </p>
+              )}
 
               <p className="text-xs text-muted-foreground">
                 Keep this tab open while rendering. Longer videos may take several minutes.
@@ -624,7 +651,34 @@ export function ExportDialog({ open, onClose }: ExportDialogProps) {
                   <span className="font-medium">{formatTime(elapsedSeconds)}</span>
                 </div>
               )}
+              {executionEngine && (
+                <div className="flex items-center gap-2 text-sm">
+                  <Cpu className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-muted-foreground">Engine:</span>
+                  <span className="font-medium">{executionEngineLabel}</span>
+                </div>
+              )}
+              {lastTelemetry && (
+                <div className="flex items-center gap-2 text-sm">
+                  <TrendingUp className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-muted-foreground">Telemetry:</span>
+                  <span className="font-medium">{formatDurationMs(lastTelemetry.durationMs)}</span>
+                </div>
+              )}
             </div>
+
+            {executionDetail && (
+              <p className="text-xs text-muted-foreground">
+                {executionDetail}
+              </p>
+            )}
+
+            {telemetrySummary && telemetrySummary.estimatedSpeedup !== null && (
+              <p className="text-xs text-muted-foreground">
+                Observed worker speedup: {telemetrySummary.estimatedSpeedup}x
+                {' '}({telemetrySummary.workerCount} worker runs vs {telemetrySummary.mainThreadCount} main-thread runs).
+              </p>
+            )}
 
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={handleClose}>
