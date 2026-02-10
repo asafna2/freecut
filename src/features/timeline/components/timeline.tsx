@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, memo, useCallback } from 'react';
+import { useEffect, useRef, useState, memo, useCallback, useMemo } from 'react';
 import { useHotkeys } from 'react-hotkeys-hook';
 import { TimelineHeader } from './timeline-header';
 import { TimelineContent } from './timeline-content';
@@ -16,7 +16,10 @@ import type { TimelineTrack } from '@/types/timeline';
 import { trackDropIndexRef } from '../hooks/use-track-drag';
 import { DEFAULT_TRACK_HEIGHT } from '@/features/timeline/constants';
 
-export interface TimelineProps {
+// Hoisted RegExp - avoids recreation on every render (js-hoist-regexp)
+const TRACK_NUMBER_REGEX = /^Track (\d+)$/;
+
+interface TimelineProps {
   duration: number; // Total timeline duration in seconds
   /** Callback when graph panel open state changes - used by parent to resize panel */
   onGraphPanelOpenChange?: (isOpen: boolean) => void;
@@ -49,6 +52,7 @@ export const Timeline = memo(function Timeline({ duration, onGraphPanelOpenChang
   const selectedTrackIds = useSelectionStore((s) => s.selectedTrackIds);
   const setActiveTrack = useSelectionStore((s) => s.setActiveTrack);
   const toggleTrackSelection = useSelectionStore((s) => s.toggleTrackSelection);
+  const selectedTrackIdsSet = useMemo(() => new Set(selectedTrackIds), [selectedTrackIds]);
 
   // Refs for syncing scroll between track headers and timeline content
   const trackHeadersContainerRef = useRef<HTMLDivElement>(null);
@@ -98,11 +102,14 @@ export const Timeline = memo(function Timeline({ duration, onGraphPanelOpenChang
   );
 
   // Set first track as active on mount
+  // Use primitive dependencies to avoid re-running on unrelated track changes
+  const tracksLength = tracks.length;
+  const firstTrackId = tracks[0]?.id;
   useEffect(() => {
-    if (tracks.length > 0 && !activeTrackId && tracks[0]) {
-      setActiveTrack(tracks[0].id);
+    if (tracksLength > 0 && !activeTrackId && firstTrackId) {
+      setActiveTrack(firstTrackId);
     }
-  }, [tracks, activeTrackId, setActiveTrack]);
+  }, [tracksLength, activeTrackId, firstTrackId, setActiveTrack]);
 
 
   // Sync vertical scroll between track headers and timeline content using transform
@@ -185,22 +192,25 @@ export const Timeline = memo(function Timeline({ duration, onGraphPanelOpenChang
   /**
    * Generate a unique track name by finding the next available number
    */
-  const getNextTrackName = () => {
+  const getNextTrackName = useCallback(() => {
     // Extract existing track numbers from names like "Track 1", "Track 2", etc.
-    const existingNumbers = tracks
-      .map(t => {
-        const match = t.name.match(/^Track (\d+)$/);
-        return match && match[1] ? parseInt(match[1], 10) : 0;
-      })
-      .filter(n => n > 0);
+    // Uses hoisted TRACK_NUMBER_REGEX to avoid RegExp recreation
+    const existingNumbers = new Set<number>();
+    for (const t of tracks) {
+      const match = t.name.match(TRACK_NUMBER_REGEX);
+      if (match?.[1]) {
+        const num = parseInt(match[1], 10);
+        if (num > 0) existingNumbers.add(num);
+      }
+    }
 
     // Find the smallest available number starting from 1
     let nextNumber = 1;
-    while (existingNumbers.includes(nextNumber)) {
+    while (existingNumbers.has(nextNumber)) {
       nextNumber++;
     }
     return `Track ${nextNumber}`;
-  };
+  }, [tracks]);
 
   /**
    * Handle adding a new track
@@ -254,7 +264,8 @@ export const Timeline = memo(function Timeline({ duration, onGraphPanelOpenChang
     if (tracksToRemove.length === 0) return;
 
     // Don't allow removing all tracks
-    if (tracksToRemove.length >= tracks.length) {
+    const tracksToRemoveSet = new Set(tracksToRemove);
+    if (tracksToRemoveSet.size >= tracks.length) {
       console.warn('Cannot remove all tracks');
       return;
     }
@@ -262,7 +273,7 @@ export const Timeline = memo(function Timeline({ duration, onGraphPanelOpenChang
     removeTracks(tracksToRemove);
 
     // Find the next track to select (first remaining track not being removed)
-    const remainingTrack = tracks.find((t) => !tracksToRemove.includes(t.id));
+    const remainingTrack = tracks.find((t) => !tracksToRemoveSet.has(t.id));
     if (remainingTrack) {
       setActiveTrack(remainingTrack.id);
     }
@@ -333,7 +344,7 @@ export const Timeline = memo(function Timeline({ duration, onGraphPanelOpenChang
                   key={track.id}
                   track={track}
                   isActive={activeTrackId === track.id}
-                  isSelected={selectedTrackIds.includes(track.id)}
+                  isSelected={selectedTrackIdsSet.has(track.id)}
                   onToggleLock={() => toggleTrackLock(track.id)}
                   onToggleVisibility={() => toggleTrackVisibility(track.id)}
                   onToggleMute={() => toggleTrackMute(track.id)}

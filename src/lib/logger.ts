@@ -10,7 +10,7 @@
  *   log.error('Failed', error);
  */
 
-export enum LogLevel {
+enum LogLevel {
   DEBUG = 0,
   INFO = 1,
   WARN = 2,
@@ -29,7 +29,7 @@ class Logger {
   constructor(config?: Partial<LoggerConfig>) {
     this.config = {
       // In development, show all logs. In production, only warnings and errors.
-      // Safe check for import.meta.env to support both Vite and webpack (Remotion SSR) bundlers
+      // Safe check for import.meta.env to support both Vite and webpack (Composition SSR) bundlers
       level: (typeof import.meta !== 'undefined' && typeof import.meta.env !== 'undefined' && import.meta.env.DEV)
         ? LogLevel.DEBUG
         : LogLevel.WARN,
@@ -48,12 +48,14 @@ class Logger {
 
   debug(message: string, ...args: unknown[]): void {
     if (this.shouldLog(LogLevel.DEBUG)) {
+      // eslint-disable-next-line no-console
       console.log(this.formatMessage(message), ...args);
     }
   }
 
   info(message: string, ...args: unknown[]): void {
     if (this.shouldLog(LogLevel.INFO)) {
+      // eslint-disable-next-line no-console
       console.info(this.formatMessage(message), ...args);
     }
   }
@@ -89,7 +91,7 @@ class Logger {
 }
 
 // Root logger instance
-export const logger = new Logger();
+const logger = new Logger();
 
 /**
  * Factory for creating module-specific loggers

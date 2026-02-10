@@ -54,7 +54,7 @@ export async function exportProjectBundle(
 
   // Step 4: Build manifest and prepare ZIP
   const chunks: Uint8Array[] = [];
-  const zip = new Zip((err, chunk, _final) => {
+  const zip = new Zip((err, chunk) => {
     if (err) throw err;
     if (chunk) chunks.push(chunk);
   });
@@ -150,9 +150,12 @@ export async function exportProjectBundle(
       ? {
           ...project.timeline,
           items: project.timeline.items.map((item) => {
-            const { mediaId, src, thumbnailUrl, ...rest } = item;
+            const { mediaId, ...rest } = item;
+            const itemWithoutPreviewUrls = { ...rest };
+            delete itemWithoutPreviewUrls.src;
+            delete itemWithoutPreviewUrls.thumbnailUrl;
             return {
-              ...rest,
+              ...itemWithoutPreviewUrls,
               mediaRef: mediaId, // Rename mediaId to mediaRef
             };
           }),

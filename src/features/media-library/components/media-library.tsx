@@ -29,7 +29,7 @@ import { UnsupportedAudioCodecDialog } from './unsupported-audio-codec-dialog';
 import { useMediaLibraryStore } from '../stores/media-library-store';
 import { useTimelineStore } from '@/features/timeline/stores/timeline-store';
 
-export interface MediaLibraryProps {
+interface MediaLibraryProps {
   onMediaSelect?: (mediaId: string) => void;
 }
 
@@ -86,7 +86,6 @@ export const MediaLibrary = memo(function MediaLibrary({ onMediaSelect }: MediaL
     if (currentProjectId) {
       loadMediaItems();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Intentionally empty - run only on mount
 
   // Track focus and clear selection when clicking outside the media library

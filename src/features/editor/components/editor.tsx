@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback, memo } from 'react';
+import { useEffect, useState, useRef, useCallback, memo, lazy, Suspense } from 'react';
 import { createLogger } from '@/lib/logger';
 import {
   ResizablePanelGroup,
@@ -6,16 +6,12 @@ import {
   ResizableHandle,
 } from '@/components/ui/resizable';
 import type { ImperativePanelHandle } from 'react-resizable-panels';
-
-const logger = createLogger('Editor');
 import { Toolbar } from './toolbar';
 import { MediaSidebar } from './media-sidebar';
 import { PropertiesSidebar } from './properties-sidebar';
 import { PreviewArea } from './preview-area';
 import { ProjectDebugPanel } from './project-debug-panel';
 import { Timeline } from '@/features/timeline/components/timeline';
-import { ExportDialog } from '@/features/export/components/export-dialog';
-import { BundleExportDialog } from '@/features/project-bundle/components/bundle-export-dialog';
 import { ClearKeyframesDialog } from './clear-keyframes-dialog';
 import { useEditorHotkeys } from '@/hooks/use-editor-hotkeys';
 import { useAutoSave } from '../hooks/use-auto-save';
@@ -26,8 +22,29 @@ import { useTimelineStore } from '@/features/timeline/stores/timeline-store';
 import { usePlaybackStore } from '@/features/preview/stores/playback-store';
 import { useMediaLibraryStore } from '@/features/media-library/stores/media-library-store';
 import { useProjectStore } from '@/features/projects/stores/project-store';
+
+const logger = createLogger('Editor');
+const LazyExportDialog = lazy(() =>
+  import('@/features/export/components/export-dialog').then((module) => ({
+    default: module.ExportDialog,
+  }))
+);
+const LazyBundleExportDialog = lazy(() =>
+  import('@/features/project-bundle/components/bundle-export-dialog').then((module) => ({
+    default: module.BundleExportDialog,
+  }))
+);
+
+function preloadExportDialog() {
+  return import('@/features/export/components/export-dialog');
+}
+
+function preloadBundleExportDialog() {
+  return import('@/features/project-bundle/components/bundle-export-dialog');
+}
+
 /** Project metadata passed from route loader (timeline loaded separately via loadTimeline) */
-export interface EditorProps {
+interface EditorProps {
   projectId: string;
   project: {
     id: string;
@@ -100,7 +117,6 @@ export const Editor = memo(function Editor({ projectId, project }: EditorProps) 
       useProjectStore.getState().setCurrentProject(null);
       usePlaybackStore.getState().pause();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]); // Re-initialize when projectId changes
 
   // Track unsaved changes
@@ -129,15 +145,17 @@ export const Editor = memo(function Editor({ projectId, project }: EditorProps) 
     }
   }, [projectId]);
 
-  const handleExport = () => {
+  const handleExport = useCallback(() => {
     // Pause playback when opening export dialog
     usePlaybackStore.getState().pause();
+    void preloadExportDialog();
     setExportDialogOpen(true);
-  };
+  }, []);
 
-  const handleExportBundle = () => {
+  const handleExportBundle = useCallback(() => {
+    void preloadBundleExportDialog();
     setBundleExportDialogOpen(true);
-  };
+  }, []);
 
   // Enable keyboard shortcuts
   useEditorHotkeys({
@@ -228,16 +246,22 @@ export const Editor = memo(function Editor({ projectId, project }: EditorProps) 
           </ResizablePanel>
         </ResizablePanelGroup>
 
-      {/* Export Dialog */}
-      <ExportDialog open={exportDialogOpen} onClose={() => setExportDialogOpen(false)} />
+      <Suspense fallback={null}>
+        {/* Export Dialog */}
+        {exportDialogOpen && (
+          <LazyExportDialog open={exportDialogOpen} onClose={() => setExportDialogOpen(false)} />
+        )}
 
-      {/* Bundle Export Dialog */}
-      <BundleExportDialog
-        open={bundleExportDialogOpen}
-        onClose={() => setBundleExportDialogOpen(false)}
-        projectId={projectId}
-        onBeforeExport={handleSave}
-      />
+        {/* Bundle Export Dialog */}
+        {bundleExportDialogOpen && (
+          <LazyBundleExportDialog
+            open={bundleExportDialogOpen}
+            onClose={() => setBundleExportDialogOpen(false)}
+            projectId={projectId}
+            onBeforeExport={handleSave}
+          />
+        )}
+      </Suspense>
 
       {/* Clear Keyframes Confirmation Dialog */}
       <ClearKeyframesDialog />

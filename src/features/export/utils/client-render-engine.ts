@@ -12,11 +12,11 @@
  * - Keyframe animations
  * - Adjustment layer effects
  * - Audio extraction and mixing
- * - Video encoding via mediabunny CanvasSource
+ * - Video encoding via mediabunny VideoSampleSource
  * - Progress reporting and cancellation
  */
 
-import type { RemotionInputProps } from '@/types/export';
+import type { CompositionInputProps } from '@/types/export';
 import type {
   TimelineItem,
   VideoItem,
@@ -39,27 +39,27 @@ import {
   combineEffects,
   type AdjustmentLayerWithTrackOrder,
 } from './canvas-effects';
-import { prepareMasks, applyMasks, type MaskCanvasSettings } from './canvas-masks';
 import {
-  findActiveTransitions,
+  applyMasks,
+  buildMaskFrameIndex,
+  getActiveMasksForFrame,
+  type MaskCanvasSettings,
+} from './canvas-masks';
+import {
+  createTransitionFrameIndex,
+  getTransitionFrameState,
   renderTransition,
   buildClipMap,
-  getTransitionClipIds,
   type ActiveTransition,
   type TransitionCanvasSettings,
 } from './canvas-transitions';
 import { processAudio, createAudioBuffer, hasAudioContent, clearAudioDecodeCache } from './canvas-audio';
 import { gifFrameCache, type CachedGifFrames } from '../../timeline/services/gif-frame-cache';
+import { isGifUrl } from '@/utils/media-utils';
+import { CanvasPool, TextMeasurementCache } from './canvas-pool';
+import { VideoFrameExtractor } from './canvas-video-extractor';
 
 const log = createLogger('ClientRenderEngine');
-
-/**
- * Check if a URL or filename indicates a GIF file
- */
-function isGifUrl(url: string): boolean {
-  const lowerUrl = url.toLowerCase();
-  return lowerUrl.endsWith('.gif') || lowerUrl.includes('.gif');
-}
 
 /**
  * Check if an image item is an animated GIF
@@ -79,307 +79,19 @@ const FONT_WEIGHT_MAP: Record<string, number> = {
 // Type for mediabunny module (dynamically imported)
 type MediabunnyModule = typeof import('mediabunny');
 
-// =============================================================================
-// PERFORMANCE OPTIMIZATION: Canvas Pool
-// =============================================================================
+type RenderImageSource = HTMLImageElement | ImageBitmap;
 
-/**
- * Canvas Pool for reusing OffscreenCanvas objects
- *
- * Creating new OffscreenCanvas objects every frame is expensive.
- * This pool pre-allocates canvases and reuses them across frames.
- */
-class CanvasPool {
-  private available: OffscreenCanvas[] = [];
-  private inUse: Set<OffscreenCanvas> = new Set();
-  private width: number;
-  private height: number;
-  private maxSize: number;
-
-  constructor(width: number, height: number, initialSize: number = 8, maxSize: number = 20) {
-    this.width = width;
-    this.height = height;
-    this.maxSize = maxSize;
-
-    // Pre-allocate canvases
-    for (let i = 0; i < initialSize; i++) {
-      this.available.push(new OffscreenCanvas(width, height));
-    }
-  }
-
-  /**
-   * Acquire a canvas from the pool
-   */
-  acquire(): { canvas: OffscreenCanvas; ctx: OffscreenCanvasRenderingContext2D } {
-    let canvas: OffscreenCanvas;
-
-    if (this.available.length > 0) {
-      canvas = this.available.pop()!;
-    } else if (this.inUse.size < this.maxSize) {
-      // Pool exhausted but under max, create new
-      canvas = new OffscreenCanvas(this.width, this.height);
-    } else {
-      // Pool exhausted and at max, create temporary (will be discarded)
-      log.warn('Canvas pool exhausted, creating temporary canvas');
-      canvas = new OffscreenCanvas(this.width, this.height);
-    }
-
-    this.inUse.add(canvas);
-    const ctx = canvas.getContext('2d')!;
-    // Clear the canvas for reuse
-    ctx.clearRect(0, 0, this.width, this.height);
-    return { canvas, ctx };
-  }
-
-  /**
-   * Release a canvas back to the pool
-   */
-  release(canvas: OffscreenCanvas): void {
-    if (this.inUse.has(canvas)) {
-      this.inUse.delete(canvas);
-      if (this.available.length < this.maxSize) {
-        this.available.push(canvas);
-      }
-      // If over maxSize, let it be garbage collected
-    }
-  }
-
-  /**
-   * Release all canvases and clear the pool
-   */
-  dispose(): void {
-    this.available.length = 0;
-    this.inUse.clear();
-  }
-
-  /**
-   * Get pool statistics for debugging
-   */
-  getStats(): { available: number; inUse: number; total: number } {
-    return {
-      available: this.available.length,
-      inUse: this.inUse.size,
-      total: this.available.length + this.inUse.size,
-    };
-  }
+interface WorkerLoadedImage {
+  source: RenderImageSource;
+  width: number;
+  height: number;
 }
 
-// =============================================================================
-// PERFORMANCE OPTIMIZATION: Text Measurement Cache
-// =============================================================================
+// CanvasPool, TextMeasurementCache, and VideoFrameExtractor are imported from separate modules
 
-/**
- * Cache for text measurements to avoid repeated measureText() calls
- */
-class TextMeasurementCache {
-  private cache = new Map<string, number>();
-  private maxSize = 1000;
-
-  /**
-   * Get cached measurement or measure and cache
-   */
-  measure(ctx: OffscreenCanvasRenderingContext2D, text: string, letterSpacing: number): number {
-    const key = `${ctx.font}|${text}|${letterSpacing}`;
-
-    let width = this.cache.get(key);
-    if (width === undefined) {
-      const baseWidth = ctx.measureText(text).width;
-      const spacingWidth = Math.max(0, text.length - 1) * letterSpacing;
-      width = baseWidth + spacingWidth;
-
-      // Evict oldest entries if cache is full
-      if (this.cache.size >= this.maxSize) {
-        const firstKey = this.cache.keys().next().value;
-        if (firstKey) this.cache.delete(firstKey);
-      }
-      this.cache.set(key, width);
-    }
-
-    return width;
-  }
-
-  /**
-   * Clear the cache (call between renders)
-   */
-  clear(): void {
-    this.cache.clear();
-  }
-}
-
-// =============================================================================
-// PERFORMANCE OPTIMIZATION: Mediabunny Video Decoder
-// =============================================================================
-
-/**
- * Video frame extractor using mediabunny for precise frame access.
- *
- * This replaces HTML5 video element seeking which is slow and imprecise.
- * Benefits:
- * - Precise frame-by-frame access (no seek delays)
- * - Pre-decoded frames for instant access
- * - No 500ms timeout fallbacks needed
- */
-class VideoFrameExtractor {
-  private sink: any = null; // VideoSampleSink
-  private input: any = null; // Input
-  private videoTrack: any = null;
-  private duration: number = 0;
-  private ready: boolean = false;
-
-  constructor(
-    private src: string,
-    private itemId: string
-  ) {}
-
-  /**
-   * Initialize the extractor - must be called before getFrame()
-   */
-  async init(): Promise<boolean> {
-    try {
-      const mb = await import('mediabunny');
-
-      // Fetch the video data from blob URL
-      const response = await fetch(this.src);
-      const blob = await response.blob();
-
-      // Create input from blob
-      this.input = new mb.Input({
-        formats: mb.ALL_FORMATS,
-        source: new mb.BlobSource(blob),
-      });
-
-      // Get video track
-      this.videoTrack = await this.input.getPrimaryVideoTrack();
-      if (!this.videoTrack) {
-        log.warn('No video track found', { itemId: this.itemId });
-        return false;
-      }
-
-      // Get duration
-      this.duration = await this.input.computeDuration();
-
-      // Create video sample sink for frame extraction
-      this.sink = new mb.VideoSampleSink(this.videoTrack);
-
-      this.ready = true;
-      log.debug('VideoFrameExtractor initialized', {
-        itemId: this.itemId,
-        duration: this.duration,
-        width: this.videoTrack.displayWidth,
-        height: this.videoTrack.displayHeight,
-      });
-
-      return true;
-    } catch (error) {
-      log.error('Failed to initialize VideoFrameExtractor', { itemId: this.itemId, error });
-      return false;
-    }
-  }
-
-  /**
-   * Draw a frame at the specified timestamp directly to canvas
-   * This method properly manages VideoSample lifecycle by closing immediately after draw.
-   *
-   * @param ctx - Canvas context to draw to
-   * @param timestamp - Time in seconds
-   * @param x - X position to draw
-   * @param y - Y position to draw
-   * @param width - Width to draw
-   * @param height - Height to draw
-   * @returns true if frame was drawn, false if failed
-   */
-  async drawFrame(
-    ctx: OffscreenCanvasRenderingContext2D,
-    timestamp: number,
-    x: number,
-    y: number,
-    width: number,
-    height: number
-  ): Promise<boolean> {
-    if (!this.ready || !this.sink) {
-      return false;
-    }
-
-    let sample: any = null;
-    let videoFrame: VideoFrame | null = null;
-    try {
-      // Clamp timestamp to valid range
-      const clampedTime = Math.max(0, Math.min(timestamp, this.duration - 0.01));
-
-      // Get the video sample at this timestamp
-      sample = await this.sink.getSample(clampedTime);
-      if (!sample) {
-        return false;
-      }
-
-      // Get the underlying VideoFrame (native WebCodecs type)
-      // VideoFrame is a valid CanvasImageSource for drawImage()
-      videoFrame = sample.toVideoFrame();
-      if (!videoFrame) {
-        return false;
-      }
-
-      // Draw to canvas - VideoFrame is a valid image source
-      ctx.drawImage(videoFrame, x, y, width, height);
-
-      return true;
-    } catch (error) {
-      log.error('Failed to draw frame', { itemId: this.itemId, timestamp, error });
-      return false;
-    } finally {
-      // Close VideoFrame first (it's a copy, needs separate cleanup)
-      if (videoFrame) {
-        try {
-          videoFrame.close();
-        } catch {
-          // Ignore close errors
-        }
-      }
-      // Then close the sample
-      if (sample) {
-        try {
-          sample.close();
-        } catch {
-          // Ignore close errors
-        }
-      }
-    }
-  }
-
-  /**
-   * Get video dimensions
-   */
-  getDimensions(): { width: number; height: number } {
-    if (!this.videoTrack) {
-      return { width: 1920, height: 1080 };
-    }
-    return {
-      width: this.videoTrack.displayWidth,
-      height: this.videoTrack.displayHeight,
-    };
-  }
-
-  /**
-   * Get video duration in seconds
-   */
-  getDuration(): number {
-    return this.duration;
-  }
-
-  /**
-   * Clean up resources
-   */
-  dispose(): void {
-    this.sink = null;
-    this.input = null;
-    this.videoTrack = null;
-    this.ready = false;
-  }
-}
-
-export interface RenderEngineOptions {
+interface RenderEngineOptions {
   settings: ClientExportSettings;
-  composition: RemotionInputProps;
+  composition: CompositionInputProps;
   onProgress: (progress: RenderProgress) => void;
   signal?: AbortSignal;
 }
@@ -425,7 +137,7 @@ export async function renderComposition(options: RenderEngineOptions): Promise<C
 
   // Dynamically import mediabunny
   const mediabunny: MediabunnyModule = await import('mediabunny');
-  const { Output, BufferTarget, CanvasSource, AudioBufferSource } = mediabunny;
+  const { Output, BufferTarget, VideoSampleSource, VideoSample, AudioBufferSource } = mediabunny;
 
   onProgress({
     phase: 'preparing',
@@ -488,8 +200,9 @@ export async function renderComposition(options: RenderEngineOptions): Promise<C
   // Create canvas for rendering frames at COMPOSITION resolution
   // This ensures all positioning/transforms are calculated correctly
   const renderCanvas = new OffscreenCanvas(compositionWidth, compositionHeight);
-  // Use willReadFrequently for better performance with frequent getImageData calls
-  const ctx = renderCanvas.getContext('2d', { willReadFrequently: true });
+  // Keep default context settings to preserve hardware acceleration.
+  // `willReadFrequently` can force software rendering and slow draw-heavy workloads.
+  const ctx = renderCanvas.getContext('2d');
 
   if (!ctx) {
     throw new Error('Failed to create OffscreenCanvas 2D context');
@@ -501,7 +214,7 @@ export async function renderComposition(options: RenderEngineOptions): Promise<C
     ? new OffscreenCanvas(exportWidth, exportHeight)
     : renderCanvas;
   const outputCtx = needsScaling
-    ? outputCanvas.getContext('2d', { willReadFrequently: true })!
+    ? outputCanvas.getContext('2d')!
     : ctx;
 
   onProgress({
@@ -511,14 +224,14 @@ export async function renderComposition(options: RenderEngineOptions): Promise<C
     message: 'Setting up video encoder...',
   });
 
-  // Create video source from OUTPUT canvas (at export resolution)
-  // Set keyFrameInterval to ensure proper GOP structure
-  // Use 'realtime' latencyMode to disable B-frames and ensure monotonic timestamps
-  const videoSource = new CanvasSource(outputCanvas as unknown as HTMLCanvasElement, {
+  // Create video source for explicit frame capture (at export resolution)
+  // VideoSampleSource lets us control frame capture timing precisely with VideoSample
+  // Use 'quality' latencyMode to enable B-frames and better rate control for offline encoding
+  const videoSource = new VideoSampleSource({
     codec: settings.codec,
     bitrate: settings.videoBitrate ?? 10_000_000,
     keyFrameInterval: 2, // Keyframe every 2 seconds for better seeking
-    latencyMode: 'realtime', // Disables B-frames, ensures monotonic decode order
+    latencyMode: 'quality', // Enables B-frames and consistent frame quality for offline encoding
   });
 
   // Add video track
@@ -586,7 +299,7 @@ export async function renderComposition(options: RenderEngineOptions): Promise<C
   });
 
   // Create a composition renderer
-  const frameRenderer = await createCompositionRenderer(composition, renderCanvas, ctx, settings);
+  const frameRenderer = await createCompositionRenderer(composition, renderCanvas, ctx);
 
   try {
     // Preload media
@@ -617,13 +330,24 @@ export async function renderComposition(options: RenderEngineOptions): Promise<C
       const timestamp = frame / fps;
       const frameDuration = 1 / fps;
 
-      // Add frame to video source (from output canvas)
+      // Explicitly snapshot canvas pixels into a VideoSample
+      // VideoSample constructor copies pixel data immediately, preventing any race
+      const sample = new VideoSample(outputCanvas, { timestamp, duration: frameDuration });
+
+      // Add frame to video source, then release GPU memory
       // Force first frame to be a keyframe to ensure proper GOP structure
       // IMPORTANT: Must await to ensure frames are processed in order
-      if (frame === 0) {
-        await videoSource.add(timestamp, frameDuration, { keyFrame: true });
-      } else {
-        await videoSource.add(timestamp, frameDuration);
+      try {
+        if (frame === 0) {
+          await videoSource.add(sample, { keyFrame: true });
+        } else {
+          await videoSource.add(sample);
+        }
+      } finally {
+        // VideoSampleSource does NOT close samples (unlike CanvasSource).
+        // We must close to release the underlying VideoFrame's GPU memory,
+        // otherwise the browser throttles after ~8-16 outstanding frames.
+        sample.close();
       }
 
       // Report progress
@@ -715,10 +439,9 @@ interface CanvasSettings {
  * with full support for effects, masks, transitions, and keyframe animations.
  */
 async function createCompositionRenderer(
-  composition: RemotionInputProps,
+  composition: CompositionInputProps,
   canvas: OffscreenCanvas,
-  ctx: OffscreenCanvasRenderingContext2D,
-  _settings: ClientExportSettings
+  ctx: OffscreenCanvasRenderingContext2D
 ) {
   const {
     fps,
@@ -727,6 +450,7 @@ async function createCompositionRenderer(
     backgroundColor = '#000000',
     keyframes = [],
   } = composition;
+  const hasDom = typeof document !== 'undefined';
 
   const canvasSettings: CanvasSettings = {
     width: canvas.width,
@@ -765,20 +489,22 @@ async function createCompositionRenderer(
           const extractor = new VideoFrameExtractor(videoItem.src, item.id);
           videoExtractors.set(item.id, extractor);
 
-          // Also create fallback video element in case mediabunny fails
-          const video = document.createElement('video');
-          video.src = videoItem.src;
-          video.muted = true;
-          video.preload = 'auto';
-          video.crossOrigin = 'anonymous';
-          videoElements.set(item.id, video);
+          // Also create fallback video element in case mediabunny fails (main thread only).
+          if (hasDom) {
+            const video = document.createElement('video');
+            video.src = videoItem.src;
+            video.muted = true;
+            video.preload = 'auto';
+            video.crossOrigin = 'anonymous';
+            videoElements.set(item.id, video);
+          }
         }
       }
     }
   }
 
   // Pre-load image elements
-  const imageElements = new Map<string, HTMLImageElement>();
+  const imageElements = new Map<string, WorkerLoadedImage>();
   const imageLoadPromises: Promise<void>[] = [];
 
   // Track GIF items for animated frame extraction
@@ -796,15 +522,41 @@ async function createCompositionRenderer(
           // Still load as regular image for fallback
         }
 
-        const img = new Image();
-        img.crossOrigin = 'anonymous';
-        const loadPromise = new Promise<void>((resolve, reject) => {
-          img.onload = () => resolve();
-          img.onerror = () => reject(new Error(`Failed to load image: ${imageItem.src}`));
-        });
-        img.src = imageItem.src;
-        imageElements.set(item.id, img);
-        imageLoadPromises.push(loadPromise);
+        if (hasDom && typeof Image !== 'undefined') {
+          const img = new Image();
+          img.crossOrigin = 'anonymous';
+          const loadPromise = new Promise<void>((resolve, reject) => {
+            img.onload = () => {
+              imageElements.set(item.id, {
+                source: img,
+                width: img.naturalWidth,
+                height: img.naturalHeight,
+              });
+              resolve();
+            };
+            img.onerror = () => reject(new Error(`Failed to load image: ${imageItem.src}`));
+          });
+          img.src = imageItem.src;
+          imageLoadPromises.push(loadPromise);
+        } else {
+          const loadPromise = (async () => {
+            if (typeof createImageBitmap !== 'function') {
+              throw new Error('WORKER_REQUIRES_MAIN_THREAD:imagebitmap');
+            }
+            const response = await fetch(imageItem.src);
+            if (!response.ok) {
+              throw new Error(`Failed to load image: ${imageItem.src}`);
+            }
+            const blob = await response.blob();
+            const bitmap = await createImageBitmap(blob);
+            imageElements.set(item.id, {
+              source: bitmap,
+              width: bitmap.width,
+              height: bitmap.height,
+            });
+          })();
+          imageLoadPromises.push(loadPromise);
+        }
       }
     }
   }
@@ -833,8 +585,32 @@ async function createCompositionRenderer(
   }
   const clipMap = buildClipMap(allClips);
 
+  // Precompute frame-invariant render metadata.
+  const sortedTracks = [...tracks].sort((a, b) => (b.order ?? 0) - (a.order ?? 0));
+  const tracksTopToBottom = [...sortedTracks].reverse();
+  const trackOrderMap = new Map<string, number>();
+  for (const track of tracks) {
+    trackOrderMap.set(track.id, track.order ?? 0);
+  }
+
+  const transitionFrameIndex = createTransitionFrameIndex(transitions, clipMap);
+  const transitionTrackOrderById = new Map<string, number>();
+  for (const window of transitionFrameIndex.windows) {
+    const transitionTrackId = window.transition.trackId;
+    const trackOrder = transitionTrackId
+      ? (trackOrderMap.get(transitionTrackId) ?? 0)
+      : 0;
+    transitionTrackOrderById.set(window.transition.id, trackOrder);
+  }
+
+  const maskSettings: MaskCanvasSettings = canvasSettings;
+  const maskFrameIndex = buildMaskFrameIndex(tracks, maskSettings);
+
   // Track which videos successfully use mediabunny (for render decisions)
   const useMediabunny = new Set<string>();
+  // Track persistent mediabunny failures and disable extractor after repeated errors.
+  const mediabunnyFailureCountByItem = new Map<string, number>();
+  const mediabunnyDisabledItems = new Set<string>();
 
   return {
     async preload() {
@@ -845,6 +621,10 @@ async function createCompositionRenderer(
 
       // Wait for images
       await Promise.all(imageLoadPromises);
+
+      if (!hasDom && gifItems.length > 0) {
+        throw new Error('WORKER_REQUIRES_MAIN_THREAD:gif');
+      }
 
       // === Initialize mediabunny video extractors (primary method) ===
       const extractorInitPromises = Array.from(videoExtractors.entries()).map(
@@ -866,8 +646,12 @@ async function createCompositionRenderer(
         fallback: videoExtractors.size - useMediabunny.size,
       });
 
-      // === Load fallback video elements for items that failed mediabunny ===
-      const fallbackVideoIds = Array.from(videoElements.keys()).filter(id => !useMediabunny.has(id));
+      // === Handle items that failed mediabunny extraction ===
+      const fallbackVideoIds = Array.from(videoExtractors.keys()).filter(id => !useMediabunny.has(id));
+
+      if (!hasDom && fallbackVideoIds.length > 0) {
+        throw new Error('WORKER_REQUIRES_MAIN_THREAD:video-fallback');
+      }
 
       if (fallbackVideoIds.length > 0) {
         const videoLoadPromises = fallbackVideoIds.map(
@@ -901,8 +685,8 @@ async function createCompositionRenderer(
         await Promise.all(videoLoadPromises);
       }
 
-      // Load GIF frames for animated GIFs
-      if (gifItems.length > 0) {
+      // Load GIF frames for animated GIFs (main thread only)
+      if (hasDom && gifItems.length > 0) {
         log.debug('Preloading GIF frames', { gifCount: gifItems.length });
 
         const gifLoadPromises = gifItems.map(async (gifItem) => {
@@ -935,20 +719,19 @@ async function createCompositionRenderer(
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
       // Prepare masks for this frame
-      const maskSettings: MaskCanvasSettings = canvasSettings;
-      const activeMasks = prepareMasks(tracks, frame, maskSettings);
+      const activeMasks = getActiveMasksForFrame(maskFrameIndex, frame);
 
       // Find active transitions
-      const activeTransitions = findActiveTransitions(transitions, clipMap, frame, fps);
-      const transitionClipIds = getTransitionClipIds(transitions, clipMap, frame);
+      const { activeTransitions, transitionClipIds } = getTransitionFrameState(
+        transitionFrameIndex,
+        frame,
+        fps
+      );
 
       // Debug: Log transition state at key frames (only in development)
       if (import.meta.env.DEV && activeTransitions.length > 0 && (frame === activeTransitions[0]?.transitionStart || frame % 30 === 0)) {
         log.info(`TRANSITION STATE: frame=${frame} activeTransitions=${activeTransitions.length} skippedClipIds=${Array.from(transitionClipIds).map(id => id.substring(0,8)).join(',')}`);
       }
-
-      // Sort tracks for rendering (bottom to top)
-      const sortedTracks = [...tracks].sort((a, b) => (b.order ?? 0) - (a.order ?? 0));
 
       // Log periodically (only in development)
       if (import.meta.env.DEV && frame % 30 === 0) {
@@ -1039,21 +822,10 @@ async function createCompositionRenderer(
         if (item.type === 'shape' && (item as ShapeItem).isMask) return false;
         return true;
       };
-
-      // Build map of track ID → track order for transition lookup
-      const trackOrderMap = new Map<string, number>();
-      for (const track of tracks) {
-        trackOrderMap.set(track.id, track.order ?? 0);
-      }
-
       // Group transitions by their track order
       const transitionsByTrackOrder = new Map<number, ActiveTransition[]>();
       for (const activeTransition of activeTransitions) {
-        // Get track order from the transition's trackId or from the clips
-        const transitionTrackId = activeTransition.transition.trackId;
-        const trackOrder = transitionTrackId
-          ? (trackOrderMap.get(transitionTrackId) ?? 0)
-          : 0;
+        const trackOrder = transitionTrackOrderById.get(activeTransition.transition.id) ?? 0;
 
         if (!transitionsByTrackOrder.has(trackOrder)) {
           transitionsByTrackOrder.set(trackOrder, []);
@@ -1118,7 +890,7 @@ async function createCompositionRenderer(
           // Effects that could add transparency
           if (effect.type === 'glitch' ||
               effect.type === 'canvas-effect' ||
-              (effect as any).opacity !== undefined && (effect as any).opacity < 1) {
+              ('opacity' in effect && typeof effect.opacity === 'number' && effect.opacity < 1)) {
             return false;
           }
         }
@@ -1132,8 +904,6 @@ async function createCompositionRenderer(
 
       if (activeMasks.length === 0) {
         // Scan tracks from top to bottom (lowest order first) to find first occluding item
-        const tracksTopToBottom = [...sortedTracks].reverse();
-
         for (const track of tracksTopToBottom) {
           if (track.visible === false) continue;
           const trackOrder = track.order ?? 0;
@@ -1143,7 +913,7 @@ async function createCompositionRenderer(
 
             if (isFullyOccluding(item, trackOrder)) {
               occlusionCutoffOrder = trackOrder;
-              if (frame % 30 === 0) {
+              if (import.meta.env.DEV && frame % 30 === 0) {
                 log.debug(`Occlusion culling: item ${item.id.substring(0, 8)} on track order ${trackOrder} fully occludes canvas`);
               }
               break;
@@ -1186,7 +956,8 @@ async function createCompositionRenderer(
               videoElements,
               imageElements,
               keyframesMap,
-              adjustmentLayers
+              adjustmentLayers,
+              trackOrder
             );
 
             // Debug: Check content after transition (only in development - expensive getImageData)
@@ -1227,6 +998,8 @@ async function createCompositionRenderer(
       }
       videoExtractors.clear();
       useMediabunny.clear();
+      mediabunnyFailureCountByItem.clear();
+      mediabunnyDisabledItems.clear();
 
       // Clean up fallback video elements
       for (const video of videoElements.values()) {
@@ -1236,6 +1009,11 @@ async function createCompositionRenderer(
         video.load();
       }
       videoElements.clear();
+      for (const image of imageElements.values()) {
+        if ('close' in image.source && typeof image.source.close === 'function') {
+          image.source.close();
+        }
+      }
       imageElements.clear();
       gifFramesMap.clear(); // Clear GIF frame references (actual frames are managed by gifFrameCache)
 
@@ -1261,7 +1039,7 @@ async function createCompositionRenderer(
     frame: number,
     canvas: CanvasSettings,
     videoElements: Map<string, HTMLVideoElement>,
-    imageElements: Map<string, HTMLImageElement>,
+    imageElements: Map<string, WorkerLoadedImage>,
     sourceFrameOffset: number = 0
   ): Promise<void> {
     ctx.save();
@@ -1322,7 +1100,7 @@ async function createCompositionRenderer(
     const sourceTime = adjustedSourceStart / fps + localTime * speed;
 
     // === TRY MEDIABUNNY FIRST (fast, precise frame access) ===
-    if (useMediabunny.has(item.id)) {
+    if (useMediabunny.has(item.id) && !mediabunnyDisabledItems.has(item.id)) {
       const extractor = videoExtractors.get(item.id);
       if (extractor) {
         const clampedTime = Math.max(0, Math.min(sourceTime, extractor.getDuration() - 0.01));
@@ -1345,14 +1123,45 @@ async function createCompositionRenderer(
         );
 
         if (success) {
+          mediabunnyFailureCountByItem.set(item.id, 0);
           // Debug logging (only in development)
           if (import.meta.env.DEV && (frame < 5 || frame % 60 === 0)) {
             log.debug(`VIDEO DRAW (mediabunny) frame=${frame} sourceTime=${clampedTime.toFixed(2)}s`);
           }
           return;
         }
-        // If frame draw failed, fall through to HTML5 fallback
-        log.warn('Mediabunny frame draw failed, using fallback', { itemId: item.id, frame });
+
+        // If frame draw failed, fall through to HTML5 fallback.
+        // Distinguish transient "no-sample-yet" misses from decode failures.
+        const failureKind = extractor.getLastFailureKind();
+        if (failureKind === 'no-sample') {
+          log.debug('Mediabunny had no sample for timestamp, using per-frame fallback', {
+            itemId: item.id,
+            frame,
+            sourceTime: clampedTime,
+          });
+        } else {
+          // After repeated decode failures, stop retrying mediabunny for this item.
+          const failureCount = (mediabunnyFailureCountByItem.get(item.id) ?? 0) + 1;
+          mediabunnyFailureCountByItem.set(item.id, failureCount);
+
+          if (failureCount >= 3) {
+            mediabunnyDisabledItems.add(item.id);
+            log.warn('Disabling mediabunny for item after repeated failures; using fallback for remainder of export', {
+              itemId: item.id,
+              frame,
+              sourceTime: clampedTime,
+              failureCount,
+            });
+          } else {
+            log.warn('Mediabunny frame draw failed, using fallback', {
+              itemId: item.id,
+              frame,
+              sourceTime: clampedTime,
+              failureCount,
+            });
+          }
+        }
       }
     }
 
@@ -1442,7 +1251,7 @@ async function createCompositionRenderer(
     item: ImageItem,
     transform: { x: number; y: number; width: number; height: number },
     canvas: CanvasSettings,
-    imageElements: Map<string, HTMLImageElement>,
+    imageElements: Map<string, WorkerLoadedImage>,
     frame: number,
     gifFramesMap: Map<string, CachedGifFrames>
   ): void {
@@ -1476,18 +1285,18 @@ async function createCompositionRenderer(
     }
 
     // Fallback to static image rendering
-    const img = imageElements.get(item.id);
-    if (!img) return;
+    const loadedImage = imageElements.get(item.id);
+    if (!loadedImage) return;
 
     const drawDimensions = calculateMediaDrawDimensions(
-      img.naturalWidth,
-      img.naturalHeight,
+      loadedImage.width,
+      loadedImage.height,
       transform,
       canvas
     );
 
     ctx.drawImage(
-      img,
+      loadedImage.source,
       drawDimensions.x,
       drawDimensions.y,
       drawDimensions.width,
@@ -1784,9 +1593,10 @@ async function createCompositionRenderer(
     frame: number,
     canvas: CanvasSettings,
     videoElements: Map<string, HTMLVideoElement>,
-    imageElements: Map<string, HTMLImageElement>,
+    imageElements: Map<string, WorkerLoadedImage>,
     keyframesMap: Map<string, ItemKeyframes>,
-    _adjustmentLayers: AdjustmentLayerWithTrackOrder[]
+    adjustmentLayers: AdjustmentLayerWithTrackOrder[],
+    trackOrder: number
   ): Promise<void> {
     const { leftClip, rightClip, progress, transition, transitionStart } = activeTransition;
 
@@ -1795,15 +1605,10 @@ async function createCompositionRenderer(
       log.info(`TRANSITION START: frame=${frame} progress=${progress.toFixed(3)} presentation=${transition.presentation} duration=${transition.durationInFrames} leftClip=${leftClip.id.substring(0,8)} rightClip=${rightClip.id.substring(0,8)}`);
     }
 
-    // Calculate the frame position within the transition (0 to durationInFrames)
-    const transitionLocalFrame = frame - transitionStart;
-    const halfDuration = Math.floor(transition.durationInFrames / 2);
-
-    // For left clip: calculate effective frame to show ending frames during transition
-    // At transitionLocalFrame 0, show leftClip's (durationInFrames - transition.durationInFrames)th frame
-    // This matches Remotion's approach where left clip Sequence uses from={leftClipContentOffset}
-    const leftLocalFrameInClip = leftClip.durationInFrames - transition.durationInFrames + transitionLocalFrame;
-    const leftEffectiveFrame = leftClip.from + leftLocalFrameInClip;
+    // Render transition clips at the global timeline frame.
+    // This preserves chronological playback across overlap windows and chain transitions.
+    const leftEffectiveFrame = frame;
+    const rightEffectiveFrame = frame;
 
     // === PERFORMANCE: Use pooled canvases for transition rendering ===
     const { canvas: leftCanvas, ctx: leftCtx } = canvasPool.acquire();
@@ -1811,23 +1616,41 @@ async function createCompositionRenderer(
     const leftTransform = getAnimatedTransform(leftClip, leftKeyframes, leftEffectiveFrame, canvas);
     await renderItem(leftCtx, leftClip, leftTransform, leftEffectiveFrame, canvas, videoElements, imageElements, 0);
 
-    // For right clip: use effective frame for timeline position
-    // Apply -halfDuration offset to source time to prevent rewind at transition end
-    // Matches Remotion's rightClipSourceOffset = -halfDuration
-    const rightEffectiveFrame = rightClip.from + transitionLocalFrame;
-    const rightSourceOffset = -halfDuration;
+    // Apply effects to left (outgoing) clip
+    const leftAdjEffects = getAdjustmentLayerEffects(trackOrder, adjustmentLayers, leftEffectiveFrame);
+    const leftCombinedEffects = combineEffects(leftClip.effects, leftAdjEffects);
+    let leftFinalCanvas: OffscreenCanvas = leftCanvas;
+
+    if (leftCombinedEffects.length > 0) {
+      const { canvas: leftEffectCanvas, ctx: leftEffectCtx } = canvasPool.acquire();
+      applyAllEffects(leftEffectCtx, leftCanvas, leftCombinedEffects, leftEffectiveFrame, canvas);
+      leftFinalCanvas = leftEffectCanvas;
+    }
 
     const { canvas: rightCanvas, ctx: rightCtx } = canvasPool.acquire();
     const rightKeyframes = keyframesMap.get(rightClip.id);
     const rightTransform = getAnimatedTransform(rightClip, rightKeyframes, rightEffectiveFrame, canvas);
-    await renderItem(rightCtx, rightClip, rightTransform, rightEffectiveFrame, canvas, videoElements, imageElements, rightSourceOffset);
+    await renderItem(rightCtx, rightClip, rightTransform, rightEffectiveFrame, canvas, videoElements, imageElements, 0);
 
-    // Render transition
+    // Apply effects to right (incoming) clip
+    const rightAdjEffects = getAdjustmentLayerEffects(trackOrder, adjustmentLayers, rightEffectiveFrame);
+    const rightCombinedEffects = combineEffects(rightClip.effects, rightAdjEffects);
+    let rightFinalCanvas: OffscreenCanvas = rightCanvas;
+
+    if (rightCombinedEffects.length > 0) {
+      const { canvas: rightEffectCanvas, ctx: rightEffectCtx } = canvasPool.acquire();
+      applyAllEffects(rightEffectCtx, rightCanvas, rightCombinedEffects, rightEffectiveFrame, canvas);
+      rightFinalCanvas = rightEffectCanvas;
+    }
+
+    // Render transition with effect-applied canvases
     const transitionSettings: TransitionCanvasSettings = canvas;
-    renderTransition(ctx, activeTransition, leftCanvas, rightCanvas, transitionSettings);
+    renderTransition(ctx, activeTransition, leftFinalCanvas, rightFinalCanvas, transitionSettings);
 
-    // Release transition canvases back to pool
+    // Release all canvases back to pool
+    if (leftFinalCanvas !== leftCanvas) canvasPool.release(leftFinalCanvas);
     canvasPool.release(leftCanvas);
+    if (rightFinalCanvas !== rightCanvas) canvasPool.release(rightFinalCanvas);
     canvasPool.release(rightCanvas);
   }
 
@@ -1874,8 +1697,8 @@ async function createCompositionRenderer(
 // SINGLE FRAME RENDERING (for thumbnails)
 // =============================================================================
 
-export interface SingleFrameOptions {
-  composition: RemotionInputProps;
+interface SingleFrameOptions {
+  composition: CompositionInputProps;
   frame: number;
   width?: number;
   height?: number;
@@ -1905,30 +1728,19 @@ export async function renderSingleFrame(options: SingleFrameOptions): Promise<Bl
 
   // Create canvas at full composition size
   const renderCanvas = new OffscreenCanvas(compositionWidth, compositionHeight);
-  const renderCtx = renderCanvas.getContext('2d', { willReadFrequently: true });
+  const renderCtx = renderCanvas.getContext('2d');
   if (!renderCtx) {
     throw new Error('Failed to get 2d context');
   }
 
   // Use the SAME renderer as export - single source of truth
-  const dummySettings: ClientExportSettings = {
-    mode: 'video',
-    resolution: { width: compositionWidth, height: compositionHeight },
-    codec: 'avc',
-    container: 'mp4',
-    videoBitrate: 8000000,
-    audioBitrate: 128000,
-    quality: 'high',
-    fps: composition.fps || 30,
-  };
-
-  const renderer = await createCompositionRenderer(composition, renderCanvas, renderCtx, dummySettings);
+  const renderer = await createCompositionRenderer(composition, renderCanvas, renderCtx);
   await renderer.preload();
   await renderer.renderFrame(frame);
 
   // Scale down to thumbnail size
   const thumbnailCanvas = new OffscreenCanvas(width, height);
-  const thumbnailCtx = thumbnailCanvas.getContext('2d', { willReadFrequently: true });
+  const thumbnailCtx = thumbnailCanvas.getContext('2d');
   if (!thumbnailCtx) {
     throw new Error('Failed to get thumbnail 2d context');
   }
@@ -1943,9 +1755,9 @@ export async function renderSingleFrame(options: SingleFrameOptions): Promise<Bl
 // AUDIO-ONLY RENDERING
 // =============================================================================
 
-export interface AudioRenderOptions {
+interface AudioRenderOptions {
   settings: ClientExportSettings;
-  composition: RemotionInputProps;
+  composition: CompositionInputProps;
   onProgress: (progress: RenderProgress) => void;
   signal?: AbortSignal;
 }

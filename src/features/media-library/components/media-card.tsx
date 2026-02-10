@@ -13,7 +13,7 @@ import { getMediaType, formatDuration } from '../utils/validation';
 import { useMediaLibraryStore } from '../stores/media-library-store';
 import { setMediaDragData, clearMediaDragData } from '../utils/drag-data-cache';
 
-export interface MediaCardProps {
+interface MediaCardProps {
   media: MediaMetadata;
   selected?: boolean;
   isBroken?: boolean;

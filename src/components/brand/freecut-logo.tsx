@@ -1,6 +1,6 @@
 import { cn } from '@/lib/utils';
 
-export interface FreeCutLogoProps {
+interface FreeCutLogoProps {
   variant?: 'full' | 'icon';
   size?: 'sm' | 'md' | 'lg';
   className?: string;

@@ -14,12 +14,12 @@ import type {
  * when items are deleted (handled by timeline-actions).
  */
 
-export interface KeyframesState {
+interface KeyframesState {
   keyframes: ItemKeyframes[];
 }
 
 /** Update payload for batch keyframe updates */
-export interface KeyframeUpdatePayload {
+interface KeyframeUpdatePayload {
   itemId: string;
   property: AnimatableProperty;
   keyframeId: string;
@@ -27,7 +27,7 @@ export interface KeyframeUpdatePayload {
 }
 
 /** Move payload for repositioning keyframes */
-export interface KeyframeMovePayload {
+interface KeyframeMovePayload {
   ref: KeyframeRef;
   newFrame: number;
 }
@@ -42,7 +42,7 @@ export interface KeyframeAddPayload {
   easingConfig?: EasingConfig;
 }
 
-export interface KeyframesActions {
+interface KeyframesActions {
   // Bulk setter for snapshot restore
   setKeyframes: (keyframes: ItemKeyframes[]) => void;
 

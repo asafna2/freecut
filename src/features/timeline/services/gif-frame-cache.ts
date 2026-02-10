@@ -43,7 +43,7 @@ interface PendingRequest {
   abortController: AbortController;
 }
 
-export type GifFrameUpdateCallback = (gifFrames: CachedGifFrames) => void;
+type GifFrameUpdateCallback = (gifFrames: CachedGifFrames) => void;
 
 class GifFrameCacheService {
   private memoryCache = new Map<string, CachedGifFrames>();
@@ -507,14 +507,24 @@ class GifFrameCacheService {
 
 // Singleton instance
 export const gifFrameCache = new GifFrameCacheService();
-// Expose cache for debugging
-(window as any).__gifFrameCache = gifFrameCache;
 
-// Debug helper: Clear all GIF frame caches (memory + IndexedDB)
-(window as any).__clearAllGifCache = async () => {
-  gifFrameCache.clearAll();
-  // Clear IndexedDB gifFrames store
-  const { clearAllGifFrames } = await import('../../../lib/storage/indexeddb');
-  await clearAllGifFrames();
-  logger.debug('[GifFrameCache] All caches cleared');
-};
+declare global {
+  interface Window {
+    __gifFrameCache?: GifFrameCacheService;
+    __clearAllGifCache?: () => Promise<void>;
+  }
+}
+
+if (import.meta.env.DEV && typeof window !== 'undefined') {
+  // Expose cache for debugging
+  window.__gifFrameCache = gifFrameCache;
+
+  // Debug helper: Clear all GIF frame caches (memory + IndexedDB)
+  window.__clearAllGifCache = async () => {
+    gifFrameCache.clearAll();
+    // Clear IndexedDB gifFrames store
+    const { clearAllGifFrames } = await import('../../../lib/storage/indexeddb');
+    await clearAllGifFrames();
+    logger.debug('[GifFrameCache] All caches cleared');
+  };
+}

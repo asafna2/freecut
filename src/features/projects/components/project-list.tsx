@@ -1,6 +1,5 @@
 import { useState, useMemo } from 'react';
 import { Search, ArrowUpDown, X } from 'lucide-react';
-import { FreeCutLogo } from '@/components/brand/freecut-logo';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import {
@@ -21,7 +20,6 @@ import {
 import { ProjectCard } from './project-card';
 import {
   useFilteredProjects,
-  useSearchQuery,
   useSortField,
   useSortDirection,
   useFilterResolution,
@@ -33,7 +31,7 @@ import { getUniqueResolutions, getUniqueFps } from '../utils/project-helpers';
 import { useProjects } from '../hooks/use-project-selectors';
 import type { Project } from '@/types/project';
 
-export interface ProjectListProps {
+interface ProjectListProps {
   onEditProject?: (project: Project) => void;
 }
 
@@ -43,7 +41,6 @@ export function ProjectList({ onEditProject }: ProjectListProps) {
   // Selectors
   const allProjects = useProjects();
   const filteredProjects = useFilteredProjects();
-  const searchQuery = useSearchQuery();
   const sortField = useSortField();
   const sortDirection = useSortDirection();
   const filterResolution = useFilterResolution();

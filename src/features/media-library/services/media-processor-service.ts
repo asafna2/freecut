@@ -16,9 +16,9 @@ import type {
 
 const logger = createLogger('MediaProcessorService');
 
-export type MediaMetadataResult = VideoMetadata | AudioMetadata | ImageMetadata;
+type MediaMetadataResult = VideoMetadata | AudioMetadata | ImageMetadata;
 
-export interface ProcessMediaResult {
+interface ProcessMediaResult {
   metadata: MediaMetadataResult;
   thumbnail?: Blob;
 }

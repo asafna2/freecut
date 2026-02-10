@@ -56,6 +56,9 @@ export function GizmoOverlay({
   const selectedItemIds = useSelectionStore((s) => s.selectedItemIds);
   const selectItems = useSelectionStore((s) => s.selectItems);
 
+  // Create Set for O(1) lookups instead of O(n) includes()
+  const selectedItemIdsSet = useMemo(() => new Set(selectedItemIds), [selectedItemIds]);
+
   // Timeline state and actions - use derived selector for visual items only
   // This avoids re-renders when audio items change (audio has no gizmo overlay)
   // useShallow prevents infinite loops from array reference changes
@@ -173,19 +176,19 @@ export function GizmoOverlay({
         return frame >= item.from && frame < itemEnd;
       })
       // Sort by track order descending: higher order (bottom tracks) first, lower order (top tracks) last
-      // This ensures top track items render last (on top) and get click priority
-      .sort((a, b) => (trackOrder.get(b.trackId) ?? 0) - (trackOrder.get(a.trackId) ?? 0));
+      // This ensures top track items render last (on top) and get click priority (toSorted for immutability)
+      .toSorted((a, b) => (trackOrder.get(b.trackId) ?? 0) - (trackOrder.get(a.trackId) ?? 0));
   }, [visualItems, tracks, isPlaying, frameUpdateKey]);
 
-  // Get selected items
+  // Get selected items (use Set for O(1) lookups)
   const selectedItems = useMemo(() => {
-    return visibleItems.filter((item) => selectedItemIds.includes(item.id));
-  }, [visibleItems, selectedItemIds]);
+    return visibleItems.filter((item) => selectedItemIdsSet.has(item.id));
+  }, [visibleItems, selectedItemIdsSet]);
 
-  // Get unselected visible items (for click-to-select)
+  // Get unselected visible items (for click-to-select, use Set for O(1) lookups)
   const unselectedItems = useMemo(() => {
-    return visibleItems.filter((item) => !selectedItemIds.includes(item.id));
-  }, [visibleItems, selectedItemIds]);
+    return visibleItems.filter((item) => !selectedItemIdsSet.has(item.id));
+  }, [visibleItems, selectedItemIdsSet]);
 
   // Coordinate params for gizmo positioning
   const coordParams: CoordinateParams | null = useMemo(() => {
@@ -377,7 +380,7 @@ export function GizmoOverlay({
   const handleItemClick = useCallback(
     (itemId: string, e: React.MouseEvent) => {
       e.stopPropagation();
-      const isSelected = selectedItemIds.includes(itemId);
+      const isSelected = selectedItemIdsSet.has(itemId);
       const isGroupSelection = selectedItemIds.length > 1;
 
       if (e.shiftKey) {
@@ -396,7 +399,7 @@ export function GizmoOverlay({
       }
       // If single selected item is clicked again, do nothing (keeps selection)
     },
-    [selectItems, selectedItemIds]
+    [selectItems, selectedItemIds, selectedItemIdsSet]
   );
 
   // Helper to find all items at a canvas point (for context menu)

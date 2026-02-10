@@ -11,7 +11,7 @@ import { formatBytes } from '@/utils/format-utils';
  * Provides a Promise-based API for file operations, hiding the complexity
  * of worker communication using MessageChannel pattern.
  */
-export class OPFSService {
+class OPFSService {
   private worker: Worker | null = null;
 
   /**
@@ -147,10 +147,14 @@ export class OPFSService {
         // Handle final response
         const response = event.data as OPFSWorkerResponse;
         if (response.success) {
+          if (!response.opfsPath) {
+            reject(new Error('Upload processing failed: missing OPFS path'));
+            return;
+          }
           resolve({
             hash: response.hash!,
             bytesWritten: response.bytesWritten!,
-            opfsPath: response.data as unknown as string,
+            opfsPath: response.opfsPath,
           });
         } else {
           reject(new Error(response.error || 'Upload processing failed'));
@@ -202,9 +206,13 @@ export class OPFSService {
         // Handle final response
         const response = event.data as OPFSWorkerResponse;
         if (response.success) {
+          if (!response.opfsPath) {
+            reject(new Error('Save upload failed: missing OPFS path'));
+            return;
+          }
           resolve({
             bytesWritten: response.bytesWritten!,
-            opfsPath: response.data as unknown as string,
+            opfsPath: response.opfsPath,
           });
         } else {
           reject(new Error(response.error || 'Save upload failed'));

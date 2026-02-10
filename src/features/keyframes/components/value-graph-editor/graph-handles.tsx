@@ -30,9 +30,9 @@ export const GraphHandles = memo(function GraphHandles({
   draggingHandle,
   disabled = false,
 }: GraphHandlesProps) {
-  // Sort points by frame
+  // Sort points by frame (toSorted for immutability)
   const sortedPoints = useMemo(
-    () => [...points].sort((a, b) => a.keyframe.frame - b.keyframe.frame),
+    () => points.toSorted((a, b) => a.keyframe.frame - b.keyframe.frame),
     [points]
   );
 
@@ -187,47 +187,3 @@ const BezierHandle = memo(function BezierHandle({
     </g>
   );
 });
-
-/**
- * Helper to convert bezier handle position to control point values (0-1).
- */
-export function handleToControlPoint(
-  handle: GraphBezierHandle,
-  startPoint: GraphKeyframePoint,
-  endPoint: GraphKeyframePoint
-): { x: number; y: number } {
-  const segmentWidth = endPoint.x - startPoint.x;
-  const segmentHeight = endPoint.y - startPoint.y;
-
-  // Avoid division by zero
-  if (segmentWidth === 0) {
-    return { x: handle.type === 'out' ? 0 : 1, y: 0.5 };
-  }
-
-  const x = (handle.x - startPoint.x) / segmentWidth;
-  const y = segmentHeight === 0 ? 0.5 : (handle.y - startPoint.y) / segmentHeight;
-
-  // Clamp x to valid bezier range (0-1)
-  return {
-    x: Math.max(0, Math.min(1, x)),
-    y: y, // Y can go outside 0-1 for overshoot effects
-  };
-}
-
-/**
- * Helper to update bezier config from new handle position.
- */
-export function updateBezierFromHandle(
-  currentConfig: { x1: number; y1: number; x2: number; y2: number },
-  handleType: 'in' | 'out',
-  newX: number,
-  newY: number
-): { x1: number; y1: number; x2: number; y2: number } {
-  if (handleType === 'out') {
-    // Control point 1 (P1)
-    return { ...currentConfig, x1: newX, y1: newY };
-  } else {
-    // Control point 2 (P2)
-    return { ...currentConfig, x2: newX, y2: newY };
-  }
-}

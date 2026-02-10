@@ -31,18 +31,6 @@ export interface DragState {
 }
 
 /**
- * Result of snap calculation
- */
-export interface SnapResult {
-  /** The snapped frame position (null if no snap) */
-  snappedFrame: number | null;
-  /** Whether a snap occurred */
-  didSnap: boolean;
-  /** Distance to snap target in frames */
-  distance: number;
-}
-
-/**
  * Snap target point on the timeline
  */
 export interface SnapTarget {

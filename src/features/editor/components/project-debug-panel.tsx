@@ -38,6 +38,7 @@ import {
 } from 'lucide-react';
 import { useDebugStore } from '@/features/editor/stores/debug-store';
 import type { FixtureType } from '@/features/project-bundle/services/test-fixtures';
+import { createProject, getDBStats } from '@/lib/storage/indexeddb';
 
 interface DebugAction {
   label: string;
@@ -135,13 +136,12 @@ export function ProjectDebugPanel({ projectId }: ProjectDebugPanelProps) {
     );
     const snapshot = await exportProjectJson(projectId);
     const stats = getSnapshotStats(snapshot);
-    console.table(stats);
+    console.warn('Project snapshot stats:', stats);
   }, [projectId]);
 
   const handleLogDBStats = useCallback(async () => {
-    const { getDBStats } = await import('@/lib/storage/indexeddb');
     const stats = await getDBStats();
-    console.table(stats);
+    console.warn('IndexedDB stats:', stats);
   }, []);
 
   const handleValidateProject = useCallback(async () => {
@@ -154,10 +154,10 @@ export function ProjectDebugPanel({ projectId }: ProjectDebugPanelProps) {
     const snapshot = await exportProjectJson(projectId);
     const result = await validateSnapshotData(snapshot);
     if (!result.valid) {
-      console.table(result.errors);
+      console.warn('Project validation errors:', result.errors);
     }
     if (result.warnings.length > 0) {
-      console.table(result.warnings);
+      console.warn('Project validation warnings:', result.warnings);
     }
   }, [projectId]);
 
@@ -165,7 +165,6 @@ export function ProjectDebugPanel({ projectId }: ProjectDebugPanelProps) {
     const { generateFixture } = await import(
       '@/features/project-bundle/services/test-fixtures'
     );
-    const { createProject } = await import('@/lib/storage/indexeddb');
 
     const { project } = generateFixture(selectedFixture);
     await createProject(project);
@@ -194,7 +193,7 @@ export function ProjectDebugPanel({ projectId }: ProjectDebugPanelProps) {
     const { project } = generateFixture(selectedFixture);
     const fixtureInfo = getAvailableFixtures().find((f) => f.type === selectedFixture);
 
-    console.table({
+    console.warn('Fixture summary:', {
       fixture: selectedFixture,
       name: fixtureInfo?.name,
       tracks: project.timeline?.tracks.length ?? 0,

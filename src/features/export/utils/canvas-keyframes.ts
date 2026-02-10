@@ -8,13 +8,13 @@
 import type { TimelineItem } from '@/types/timeline';
 import type { ItemKeyframes } from '@/types/keyframe';
 import type { ResolvedTransform, CanvasSettings } from '@/types/transform';
-import { resolveTransform, getSourceDimensions } from '@/lib/remotion/utils/transform-resolver';
+import { resolveTransform, getSourceDimensions } from '@/lib/composition-runtime/utils/transform-resolver';
 import { resolveAnimatedTransform } from '@/features/keyframes/utils/animated-transform-resolver';
 
 /**
  * Canvas settings for transform resolution
  */
-export interface CanvasRenderSettings {
+interface CanvasRenderSettings {
   width: number;
   height: number;
   fps: number;
@@ -68,17 +68,3 @@ export function buildKeyframesMap(
 
   return map;
 }
-
-/**
- * Check if an item has any active keyframe animations
- */
-export function hasKeyframes(keyframes: ItemKeyframes | undefined): boolean {
-  if (!keyframes) return false;
-  return keyframes.properties.some((p) => p.keyframes.length > 0);
-}
-
-// Re-export utilities for direct use
-export { resolveTransform, getSourceDimensions } from '@/lib/remotion/utils/transform-resolver';
-export { resolveAnimatedTransform } from '@/features/keyframes/utils/animated-transform-resolver';
-export { interpolatePropertyValue, getPropertyKeyframes } from '@/features/keyframes/utils/interpolation';
-export { applyEasing, springEasing, cubicBezier } from '@/features/keyframes/utils/easing';

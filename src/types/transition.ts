@@ -2,17 +2,43 @@
  * Transition Types
  *
  * Transitions are visual effects applied between two adjacent clips.
- * Transitions are centered on the cut point (half in exiting clip, half in entering clip).
+ * Supports asymmetric alignment around the cut point.
  * Timeline duration remains unchanged - transitions are purely visual effects.
  */
 
 export type TransitionType = 'crossfade';
 
 /**
- * Visual presentation styles for transitions
- * Maps to @remotion/transitions presentations
+ * Categories for organizing transitions in the UI
  */
-export type TransitionPresentation = 'fade' | 'wipe' | 'slide' | 'flip' | 'clockWipe' | 'iris' | 'none';
+export type TransitionCategory =
+  | 'basic'
+  | 'wipe'
+  | 'slide'
+  | 'flip'
+  | 'mask'
+  | 'light'
+  | 'custom';
+
+/**
+ * Built-in presentation IDs.
+ * The type is widened to string so custom registry entries work seamlessly.
+ */
+export type BuiltinTransitionPresentation =
+  | 'fade'
+  | 'wipe'
+  | 'slide'
+  | 'flip'
+  | 'clockWipe'
+  | 'iris'
+  | 'none';
+
+/**
+ * Visual presentation styles for transitions.
+ * Widened to `string` so the registry can accept custom IDs.
+ * All BuiltinTransitionPresentation values are valid.
+ */
+export type TransitionPresentation = BuiltinTransitionPresentation | (string & {});
 
 /**
  * Wipe direction options
@@ -30,20 +56,32 @@ export type SlideDirection = 'from-left' | 'from-right' | 'from-top' | 'from-bot
 export type FlipDirection = 'from-left' | 'from-right' | 'from-top' | 'from-bottom';
 
 /**
- * Timing function for transitions
+ * Timing function for transitions.
+ * Extended with standard CSS easing names.
  */
-export type TransitionTiming = 'linear' | 'spring';
+export type TransitionTiming = 'linear' | 'spring' | 'ease-in' | 'ease-out' | 'ease-in-out' | 'cubic-bezier';
+
+/**
+ * Bezier control points for cubic-bezier timing
+ */
+export interface BezierPoints {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
 
 /**
  * A transition between two adjacent clips.
- * Clips stay at their original positions - transition is a visual effect centered on the cut point.
+ * Clips stay at their original positions - transition is a visual effect.
+ * The `alignment` property controls where the transition sits relative to the cut point.
  */
 export interface Transition {
   /** Unique identifier */
   id: string;
   /** Type of transition (for UI display) */
   type: TransitionType;
-  /** Visual presentation style */
+  /** Visual presentation style (registry key) */
   presentation: TransitionPresentation;
   /** Timing function */
   timing: TransitionTiming;
@@ -57,6 +95,17 @@ export interface Transition {
   durationInFrames: number;
   /** Direction for wipe/slide/flip transitions */
   direction?: WipeDirection | SlideDirection | FlipDirection;
+  /**
+   * Alignment of the transition relative to the cut point.
+   * 0 = transition plays entirely in the right (incoming) clip
+   * 0.5 = centered on cut point (default, backward compatible)
+   * 1 = transition plays entirely in the left (outgoing) clip
+   */
+  alignment?: number;
+  /** Bezier control points when timing is 'cubic-bezier' */
+  bezierPoints?: BezierPoints;
+  /** Reference to a preset configuration */
+  presetId?: string;
   /** Custom properties for extensibility */
   properties?: Record<string, unknown>;
   /** Timestamp when transition was created */
@@ -92,12 +141,14 @@ export interface TransitionBreakage {
 }
 
 /**
- * Result of transition validation
+ * Result of transition auto-repair
  */
-export interface TransitionValidationResult {
-  /** Transitions that are still valid */
+export interface TransitionRepairResult {
+  /** Transitions that are still valid (unmodified) */
   valid: Transition[];
-  /** Transitions that have become invalid */
+  /** Transitions that were repaired (modified) */
+  repaired: Array<{ original: Transition; repaired: Transition; action: string }>;
+  /** Transitions that could not be repaired */
   broken: TransitionBreakage[];
 }
 
@@ -112,30 +163,9 @@ export interface ClipTransitionIndex {
 }
 
 /**
- * A chain of clips connected by transitions on the same track.
- * Pre-computed for efficient transition lookups.
- */
-export interface TransitionChain {
-  /** Unique identifier for the chain (based on first clip) */
-  id: string;
-  /** Version number for cache invalidation */
-  version: number;
-  /** Ordered clip IDs in the chain (left to right) */
-  clipIds: string[];
-  /** Transition IDs connecting the clips (length = clipIds.length - 1) */
-  transitionIds: string[];
-  /** Track where the chain resides */
-  trackId: string;
-  /** Start frame of the chain (first clip's from) */
-  startFrame: number;
-  /** End frame in original timeline (last clip's from + duration) */
-  endFrame: number;
-}
-
-/**
  * Configuration for transition types
  */
-export interface TransitionConfig {
+interface TransitionConfig {
   label: string;
   description: string;
   /** Default duration in frames */
@@ -160,20 +190,56 @@ export const TRANSITION_CONFIGS: Record<TransitionType, TransitionConfig> = {
 };
 
 /**
- * Configuration for each presentation type
+ * Registry-based definition for a transition effect.
+ * Stored in the TransitionRegistry alongside its renderer.
+ */
+export interface TransitionDefinition {
+  /** Unique identifier (matches the presentation key) */
+  id: string;
+  /** Display label */
+  label: string;
+  /** Short description */
+  description: string;
+  /** Category for UI grouping */
+  category: TransitionCategory;
+  /** Icon name from lucide-react */
+  icon: string;
+  /** Whether this transition supports directional variants */
+  hasDirection: boolean;
+  /** Available directions if hasDirection is true */
+  directions?: Array<WipeDirection | SlideDirection | FlipDirection>;
+  /** Supported timing functions */
+  supportedTimings: TransitionTiming[];
+  /** Default duration in frames */
+  defaultDuration: number;
+  /** Minimum duration in frames */
+  minDuration: number;
+  /** Maximum duration in frames */
+  maxDuration: number;
+  /** Whether this transition benefits from WebGL acceleration */
+  requiresWebGL?: boolean;
+}
+
+
+/**
+ * Configuration for each presentation type.
+ * Used by the transitions panel UI.
  */
 export interface PresentationConfig {
   id: TransitionPresentation;
   label: string;
   description: string;
   icon: string; // Icon name from lucide-react
-  category: 'basic' | 'wipe' | 'slide' | 'flip' | 'special';
+  category: TransitionCategory;
   direction?: WipeDirection | SlideDirection | FlipDirection;
 }
 
 /**
- * All available transition presentations with their configurations
- * Each direction is a separate card for easy selection
+ * All available transition presentations with their configurations.
+ * Each direction is a separate card for easy selection.
+ *
+ * NOTE: This is the legacy static list. The transitions panel now generates
+ * configs from the registry. This is kept for backward compatibility.
  */
 export const PRESENTATION_CONFIGS: PresentationConfig[] = [
   // Basic transitions
@@ -290,20 +356,20 @@ export const PRESENTATION_CONFIGS: PresentationConfig[] = [
     category: 'flip',
     direction: 'from-bottom',
   },
-  // Special transitions
+  // Special / Mask transitions
   {
     id: 'clockWipe',
     label: 'Clock Wipe',
     description: 'Circular wipe like a clock hand',
     icon: 'Clock',
-    category: 'special',
+    category: 'mask',
   },
   {
     id: 'iris',
     label: 'Iris',
     description: 'Circular iris expanding/contracting',
     icon: 'Circle',
-    category: 'special',
+    category: 'mask',
   },
 ];
 

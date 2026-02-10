@@ -307,7 +307,7 @@ export const ValueGraphEditor = memo(function ValueGraphEditor({
 
   // Get sorted keyframe frames for navigation
   const sortedKeyframeFrames = useMemo(() => {
-    return [...keyframes].map(kf => kf.frame).sort((a, b) => a - b);
+    return keyframes.map(kf => kf.frame).toSorted((a, b) => a - b);
   }, [keyframes]);
 
   // Find previous keyframe frame
@@ -875,7 +875,3 @@ export const ValueGraphEditor = memo(function ValueGraphEditor({
     </div>
   );
 });
-
-// Re-export types and components
-export type { GraphViewport, GraphKeyframePoint, GraphPadding } from './types';
-export { DEFAULT_GRAPH_PADDING } from './types';

@@ -23,6 +23,7 @@ export interface OPFSWorkerResponse {
   success: boolean;
   data?: ArrayBuffer | string[];
   hash?: string;
+  opfsPath?: string;
   bytesWritten?: number;
   error?: string;
 }
@@ -374,13 +375,14 @@ self.onmessage = async (event: MessageEvent<OPFSWorkerMessage>) => {
         response = { success: true };
         break;
 
-      case 'get':
+      case 'get': {
         if (!payload.path) {
           throw new Error('Missing path for get operation');
         }
         const data = await getFile(payload.path);
         response = { success: true, data };
         break;
+      }
 
       case 'delete':
         if (!payload.path) {
@@ -390,15 +392,16 @@ self.onmessage = async (event: MessageEvent<OPFSWorkerMessage>) => {
         response = { success: true };
         break;
 
-      case 'list':
+      case 'list': {
         if (!payload.directory) {
           throw new Error('Missing directory for list operation');
         }
         const files = await listFiles(payload.directory);
         response = { success: true, data: files };
         break;
+      }
 
-      case 'processUpload':
+      case 'processUpload': {
         if (!payload.file) {
           throw new Error('Missing file for processUpload operation');
         }
@@ -413,11 +416,12 @@ self.onmessage = async (event: MessageEvent<OPFSWorkerMessage>) => {
           success: true,
           hash: uploadResult.hash,
           bytesWritten: uploadResult.bytesWritten,
-          data: uploadResult.opfsPath as unknown as ArrayBuffer,
+          opfsPath: uploadResult.opfsPath,
         };
         break;
+      }
 
-      case 'saveUpload':
+      case 'saveUpload': {
         if (!payload.file || !payload.targetPath) {
           throw new Error('Missing file or targetPath for saveUpload operation');
         }
@@ -431,9 +435,10 @@ self.onmessage = async (event: MessageEvent<OPFSWorkerMessage>) => {
         response = {
           success: true,
           bytesWritten: saveResult.bytesWritten,
-          data: saveResult.opfsPath as unknown as ArrayBuffer,
+          opfsPath: saveResult.opfsPath,
         };
         break;
+      }
 
       default:
         throw new Error(`Unknown action: ${type}`);

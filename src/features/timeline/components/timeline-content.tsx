@@ -17,21 +17,20 @@ import {
   SCROLL_MIN_VELOCITY,
   SCROLL_SMOOTHING,
   SCROLL_GESTURE_TIMEOUT,
-  ZOOM_SENSITIVITY,
   ZOOM_FRICTION,
   ZOOM_MIN_VELOCITY,
-  ZOOM_SMOOTHING,
 } from '../constants';
 
 // Components
 import { TimelineMarkers } from './timeline-markers';
 import { TimelinePlayhead } from './timeline-playhead';
+import { TimelinePreviewScrubber } from './timeline-preview-scrubber';
 import { TimelineTrack } from './timeline-track';
 import { TimelineGuidelines } from './timeline-guidelines';
 import { TimelineSplitIndicator } from './timeline-split-indicator';
 import { MarqueeOverlay } from '@/components/marquee-overlay';
 
-export interface TimelineContentProps {
+interface TimelineContentProps {
   duration: number; // Total timeline duration in seconds
   scrollRef?: React.RefObject<HTMLDivElement | null>; // Optional ref for scroll syncing
   onZoomHandlersReady?: (handlers: {
@@ -55,6 +54,7 @@ export interface TimelineContentProps {
  * Memoized to prevent re-renders when props haven't changed.
  */
 export const TimelineContent = memo(function TimelineContent({ duration, scrollRef, onZoomHandlersReady }: TimelineContentProps) {
+  void duration;
   // Use granular selectors - Zustand v5 best practice
   const tracks = useTimelineStore((s) => s.tracks);
   const fps = useTimelineStore((s) => s.fps);
@@ -67,7 +67,8 @@ export const TimelineContent = memo(function TimelineContent({ duration, scrollR
   const furthestItemEndFrame = useTimelineStore((s) =>
     s.items.reduce((max, item) => Math.max(max, item.from + item.durationInFrames), 0)
   );
-  const { timeToPixels, pixelsToTime, frameToPixels, setZoom, setZoomImmediate, zoomLevel } = useTimelineZoom({
+  const maxTimelineFrame = Math.floor(Math.max(furthestItemEndFrame / fps, 10) * fps);
+  const { timeToPixels, frameToPixels, pixelsToFrame, setZoom, setZoomImmediate, zoomLevel } = useTimelineZoom({
     minZoom: 0.01,
     maxZoom: 2, // Match slider range
   });
@@ -93,10 +94,38 @@ export const TimelineContent = memo(function TimelineContent({ duration, scrollR
 
   const tracksContainerRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(0);
-  const [scrollLeft, setScrollLeft] = useState(0);
   const marqueeWasActiveRef = useRef(false);
   const dragWasActiveRef = useRef(false);
   const scrubWasActiveRef = useRef(false);
+
+  // Preview frame hover state
+  const setPreviewFrame = usePlaybackStore((s) => s.setPreviewFrame);
+  const setPreviewFrameRef = useRef(setPreviewFrame);
+  setPreviewFrameRef.current = setPreviewFrame;
+  const previewRafRef = useRef<number | null>(null);
+
+  const pixelsToFrameRef = useRef(pixelsToFrame);
+  pixelsToFrameRef.current = pixelsToFrame;
+  const maxTimelineFrameRef = useRef(maxTimelineFrame);
+  maxTimelineFrameRef.current = maxTimelineFrame;
+
+  // Clear previewFrame when playback starts
+  useEffect(() => {
+    return usePlaybackStore.subscribe((state, prev) => {
+      if (state.isPlaying && !prev.isPlaying) {
+        state.setPreviewFrame(null);
+      }
+    });
+  }, []);
+
+  // Cleanup preview RAF on unmount
+  useEffect(() => {
+    return () => {
+      if (previewRafRef.current !== null) {
+        cancelAnimationFrame(previewRafRef.current);
+      }
+    };
+  }, []);
 
   // Use refs to avoid callback recreation on every frame/zoom change
   // Access currentFrame via store subscription (no re-renders) instead of hook
@@ -150,9 +179,6 @@ export const TimelineContent = memo(function TimelineContent({ duration, scrollR
   const frameToPixelsRef = useRef(frameToPixels);
   frameToPixelsRef.current = frameToPixels;
 
-  const fpsRef = useRef(fps);
-  fpsRef.current = fps;
-
   const zoomLevelRef = useRef(zoomLevel);
   zoomLevelRef.current = zoomLevel;
 
@@ -167,7 +193,6 @@ export const TimelineContent = memo(function TimelineContent({ duration, scrollR
   const momentumIdRef = useRef<number | null>(null);
   const lastWheelTimeRef = useRef(0);
   const zoomCursorXRef = useRef(0); // Cursor X position (relative to container) for zoom anchor
-  const lastZoomWheelTimeRef = useRef(0); // Track zoom gesture separately
   const pendingScrollRef = useRef<number | null>(null); // Queued scroll to apply after render
   const lastZoomApplyTimeRef = useRef(0); // Throttle zoom updates in momentum loop
   const ZOOM_UPDATE_INTERVAL = 50; // Match store throttle - update at most 20fps during momentum
@@ -231,7 +256,6 @@ export const TimelineContent = memo(function TimelineContent({ duration, scrollR
       if (scrollUpdateTimeoutRef.current === null) {
         scrollUpdateTimeoutRef.current = setTimeout(() => {
           scrollUpdateTimeoutRef.current = null;
-          setScrollLeft(scrollLeftRef.current);
           // Sync to store for persistence (debounced to avoid excessive updates)
           setScrollPosition(scrollLeftRef.current);
         }, SCROLL_THROTTLE_MS);
@@ -259,7 +283,6 @@ export const TimelineContent = memo(function TimelineContent({ duration, scrollR
     if (savedScrollPosition > 0) {
       container.scrollLeft = savedScrollPosition;
       scrollLeftRef.current = savedScrollPosition;
-      setScrollLeft(savedScrollPosition);
     }
     initialScrollRestored.current = true;
   }, []);
@@ -416,6 +439,48 @@ export const TimelineContent = memo(function TimelineContent({ duration, scrollR
     setHoveredItemElement(null);
   }, []);
 
+  // Preview scrubber: show ghost playhead on hover
+  const handleTimelineMouseMove = useCallback((e: React.MouseEvent) => {
+    // Skip during playback
+    if (usePlaybackStore.getState().isPlaying) {
+      if (usePlaybackStore.getState().previewFrame !== null) {
+        setPreviewFrameRef.current(null);
+      }
+      return;
+    }
+    // Skip in razor mode (has its own cursor)
+    if (activeToolRef.current === 'razor') return;
+    // Skip during any drag (playhead drag, item drag, marquee)
+    if (marqueeWasActiveRef.current || dragWasActiveRef.current || scrubWasActiveRef.current) return;
+
+    const scrollContainer = containerRef.current;
+    if (!scrollContainer) return;
+
+    const rect = scrollContainer.getBoundingClientRect();
+    const x = e.clientX - rect.left + scrollContainer.scrollLeft;
+    const frame = Math.max(
+      0,
+      Math.min(Math.round(pixelsToFrameRef.current(x)), maxTimelineFrameRef.current)
+    );
+
+    // RAF-throttle the store update
+    if (previewRafRef.current !== null) {
+      cancelAnimationFrame(previewRafRef.current);
+    }
+    previewRafRef.current = requestAnimationFrame(() => {
+      previewRafRef.current = null;
+      setPreviewFrameRef.current(frame);
+    });
+  }, []);
+
+  const handleTimelineMouseLeave = useCallback(() => {
+    if (previewRafRef.current !== null) {
+      cancelAnimationFrame(previewRafRef.current);
+      previewRafRef.current = null;
+    }
+    setPreviewFrameRef.current(null);
+  }, []);
+
   // Calculate the actual timeline duration and width based on content
   // Uses derived furthestItemEndFrame selector instead of full items array
   const { actualDuration, timelineWidth } = useMemo(() => {
@@ -455,7 +520,6 @@ export const TimelineContent = memo(function TimelineContent({ duration, scrollR
     const container = containerRef.current;
     if (!container) return;
 
-    const fps = fpsRef.current;
     const currentZoom = zoomLevelRef.current;
 
     // Clamp zoom to valid range
@@ -553,7 +617,6 @@ export const TimelineContent = memo(function TimelineContent({ duration, scrollR
         handleZoomToFit,
       });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Empty deps - only call once on mount
 
   // Momentum scroll/zoom loop using requestAnimationFrame
@@ -720,6 +783,8 @@ export const TimelineContent = memo(function TimelineContent({ duration, scrollR
         willChange: 'scroll-position', // Hint to browser for optimization
       }}
       onClick={handleContainerClick}
+      onMouseMove={handleTimelineMouseMove}
+      onMouseLeave={handleTimelineMouseLeave}
     >
       {/* Marquee selection overlay */}
       <MarqueeOverlay marqueeState={marqueeState} />
@@ -727,7 +792,8 @@ export const TimelineContent = memo(function TimelineContent({ duration, scrollR
       {/* Time Ruler - sticky at top */}
       <div className="sticky top-0 z-30 timeline-ruler bg-background" style={{ width: `${timelineWidth}px` }}>
         <TimelineMarkers duration={actualDuration} width={timelineWidth} />
-        <TimelinePlayhead inRuler maxFrame={Math.floor(actualDuration * fps)} />
+        <TimelinePreviewScrubber inRuler maxFrame={maxTimelineFrame} />
+        <TimelinePlayhead inRuler maxFrame={maxTimelineFrame} />
       </div>
 
       {/* Track lanes */}
@@ -765,8 +831,11 @@ export const TimelineContent = memo(function TimelineContent({ duration, scrollR
             />
           )}
 
+          {/* Preview scrubber ghost line through all tracks */}
+          <TimelinePreviewScrubber maxFrame={maxTimelineFrame} />
+
           {/* Playhead line through all tracks */}
-          <TimelinePlayhead maxFrame={Math.floor(actualDuration * fps)} />
+          <TimelinePlayhead maxFrame={maxTimelineFrame} />
       </div>
     </div>
   );

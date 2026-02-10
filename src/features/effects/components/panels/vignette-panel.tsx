@@ -9,7 +9,7 @@ import {
   ColorPicker,
 } from '@/features/editor/components/properties-sidebar/components';
 
-export interface VignettePanelProps {
+interface VignettePanelProps {
   effect: ItemEffect;
   vignette: VignetteEffect;
   onPercentChange: (effectId: string, property: 'intensity' | 'size' | 'softness', percentValue: number) => void;

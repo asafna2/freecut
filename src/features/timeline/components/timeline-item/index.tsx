@@ -11,7 +11,7 @@ import { useClipVisibility } from '../../hooks/use-clip-visibility';
 import { DRAG_OPACITY } from '../../constants';
 import { canJoinItems, canJoinMultipleItems } from '@/features/timeline/utils/clip-utils';
 import { cn } from '@/lib/utils';
-import { CLIP_HEIGHT } from '@/features/timeline/constants';
+import { DEFAULT_TRACK_HEIGHT } from '@/features/timeline/constants';
 import { ClipContent } from './clip-content';
 import { ClipIndicators } from './clip-indicators';
 import { TrimHandles } from './trim-handles';
@@ -20,14 +20,16 @@ import { JoinIndicators } from './join-indicators';
 import { AnchorDragGhost, FollowerDragGhost } from './drag-ghosts';
 import { DragBlockedTooltip } from './drag-blocked-tooltip';
 import { ItemContextMenu } from './item-context-menu';
+import { useClearKeyframesDialogStore } from '@/features/editor/components/clear-keyframes-dialog-store';
 
 // Width in pixels for edge hover detection (trim/rate-stretch handles)
 const EDGE_HOVER_ZONE = 8;
 
-export interface TimelineItemProps {
+interface TimelineItemProps {
   item: TimelineItemType;
   timelineDuration?: number;
   trackLocked?: boolean;
+  trackHidden?: boolean;
 }
 
 /**
@@ -43,7 +45,7 @@ export interface TimelineItemProps {
  * - Trim handles (start/end) for media trimming
  * - Grid snapping support
  */
-export const TimelineItem = memo(function TimelineItem({ item, timelineDuration = 30, trackLocked = false }: TimelineItemProps) {
+export const TimelineItem = memo(function TimelineItem({ item, timelineDuration = 30, trackLocked = false, trackHidden = false }: TimelineItemProps) {
   const { timeToPixels, pixelsToFrame, pixelsPerSecond } = useTimelineZoomContext();
 
   // Granular selector: only re-render when THIS item's selection state changes
@@ -543,15 +545,11 @@ export const TimelineItem = memo(function TimelineItem({ item, timelineDuration 
   }, []);
 
   const handleClearAllKeyframes = useCallback(() => {
-    import('@/features/editor/components/clear-keyframes-dialog').then(({ useClearKeyframesDialogStore }) => {
-      useClearKeyframesDialogStore.getState().openClearAll([item.id]);
-    });
+    useClearKeyframesDialogStore.getState().openClearAll([item.id]);
   }, [item.id]);
 
   const handleClearPropertyKeyframes = useCallback((property: 'x' | 'y' | 'width' | 'height' | 'rotation' | 'opacity' | 'cornerRadius') => {
-    import('@/features/editor/components/clear-keyframes-dialog').then(({ useClearKeyframesDialogStore }) => {
-      useClearKeyframesDialogStore.getState().openClearProperty([item.id], property);
-    });
+    useClearKeyframesDialogStore.getState().openClearProperty([item.id], property);
   }, [item.id]);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
@@ -608,11 +606,11 @@ export const TimelineItem = memo(function TimelineItem({ item, timelineDuration 
             left: `${visualLeft}px`,
             width: `${visualWidth}px`,
             transform: isDragging && !isAltDrag ? `translate(${dragOffset.x}px, ${dragOffset.y}px)` : undefined,
-            opacity: isDragging && !isAltDrag ? DRAG_OPACITY : trackLocked ? 0.6 : 1,
-            pointerEvents: isDragging ? 'none' : 'auto',
+            opacity: isDragging && !isAltDrag ? DRAG_OPACITY : trackHidden ? 0.3 : trackLocked ? 0.6 : 1,
+            pointerEvents: isDragging || trackHidden ? 'none' : 'auto',
             zIndex: isBeingDragged ? 50 : undefined,
             contentVisibility: 'auto',
-            containIntrinsicSize: `0 ${CLIP_HEIGHT}px`,
+            containIntrinsicSize: `0 ${DEFAULT_TRACK_HEIGHT}px`,
           }}
           onClick={handleClick}
           onMouseDown={handleMouseDown}
@@ -727,6 +725,7 @@ export const TimelineItem = memo(function TimelineItem({ item, timelineDuration 
     prevItem.speed === nextItem.speed &&
     prevIsMask === nextIsMask &&
     prevProps.timelineDuration === nextProps.timelineDuration &&
-    prevProps.trackLocked === nextProps.trackLocked
+    prevProps.trackLocked === nextProps.trackLocked &&
+    prevProps.trackHidden === nextProps.trackHidden
   );
 });

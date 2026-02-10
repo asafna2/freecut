@@ -12,7 +12,7 @@ import { useKeyframesStore } from './keyframes-store';
  * Separate from keyframes-store to keep selection ephemeral (not saved/restored).
  */
 
-export interface KeyframeSelectionState {
+interface KeyframeSelectionState {
   /** Currently selected keyframes */
   selectedKeyframes: KeyframeRef[];
   /** Clipboard for copy/paste operations */
@@ -21,7 +21,7 @@ export interface KeyframeSelectionState {
   isCut: boolean;
 }
 
-export interface KeyframeSelectionActions {
+interface KeyframeSelectionActions {
   // Selection operations
   selectKeyframe: (ref: KeyframeRef) => void;
   selectKeyframes: (refs: KeyframeRef[]) => void;

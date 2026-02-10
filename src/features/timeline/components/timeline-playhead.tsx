@@ -8,7 +8,7 @@ import { useSelectionStore } from '@/features/editor/stores/selection-store';
 // Utilities and hooks
 import { useTimelineZoomContext } from '../contexts/timeline-zoom-context';
 
-export interface TimelinePlayheadProps {
+interface TimelinePlayheadProps {
   inRuler?: boolean; // If true, shows diamond indicator for ruler
   maxFrame?: number; // Maximum frame the playhead can be dragged to (content duration)
 }

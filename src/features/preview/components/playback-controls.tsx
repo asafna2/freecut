@@ -14,7 +14,6 @@ import { usePlaybackStore } from '@/features/preview/stores/playback-store';
 
 interface PlaybackControlsProps {
   totalFrames: number;
-  fps: number;
 }
 
 /**
@@ -26,7 +25,7 @@ interface PlaybackControlsProps {
  * - Skip to start/end
  * - Volume control
  */
-export function PlaybackControls({ totalFrames, fps: _fps }: PlaybackControlsProps) {
+export function PlaybackControls({ totalFrames }: PlaybackControlsProps) {
   // Use granular selectors - Zustand v5 best practice
   // NOTE: Don't subscribe to currentFrame - only needed in click handlers
   // Read from store directly when needed to avoid re-renders every frame
@@ -36,7 +35,7 @@ export function PlaybackControls({ totalFrames, fps: _fps }: PlaybackControlsPro
   const setCurrentFrame = usePlaybackStore((s) => s.setCurrentFrame);
   const setVolume = usePlaybackStore((s) => s.setVolume);
 
-  // Note: Automatic playback loop is now handled by Remotion Player
+  // Note: Automatic playback loop is now handled by Composition Player
   // The Player controls frame advancement via frameupdate events
 
   // Note: totalFrames is the count, so valid frame indices are [0, totalFrames - 1]
@@ -73,7 +72,7 @@ export function PlaybackControls({ totalFrames, fps: _fps }: PlaybackControlsPro
           size="icon"
           className="h-9 w-9"
           onClick={handlePreviousFrame}
-          data-tooltip="Previous Frame (←)"
+          data-tooltip="Previous Frame (Left Arrow)"
           aria-label="Previous frame"
         >
           <ChevronLeft className="w-4 h-4" />
@@ -98,7 +97,7 @@ export function PlaybackControls({ totalFrames, fps: _fps }: PlaybackControlsPro
           size="icon"
           className="h-9 w-9"
           onClick={handleNextFrame}
-          data-tooltip="Next Frame (→)"
+          data-tooltip="Next Frame (Right Arrow)"
           aria-label="Next frame"
         >
           <ChevronRight className="w-4 h-4" />

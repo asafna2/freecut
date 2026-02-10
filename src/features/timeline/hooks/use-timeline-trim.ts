@@ -7,8 +7,6 @@ import { useTimelineZoom } from './use-timeline-zoom';
 import { useSnapCalculator } from './use-snap-calculator';
 import { clampTrimAmount, type TrimHandle } from '../utils/trim-utils';
 
-export type { TrimHandle } from '../utils/trim-utils';
-
 interface TrimState {
   isTrimming: boolean;
   handle: TrimHandle | null;

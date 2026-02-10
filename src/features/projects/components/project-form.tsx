@@ -12,15 +12,13 @@ import {
   FPS_PRESETS,
   getAspectRatio,
 } from '../utils/validation';
-import type { Project } from '@/types/project';
 
-export interface ProjectFormProps {
+interface ProjectFormProps {
   onSubmit: (data: ProjectFormData) => Promise<void> | void;
   onCancel?: () => void;
   defaultValues?: Partial<ProjectFormData>;
   isEditing?: boolean;
   isSubmitting?: boolean;
-  project?: Project;
 }
 
 export function ProjectForm({
@@ -29,7 +27,6 @@ export function ProjectForm({
   defaultValues,
   isEditing = false,
   isSubmitting = false,
-  project,
 }: ProjectFormProps) {
   const {
     register,

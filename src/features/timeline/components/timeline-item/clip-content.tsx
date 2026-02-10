@@ -8,7 +8,7 @@ import {
 } from '@/features/timeline/constants';
 import { useSettingsStore } from '@/features/settings/stores/settings-store';
 
-export interface ClipContentProps {
+interface ClipContentProps {
   item: TimelineItem;
   clipWidth: number;
   fps: number;

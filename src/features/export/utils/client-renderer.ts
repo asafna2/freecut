@@ -1,11 +1,11 @@
 /**
  * Client-side video renderer using mediabunny
  *
- * Renders the Remotion composition to a canvas and encodes it to video
+ * Renders the Composition composition to a canvas and encodes it to video
  * using mediabunny's WebCodecs-based encoder.
  *
  * Architecture:
- * 1. Mount a hidden Remotion Player at the export resolution
+ * 1. Mount a hidden Composition Player at the export resolution
  * 2. For each frame, seek to that frame and capture to canvas
  * 3. Feed canvas frames to mediabunny CanvasSource for encoding
  * 4. Collect audio from media items and encode with AudioDataSource
@@ -15,7 +15,7 @@
 import type { ExportSettings } from '@/types/export';
 
 // Codec mapping for mediabunny
-export type ClientVideoCodec = 'avc' | 'hevc' | 'vp8' | 'vp9' | 'av1';
+type ClientVideoCodec = 'avc' | 'hevc' | 'vp8' | 'vp9' | 'av1';
 export type ClientAudioCodec = 'aac' | 'opus' | 'mp3' | 'flac' | 'pcm-s16';
 export type ClientCodec = ClientVideoCodec; // Alias for backwards compatibility
 
@@ -125,14 +125,14 @@ export function getDefaultAudioCodec(container: ClientContainer): ClientAudioCod
 /**
  * Check if a container is audio-only
  */
-export function isAudioOnlyContainer(container: ClientContainer): container is ClientAudioContainer {
+function isAudioOnlyContainer(container: ClientContainer): container is ClientAudioContainer {
   return ['mp3', 'wav', 'flac', 'aac'].includes(container);
 }
 
 /**
  * Check if a codec is supported by WebCodecs in this browser
  */
-export async function isCodecSupported(codec: ClientCodec, width: number, height: number): Promise<boolean> {
+async function isCodecSupported(codec: ClientCodec, width: number, height: number): Promise<boolean> {
   if (!('VideoEncoder' in window)) {
     return false;
   }
@@ -216,22 +216,6 @@ export async function createOutputFormat(container: ClientContainer, options?: {
 }
 
 /**
- * Get the file extension for a container type
- */
-export function getFileExtension(container: ClientContainer): string {
-  const extensionMap: Record<ClientContainer, string> = {
-    mp4: '.mp4',
-    mov: '.mov',
-    webm: '.webm',
-    mkv: '.mkv',
-    mp3: '.mp3',
-    aac: '.aac',
-    wav: '.wav',
-  };
-  return extensionMap[container] ?? '.mp4';
-}
-
-/**
  * Get the MIME type for a container/codec combination
  */
 export function getMimeType(container: ClientContainer, codec?: ClientCodec): string {
@@ -293,23 +277,6 @@ export function estimateFileSize(settings: ClientExportSettings, durationSeconds
 
   // Add ~10% overhead for container
   return Math.round(totalBytes * 1.1);
-}
-
-/**
- * Get available video codecs for a container
- */
-export function getVideoCodecsForContainer(container: ClientVideoContainer): ClientVideoCodec[] {
-  switch (container) {
-    case 'mp4':
-    case 'mov':
-      return ['avc', 'hevc'];
-    case 'webm':
-      return ['vp8', 'vp9', 'av1'];
-    case 'mkv':
-      return ['avc', 'hevc', 'vp8', 'vp9', 'av1'];
-    default:
-      return ['avc'];
-  }
 }
 
 /**

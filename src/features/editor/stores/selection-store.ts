@@ -1,15 +1,6 @@
 import { create } from 'zustand';
 import type { SelectionState, SelectionActions } from '../types';
 
-// IMPORTANT: Always use granular selectors to prevent unnecessary re-renders!
-//
-// ✅ CORRECT: Use granular selectors
-// const selectedItemIds = useSelectionStore(s => s.selectedItemIds);
-// const selectItems = useSelectionStore(s => s.selectItems);
-//
-// ❌ WRONG: Don't destructure the entire store
-// const { selectedItemIds, selectItems } = useSelectionStore();
-
 export const useSelectionStore = create<SelectionState & SelectionActions>((set) => ({
   // State
   selectedItemIds: [],

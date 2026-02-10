@@ -1,7 +1,7 @@
 import { memo } from 'react';
 import { THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT } from '@/features/timeline/constants';
 
-export interface FilmstripSkeletonProps {
+interface FilmstripSkeletonProps {
   /** Width of the clip in pixels */
   clipWidth: number;
   /** Height of the skeleton (defaults to THUMBNAIL_HEIGHT from constants) */

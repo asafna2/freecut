@@ -15,7 +15,7 @@ import { DEFAULT_TRACK_HEIGHT } from '@/features/timeline/constants';
  * Migration registry.
  * Key is the target version number.
  */
-export const migrations: Record<number, Migration> = {
+const migrations: Record<number, Migration> = {
   /**
    * Version 2: Fix track height inconsistency
    *
@@ -46,6 +46,36 @@ export const migrations: Record<number, Migration> = {
         timeline: {
           ...project.timeline,
           tracks: updatedTracks,
+        },
+      };
+    },
+  },
+
+  /**
+   * Version 3: Transition system overhaul
+   *
+   * Adds default `alignment: 0.5` to all existing transitions for the new
+   * asymmetric timing feature. Existing presentation/timing/direction values
+   * remain valid as registry keys — no data loss.
+   */
+  3: {
+    version: 3,
+    description: 'Add alignment default (0.5) to transitions for asymmetric timing',
+    migrate: (project: Project): Project => {
+      if (!project.timeline?.transitions) {
+        return project;
+      }
+
+      const updatedTransitions = project.timeline.transitions.map((t) => ({
+        ...t,
+        alignment: t.alignment ?? 0.5,
+      }));
+
+      return {
+        ...project,
+        timeline: {
+          ...project.timeline,
+          transitions: updatedTransitions,
         },
       };
     },

@@ -20,7 +20,7 @@ FreeCut is a professional-grade video editor that runs entirely in your browser.
 - **Video Thumbnails** - Filmstrip preview for easy navigation
 - **Undo/Redo** - Full history support for confident editing
 - **High-Performance Storage** - Lightning-fast local storage using OPFS
-- **Flexible Export** - Local browser rendering or server-side with Remotion
+- **Browser Export** - Render videos directly in your browser using WebCodecs
 
 ## Quick Start
 
@@ -48,12 +48,6 @@ cp .env.example .env
 ```bash
 # Start the development server
 npm run dev
-
-# In a separate terminal, start the backend server (required for server-side export)
-npm run server
-
-# Or run both together
-npm run dev:all
 ```
 
 Open your browser to [http://localhost:5173](http://localhost:5173)
@@ -65,7 +59,7 @@ Open your browser to [http://localhost:5173](http://localhost:5173)
 3. **Edit** - Drag clips to the timeline, trim, arrange, and add effects
 4. **Animate** - Use the keyframe editor to add smooth transitions
 5. **Preview** - Use the player to review your edits in real-time
-6. **Export** - Render your final video locally or via the server
+6. **Export** - Render your final video in the browser
 
 ## Browser Support
 
@@ -81,13 +75,7 @@ Open your browser to [http://localhost:5173](http://localhost:5173)
 Copy `.env.example` to `.env` and configure:
 
 ```env
-# Frontend (Vite)
-VITE_API_BASE_URL=http://localhost:3001/api    # Backend API URL
-VITE_ENABLE_SERVER_RENDER=true                  # Enable server-side export
-
-# Backend Server
-PORT=3001                                       # Server port
-CORS_ORIGIN=http://localhost:5173               # Allowed frontend origin
+VITE_SHOW_DEBUG_PANEL=true    # Show/hide debug panel button (dev only)
 ```
 
 See `.env.example` for complete documentation.
@@ -97,7 +85,6 @@ See `.env.example` for complete documentation.
 | Component | Platform | Purpose |
 |-----------|----------|---------|
 | Frontend | Vercel | Static hosting, CDN |
-| Render Server | Node.js, Remotion rendering | (Optional)
 
 
 ## Tech Stack
@@ -105,12 +92,11 @@ See `.env.example` for complete documentation.
 - [React](https://react.dev/) - UI framework with concurrent features
 - [TypeScript](https://www.typescriptlang.org/) - Type-safe JavaScript
 - [Vite](https://vitejs.dev/) - Fast build tool with HMR
-- [Remotion](https://www.remotion.dev/) - Programmatic video rendering
+- Canvas + WebCodecs - In-browser composition rendering and export
 - [TanStack Router](https://tanstack.com/router) - Type-safe routing
 - [Zustand](https://github.com/pmndrs/zustand) - State management
 - [Tailwind CSS](https://tailwindcss.com/) - Utility-first styling
 - [Shadcn/ui](https://ui.shadcn.com/) - UI components
-- [Express](https://expressjs.com/) - Backend server with SSE
 
 ## Development
 
@@ -118,8 +104,6 @@ See `.env.example` for complete documentation.
 
 ```bash
 npm run dev        # Start development server (port 5173)
-npm run server     # Start backend server (port 3001)
-npm run dev:all    # Run both dev and server concurrently
 npm run build      # Build for production
 npm run lint       # Run ESLint
 ```
@@ -142,7 +126,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 Built with these amazing open source projects:
 
-- [Remotion](https://www.remotion.dev/) - Programmatic video creation
 - [Mediabunny](https://mediabunny.dev/) - Video processing
 - [TanStack Router](https://tanstack.com/router) - Type-safe routing
 - [Zustand](https://github.com/pmndrs/zustand) - State management

@@ -7,16 +7,12 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Progress } from '@/components/ui/progress';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Switch } from '@/components/ui/switch';
 import {
-  Monitor,
-  Cloud,
   Loader2,
   CheckCircle2,
   AlertCircle,
@@ -30,10 +26,8 @@ import {
   Scissors,
 } from 'lucide-react';
 import type { ExportSettings, ExportMode } from '@/types/export';
-import { useRender } from '../hooks/use-render';
 import { useClientRender } from '../hooks/use-client-render';
 import { useProjectStore } from '@/features/projects/stores/project-store';
-import { useSettingsStore } from '@/features/settings/stores/settings-store';
 import { useTimelineStore } from '@/features/timeline/stores/timeline-store';
 import { formatTimecode, framesToSeconds } from '@/utils/time-utils';
 import type { ClientVideoContainer, ClientAudioContainer } from '../utils/client-renderer';
@@ -43,11 +37,7 @@ export interface ExportDialogProps {
   onClose: () => void;
 }
 
-type RenderMode = 'client' | 'server';
 type DialogView = 'settings' | 'progress' | 'complete' | 'error' | 'cancelled';
-
-// Disable server rendering via env var (e.g., for Vercel deployment without render server)
-const SERVER_RENDER_ENABLED = import.meta.env.VITE_ENABLE_SERVER_RENDER !== 'false';
 
 function formatTime(seconds: number): string {
   if (seconds < 60) return `${Math.round(seconds)}s`;
@@ -93,16 +83,12 @@ export function ExportDialog({ open, onClose }: ExportDialogProps) {
   const inPoint = useTimelineStore((s) => s.inPoint);
   const outPoint = useTimelineStore((s) => s.outPoint);
 
-  const serverApiUrl = useSettingsStore((s) => s.serverApiUrl);
-  const setSetting = useSettingsStore((s) => s.setSetting);
-
   const [settings, setSettings] = useState<ExportSettings>({
     codec: 'h264',
     quality: 'high',
     resolution: { width: projectWidth, height: projectHeight },
   });
 
-  const [renderMode, setRenderMode] = useState<RenderMode>('client');
   const [exportMode, setExportMode] = useState<ExportMode>('video');
   const [videoContainer, setVideoContainer] = useState<ClientVideoContainer>('mp4');
   const [audioContainer, setAudioContainer] = useState<ClientAudioContainer>('mp3');
@@ -143,10 +129,8 @@ export function ExportDialog({ open, onClose }: ExportDialogProps) {
     }));
   }, [projectWidth, projectHeight]);
 
-  // Render hooks
-  const serverRender = useRender();
+  // Render hook
   const clientRender = useClientRender();
-  const activeRender = renderMode === 'client' ? clientRender : serverRender;
 
   const {
     progress,
@@ -157,9 +141,7 @@ export function ExportDialog({ open, onClose }: ExportDialogProps) {
     startExport,
     cancelExport,
     downloadVideo,
-  } = activeRender;
-
-  const isUploading = renderMode === 'server' && serverRender.isUploading;
+  } = clientRender;
 
   // Track elapsed time
   useEffect(() => {
@@ -197,7 +179,6 @@ export function ExportDialog({ open, onClose }: ExportDialogProps) {
   const handleClose = () => {
     if (view === 'progress') return; // Prevent closing during export
     setView('settings');
-    serverRender.resetState();
     clientRender.resetState();
     onClose();
   };
@@ -216,35 +197,17 @@ export function ExportDialog({ open, onClose }: ExportDialogProps) {
     await startExport(extendedSettings);
   };
 
-  // Handle mode change
-  const handleModeChange = (mode: RenderMode) => {
-    serverRender.resetState();
-    clientRender.resetState();
-    setRenderMode(mode);
-  };
-
   // Reset when dialog closes
   useEffect(() => {
     if (!open) {
       setView('settings');
-      serverRender.resetState();
       clientRender.resetState();
       setStartTime(null);
       setElapsedSeconds(0);
     }
-  }, [open, serverRender, clientRender]);
+  }, [open, clientRender]);
 
   const getCodecOptions = () => {
-    if (renderMode === 'server') {
-      // Server mode has all codecs available
-      return [
-        { value: 'h264', label: 'H.264' },
-        { value: 'h265', label: 'H.265/HEVC' },
-        { value: 'vp8', label: 'VP8' },
-        { value: 'vp9', label: 'VP9' },
-      ];
-    }
-    // Client mode - codecs depend on container
     switch (videoContainer) {
       case 'mp4':
       case 'mov':
@@ -291,7 +254,7 @@ export function ExportDialog({ open, onClose }: ExportDialogProps) {
   }, [videoContainer]);
 
   const preventClose = view === 'progress' || view === 'complete';
-  const fileSize = renderMode === 'client' ? clientRender.result?.fileSize : undefined;
+  const fileSize = clientRender.result?.fileSize;
 
   // Dynamic title and description
   const getTitle = () => {
@@ -334,7 +297,7 @@ export function ExportDialog({ open, onClose }: ExportDialogProps) {
       case 'settings':
         return 'Configure export settings and render your video';
       case 'progress':
-        return renderMode === 'client' ? 'Rendering in your browser' : 'Processing on server';
+        return 'Rendering your video';
       case 'complete':
         return 'Your video is ready to download';
       case 'error':
@@ -441,83 +404,26 @@ export function ExportDialog({ open, onClose }: ExportDialogProps) {
             {/* Video Export Settings */}
             {exportMode === 'video' && (
               <>
-                {/* Render Mode: Browser or Server */}
-                {SERVER_RENDER_ENABLED ? (
-                  <Tabs value={renderMode} onValueChange={(v) => handleModeChange(v as RenderMode)}>
-                    <TabsList className="grid w-full grid-cols-2">
-                      <TabsTrigger value="client" className="flex items-center gap-2">
-                        <Monitor className="h-4 w-4" />
-                        Browser
-                      </TabsTrigger>
-                      <TabsTrigger value="server" className="flex items-center gap-2">
-                        <Cloud className="h-4 w-4" />
-                        Server
-                      </TabsTrigger>
-                    </TabsList>
-
-                    <TabsContent value="client" className="mt-4">
-                      <Alert>
-                        <Monitor className="h-4 w-4" />
-                        <AlertDescription>
-                          Renders in your browser using WebCodecs. No upload required.
-                        </AlertDescription>
-                      </Alert>
-                    </TabsContent>
-
-                    <TabsContent value="server" className="mt-4 space-y-4">
-                      <Alert>
-                        <Cloud className="h-4 w-4" />
-                        <AlertDescription>
-                          Uploads media to server for rendering with FFmpeg.
-                        </AlertDescription>
-                      </Alert>
-                      <div className="space-y-3">
-                        <div className="space-y-1.5">
-                          <Label htmlFor="serverApiUrl" className="text-xs">Server URL</Label>
-                          <Input
-                            id="serverApiUrl"
-                            type="url"
-                            placeholder="http://localhost:3001/api"
-                            value={serverApiUrl}
-                            onChange={(e) => setSetting('serverApiUrl', e.target.value)}
-                            className="h-8 text-sm"
-                          />
-                        </div>
-                      </div>
-                    </TabsContent>
-                  </Tabs>
-                ) : (
-                  <Alert>
-                    <Monitor className="h-4 w-4" />
-                    <AlertDescription>
-                      Renders in your browser using WebCodecs. No upload required.
-                    </AlertDescription>
-                  </Alert>
-                )}
-
                 <div className="space-y-4">
-                  {/* Container Format (client mode only) */}
-                  {renderMode === 'client' && (
-                    <div className="space-y-2">
-                      <Label htmlFor="container">Format</Label>
-                      <Select
-                        value={videoContainer}
-                        onValueChange={(v) => setVideoContainer(v as ClientVideoContainer)}
-                      >
-                        <SelectTrigger id="container">
-                          <SelectValue placeholder="Select format" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {getVideoContainerOptions().map((option) => (
-                            <SelectItem key={option.value} value={option.value}>
-                              <span>{option.label}</span>
-                              <span className="ml-2 text-xs text-muted-foreground">{option.description}</span>
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  )}
+                  <div className="space-y-2">
+                    <Label htmlFor="container">Format</Label>
+                    <Select
+                      value={videoContainer}
+                      onValueChange={(v) => setVideoContainer(v as ClientVideoContainer)}
+                    >
+                      <SelectTrigger id="container">
+                        <SelectValue placeholder="Select format" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {getVideoContainerOptions().map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            <span>{option.label}</span>
+                            <span className="ml-2 text-xs text-muted-foreground">{option.description}</span>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
 
                   <div className="space-y-2">
                     <Label htmlFor="codec">Codec</Label>
@@ -638,11 +544,7 @@ export function ExportDialog({ open, onClose }: ExportDialogProps) {
                 Cancel
               </Button>
               <Button onClick={handleStartExport}>
-                {exportMode === 'audio'
-                  ? 'Export Audio'
-                  : renderMode === 'client'
-                    ? 'Render in Browser'
-                    : 'Start Export'}
+                {exportMode === 'audio' ? 'Export Audio' : 'Export Video'}
               </Button>
             </div>
           </div>
@@ -658,11 +560,10 @@ export function ExportDialog({ open, onClose }: ExportDialogProps) {
                 </div>
                 <div className="flex items-center justify-between text-sm gap-2">
                   <span className="text-muted-foreground truncate">
-                    {isUploading && 'Uploading media files...'}
-                    {!isUploading && status === 'preparing' && 'Preparing...'}
-                    {!isUploading && (status === 'rendering' || status === 'processing') && 'Rendering frames...'}
-                    {!isUploading && status === 'encoding' && 'Encoding...'}
-                    {!isUploading && status === 'finalizing' && 'Finalizing...'}
+                    {status === 'preparing' && 'Preparing...'}
+                    {(status === 'rendering' || status === 'processing') && 'Rendering frames...'}
+                    {status === 'encoding' && 'Encoding...'}
+                    {status === 'finalizing' && 'Finalizing...'}
                   </span>
                   <span className="font-medium tabular-nums flex-shrink-0">{Math.round(progress)}%</span>
                 </div>
@@ -685,11 +586,9 @@ export function ExportDialog({ open, onClose }: ExportDialogProps) {
                 )}
               </div>
 
-              {renderMode === 'client' && (
-                <p className="text-xs text-muted-foreground">
-                  Keep this tab open while rendering. Longer videos may take several minutes.
-                </p>
-              )}
+              <p className="text-xs text-muted-foreground">
+                Keep this tab open while rendering. Longer videos may take several minutes.
+              </p>
             </div>
 
             <div className="flex justify-end">

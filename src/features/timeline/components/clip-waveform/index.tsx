@@ -9,7 +9,7 @@ import { WAVEFORM_FILL_COLOR, WAVEFORM_STROKE_COLOR } from '../../constants';
 const BAR_WIDTH = 2;
 const BAR_GAP = 1;
 
-export interface ClipWaveformProps {
+interface ClipWaveformProps {
   /** Media ID from the timeline item */
   mediaId: string;
   /** Width of the clip in pixels */
@@ -43,10 +43,11 @@ export const ClipWaveform = memo(function ClipWaveform({
   sourceDuration,
   trimStart,
   speed,
-  fps: _fps,
+  fps,
   isVisible,
   pixelsPerSecond,
 }: ClipWaveformProps) {
+  void fps;
   const containerRef = useRef<HTMLDivElement>(null);
   const [height, setHeight] = useState(0);
   const [blobUrl, setBlobUrl] = useState<string | null>(null);

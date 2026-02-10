@@ -1,4 +1,4 @@
-// CSS filter types that work in both browser preview and Remotion export
+// CSS filter types that work in both browser preview and Composition export
 export type CSSFilterType =
   | 'brightness'
   | 'contrast'
@@ -13,7 +13,7 @@ export type CSSFilterType =
 export type GlitchVariant = 'rgb-split' | 'scanlines' | 'color-glitch';
 
 // Canvas-based effect variants (require pixel-level processing)
-export type CanvasEffectVariant = 'halftone';
+type CanvasEffectVariant = 'halftone';
 
 // Halftone pattern types
 export type HalftonePatternType = 'dots' | 'lines' | 'rays' | 'ripples';
@@ -21,11 +21,8 @@ export type HalftonePatternType = 'dots' | 'lines' | 'rays' | 'ripples';
 // Halftone blend modes
 export type HalftoneBlendMode = 'multiply' | 'screen' | 'overlay' | 'soft-light';
 
-// Halftone fade directions for gradient blend (legacy - kept for backwards compatibility)
-export type HalftoneFadeDirection = 'none' | 'top' | 'bottom' | 'left' | 'right' | 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
-
 // Overlay effect variants (CSS-based overlays)
-export type OverlayEffectVariant = 'vignette';
+type OverlayEffectVariant = 'vignette';
 
 // CSS filter effect configuration
 export interface CSSFilterEffect {
@@ -82,7 +79,7 @@ export interface ItemEffect {
 }
 
 // Filter configuration metadata for UI
-export interface FilterConfig {
+interface FilterConfig {
   label: string;
   min: number;
   max: number;
@@ -126,19 +123,6 @@ export const HALFTONE_BLEND_MODE_LABELS: Record<HalftoneBlendMode, string> = {
   'soft-light': 'Soft Light',
 };
 
-// Halftone fade direction labels
-export const HALFTONE_FADE_DIRECTION_LABELS: Record<HalftoneFadeDirection, string> = {
-  none: 'None',
-  top: 'Top',
-  bottom: 'Bottom',
-  left: 'Left',
-  right: 'Right',
-  'top-left': 'Top Left',
-  'top-right': 'Top Right',
-  'bottom-left': 'Bottom Left',
-  'bottom-right': 'Bottom Right',
-};
-
 // Halftone effect configuration metadata
 export const HALFTONE_CONFIG = {
   patternType: { label: 'Pattern', default: 'dots' as HalftonePatternType },
@@ -171,7 +155,7 @@ export const OVERLAY_EFFECT_CONFIGS: Record<OverlayEffectVariant, { label: strin
 };
 
 // Effect presets (combinations of multiple effects)
-export interface EffectPreset {
+interface EffectPreset {
   id: string;
   name: string;
   effects: VisualEffect[];

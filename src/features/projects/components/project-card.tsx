@@ -25,7 +25,7 @@ import { formatRelativeTime } from '../utils/project-helpers';
 import { useDeleteProject, useDuplicateProject } from '../hooks/use-project-actions';
 import { useProjectThumbnail } from '../hooks/use-project-thumbnail';
 
-export interface ProjectCardProps {
+interface ProjectCardProps {
   project: Project;
   onEdit?: (project: Project) => void;
 }

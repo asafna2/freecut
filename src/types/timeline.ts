@@ -1,12 +1,12 @@
 import type { TransformProperties } from './transform';
 import type { ItemEffect } from './effects';
 
-// Base type for all timeline items (following Remotion pattern)
+// Base type for all timeline items (following Composition pattern)
 type BaseTimelineItem = {
   id: string;
   trackId: string;
-  from: number; // Start frame (Remotion convention)
-  durationInFrames: number; // Duration in frames (Remotion convention)
+  from: number; // Start frame (Composition convention)
+  durationInFrames: number; // Duration in frames (Composition convention)
   label: string;
   mediaId?: string;
   originId?: string; // Tracks lineage - items from same split share this for stable React keys
@@ -132,27 +132,6 @@ export interface TimelineTrack {
   color?: string; // Optional - tracks are generic containers, items have colors
   order: number;
   items: TimelineItem[];
-}
-
-export interface Gap {
-  start: number;
-  end: number;
-  duration: number;
-}
-
-export interface SnapTarget {
-  id: string;
-  time: number;
-  type: 'clip-start' | 'clip-end' | 'playhead' | 'marker';
-  label?: string;
-}
-
-// Ruler tick markers (for time ruler display)
-export interface RulerMarker {
-  time: number;
-  position: number;
-  label: string;
-  major: boolean;
 }
 
 // Project markers (user-created timeline markers)

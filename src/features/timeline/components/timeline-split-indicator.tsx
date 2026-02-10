@@ -2,7 +2,7 @@ import { useTimelineZoomContext } from '../contexts/timeline-zoom-context';
 import { useTimelineStore } from '../stores/timeline-store';
 import { usePlaybackStore } from '@/features/preview/stores/playback-store';
 
-export interface TimelineSplitIndicatorProps {
+interface TimelineSplitIndicatorProps {
   /** X position in pixels relative to timeline container */
   cursorX: number | null;
   /** The hovered item element for positioning the indicator to clip height */

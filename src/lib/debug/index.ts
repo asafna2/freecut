@@ -8,4 +8,3 @@
  */
 
 export { initializeDebugUtils } from './project-debug';
-export type { ProjectDebugAPI } from './project-debug';

@@ -21,7 +21,7 @@ export const DEFAULT_SPEED = 1;
 /**
  * Extract source properties from a media item with defaults.
  */
-export interface SourceProperties {
+interface SourceProperties {
   sourceStart: number;
   sourceEnd: number | undefined;
   sourceDuration: number | undefined;
@@ -109,17 +109,6 @@ export function clampSpeed(speed: number): number {
 }
 
 /**
- * Calculate the source end position for a given timeline duration.
- */
-export function calculateSourceEnd(
-  sourceStart: number,
-  timelineDuration: number,
-  speed: number
-): number {
-  return sourceStart + timelineToSourceFrames(timelineDuration, speed);
-}
-
-/**
  * Validate that a seek position is within source bounds.
  */
 export function isValidSeekPosition(
@@ -181,7 +170,7 @@ export function isMediaItem(item: TimelineItem): item is TimelineItem & {
  * Calculate source boundaries for split items.
  * Returns source positions for left and right items after a split.
  */
-export interface SplitSourceBoundaries {
+interface SplitSourceBoundaries {
   left: { sourceEnd: number };
   right: { sourceStart: number; sourceEnd: number };
 }

@@ -23,7 +23,7 @@ import { UnsavedChangesDialog } from './unsaved-changes-dialog';
 import { ShortcutsDialog } from './shortcuts-dialog';
 import { SettingsDialog } from './settings-dialog';
 
-export interface ToolbarProps {
+interface ToolbarProps {
   projectId: string;
   project: {
     id: string;

@@ -6,13 +6,13 @@ import type { ProjectMarker } from '@/types/timeline';
  * Markers are independent of clips - they're reference points on the timeline.
  */
 
-export interface MarkersState {
+interface MarkersState {
   markers: ProjectMarker[];
   inPoint: number | null;
   outPoint: number | null;
 }
 
-export interface MarkersActions {
+interface MarkersActions {
   // Bulk setters for snapshot restore
   setMarkers: (markers: ProjectMarker[]) => void;
   setInPoint: (frame: number | null) => void;

@@ -1,4 +1,11 @@
-import type { CaptureOptions } from './utils/player-capture';
+export interface CaptureOptions {
+  width?: number;
+  height?: number;
+  quality?: number;
+  format?: 'image/jpeg' | 'image/png' | 'image/webp';
+  /** If true, capture at container size without scaling */
+  fullResolution?: boolean;
+}
 
 export interface PlaybackState {
   currentFrame: number;
@@ -8,6 +15,8 @@ export interface PlaybackState {
   volume: number;
   muted: boolean;
   zoom: number;
+  /** Frame to preview on hover (null when not hovering) */
+  previewFrame: number | null;
   /** Function to capture the current Player frame as a data URL (set by VideoPreview) */
   captureFrame: ((options?: CaptureOptions) => Promise<string | null>) | null;
 }
@@ -22,6 +31,7 @@ export interface PlaybackActions {
   setVolume: (volume: number) => void;
   toggleMute: () => void;
   setZoom: (zoom: number) => void;
+  setPreviewFrame: (frame: number | null) => void;
   /** Register a frame capture function (called by VideoPreview on mount) */
   setCaptureFrame: (fn: ((options?: CaptureOptions) => Promise<string | null>) | null) => void;
 }

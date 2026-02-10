@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo, useEffectEvent } from 'react';
 import { gifFrameCache, type CachedGifFrames } from '../services/gif-frame-cache';
 
-export interface UseGifFramesOptions {
+interface UseGifFramesOptions {
   /** Media ID from the timeline item */
   mediaId: string;
   /** Blob URL for the GIF file */
@@ -12,7 +12,7 @@ export interface UseGifFramesOptions {
   enabled?: boolean;
 }
 
-export interface UseGifFramesResult {
+interface UseGifFramesResult {
   /** Array of ImageBitmap frames (null if loading or not available) */
   frames: ImageBitmap[] | null;
   /** Frame durations in milliseconds */

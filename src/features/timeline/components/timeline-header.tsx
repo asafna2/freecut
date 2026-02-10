@@ -29,7 +29,7 @@ import {
   ZOOM_MAX,
 } from '../constants';
 
-export interface TimelineHeaderProps {
+interface TimelineHeaderProps {
   onZoomChange?: (newZoom: number) => void;
   onZoomIn?: () => void;
   onZoomOut?: () => void;

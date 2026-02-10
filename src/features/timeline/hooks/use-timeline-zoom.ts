@@ -2,7 +2,7 @@ import { useCallback } from 'react';
 import { useTimelineStore } from '../stores/timeline-store';
 import { useZoomStore } from '../stores/zoom-store';
 
-export interface UseTimelineZoomOptions {
+interface UseTimelineZoomOptions {
   initialZoom?: number;
   minZoom?: number;
   maxZoom?: number;

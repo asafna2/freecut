@@ -19,7 +19,7 @@ const EDGE_SCROLL_MAX_SPEED = 20; // Max pixels per frame at max distance
 const EDGE_SCROLL_ACCELERATION = 0.3; // Speed multiplier per pixel of distance
 const EDGE_SCROLL_ZONE = 30; // Pixels from edge to trigger scroll (inside viewport)
 
-export interface TimelineMarkersProps {
+interface TimelineMarkersProps {
   duration: number; // Total timeline duration in seconds
   width?: number; // Explicit width in pixels (optional)
 }

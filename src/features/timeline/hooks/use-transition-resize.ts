@@ -5,7 +5,7 @@ import { useTimelineStore } from '../stores/timeline-store';
 import { useTimelineZoom } from './use-timeline-zoom';
 import type { TimelineState, TimelineActions } from '../types';
 
-export type ResizeHandle = 'left' | 'right';
+type ResizeHandle = 'left' | 'right';
 
 interface ResizeState {
   isResizing: boolean;

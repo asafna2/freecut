@@ -4,7 +4,7 @@ import { HexColorPicker } from 'react-colorful';
 import { Button } from '@/components/ui/button';
 import { PropertyRow } from './property-row';
 
-export interface ColorPickerProps {
+interface ColorPickerProps {
   /** Current color value (hex or oklch format) */
   color: string;
   /** Called when color is committed (picker closed) */

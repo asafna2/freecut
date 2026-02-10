@@ -119,6 +119,9 @@ export interface ProjectTimeline {
     presentation?: string;
     timing?: string;
     direction?: string;
+    alignment?: number;
+    bezierPoints?: { x1: number; y1: number; x2: number; y2: number };
+    presetId?: string;
   }>;
   // Keyframe animations
   keyframes?: Array<{
@@ -141,10 +144,4 @@ export interface ProjectResolution {
   height: number;
   fps: number;
   backgroundColor?: string; // Hex color, defaults to #000000
-}
-
-export interface ProjectFormData {
-  name: string;
-  description: string;
-  metadata: ProjectResolution;
 }

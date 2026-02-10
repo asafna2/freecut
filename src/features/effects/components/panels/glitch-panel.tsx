@@ -5,7 +5,7 @@ import type { ItemEffect, GlitchEffect } from '@/types/effects';
 import { GLITCH_CONFIGS } from '@/types/effects';
 import { PropertyRow, NumberInput } from '@/features/editor/components/properties-sidebar/components';
 
-export interface GlitchPanelProps {
+interface GlitchPanelProps {
   effect: ItemEffect;
   glitchEffect: GlitchEffect;
   onIntensityChange: (effectId: string, percentValue: number) => void;

@@ -15,7 +15,7 @@ import { useProjectStore } from '@/features/projects/stores/project-store';
 import { mediaLibraryService } from '@/features/media-library/services/media-library-service';
 import { findNearestAvailableSpace } from '../utils/collision-utils';
 import { getMediaDragData } from '@/features/media-library/utils/drag-data-cache';
-import { CLIP_HEIGHT } from '@/features/timeline/constants';
+import { DEFAULT_TRACK_HEIGHT } from '@/features/timeline/constants';
 
 /**
  * Compute initial fit-to-canvas transform for an item.
@@ -49,7 +49,7 @@ import {
   ContextMenuTrigger,
 } from '@/components/ui/context-menu';
 
-export interface TimelineTrackProps {
+interface TimelineTrackProps {
   track: TimelineTrackType;
   timelineWidth?: number;
 }
@@ -126,7 +126,7 @@ export const TimelineTrack = memo(function TimelineTrack({ track }: TimelineTrac
   const isFrameInGap = useCallback((frame: number) => {
     if (trackItems.length === 0) return false;
 
-    const sortedItems = [...trackItems].sort((a, b) => a.from - b.from);
+    const sortedItems = trackItems.toSorted((a, b) => a.from - b.from);
 
     // Check if frame is inside any clip
     for (const item of sortedItems) {
@@ -588,21 +588,21 @@ export const TimelineTrack = memo(function TimelineTrack({ track }: TimelineTrac
               style={{
                 left: `${ghost.left}px`,
                 width: `${ghost.width}px`,
-                height: CLIP_HEIGHT,
+                height: DEFAULT_TRACK_HEIGHT,
               }}
             >
               <span className="text-xs text-foreground/70 truncate">{ghost.label}</span>
             </div>
           ))}
 
-          {/* Render all items for this track - always visible in timeline UI */}
+          {/* Render all items for this track - dimmed when track is hidden */}
           {trackItems.map((item) => (
-            <TimelineItem key={item.id} item={item} timelineDuration={30} trackLocked={track.locked} />
+            <TimelineItem key={item.id} item={item} timelineDuration={30} trackLocked={track.locked} trackHidden={!track.visible} />
           ))}
 
           {/* Render transitions for this track */}
           {trackTransitions.map((transition) => (
-            <TransitionItem key={transition.id} transition={transition} trackHeight={track.height} />
+            <TransitionItem key={transition.id} transition={transition} trackHeight={track.height} trackHidden={!track.visible} />
           ))}
 
           {/* Locked track overlay indicator */}

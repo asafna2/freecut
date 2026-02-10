@@ -6,14 +6,14 @@
  * is not accessible during dragover events for security reasons.
  */
 
-export interface DragMediaItem {
+interface DragMediaItem {
   mediaId: string;
   mediaType: string;
   fileName: string;
   duration: number;
 }
 
-export interface MediaDragData {
+interface MediaDragData {
   type: 'media-item' | 'media-items';
   items?: DragMediaItem[];
   mediaId?: string;

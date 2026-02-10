@@ -4,7 +4,7 @@ import { persist } from 'zustand/middleware';
 /**
  * App-wide settings stored in localStorage
  */
-export interface AppSettings {
+interface AppSettings {
   // Timeline defaults
   defaultFps: number;
   snapEnabled: boolean;
@@ -22,8 +22,6 @@ export interface AppSettings {
   maxUndoHistory: number;
   autoSaveInterval: number; // minutes (0 = disabled)
 
-  // Server configuration (empty = use env var default)
-  serverApiUrl: string;
 }
 
 interface SettingsActions {
@@ -31,7 +29,7 @@ interface SettingsActions {
   resetToDefaults: () => void;
 }
 
-export type SettingsStore = AppSettings & SettingsActions;
+type SettingsStore = AppSettings & SettingsActions;
 
 const DEFAULT_SETTINGS: AppSettings = {
   // Timeline defaults
@@ -50,9 +48,6 @@ const DEFAULT_SETTINGS: AppSettings = {
   // Performance
   maxUndoHistory: 50,
   autoSaveInterval: 0, // Auto-save disabled by default
-
-  // Server configuration (empty = use env var default)
-  serverApiUrl: '',
 };
 
 /**
@@ -77,15 +72,3 @@ export const useSettingsStore = create<SettingsStore>()(
     }
   )
 );
-
-// Selectors for granular subscriptions
-export const selectDefaultFps = (state: SettingsStore) => state.defaultFps;
-export const selectSnapEnabled = (state: SettingsStore) => state.snapEnabled;
-export const selectShowWaveforms = (state: SettingsStore) => state.showWaveforms;
-export const selectShowFilmstrips = (state: SettingsStore) => state.showFilmstrips;
-export const selectPreviewQuality = (state: SettingsStore) => state.previewQuality;
-export const selectDefaultExportFormat = (state: SettingsStore) =>
-  state.defaultExportFormat;
-export const selectDefaultExportQuality = (state: SettingsStore) =>
-  state.defaultExportQuality;
-export const selectServerApiUrl = (state: SettingsStore) => state.serverApiUrl;

@@ -4,7 +4,7 @@ import type { TimelineItem } from '@/types/timeline';
 /**
  * Result of auto-keyframing a property
  */
-export interface AutoKeyframeResult {
+interface AutoKeyframeResult {
   /** Whether this property was auto-keyframed */
   handled: boolean;
   /** Action to perform: 'add' new keyframe or 'update' existing */
@@ -17,7 +17,7 @@ export interface AutoKeyframeResult {
  * Check if a property should be auto-keyframed and get the action to perform.
  * Does NOT perform the keyframe operation - just determines what should happen.
  */
-export function shouldAutoKeyframe(
+function shouldAutoKeyframe(
   itemKeyframes: ItemKeyframes | undefined,
   property: AnimatableProperty,
   relativeFrame: number,
@@ -85,4 +85,3 @@ export const GIZMO_ANIMATABLE_PROPS: AnimatableProperty[] = ['x', 'y', 'width', 
 /**
  * All animatable transform properties
  */
-export const ALL_ANIMATABLE_PROPS: AnimatableProperty[] = ['x', 'y', 'width', 'height', 'rotation', 'opacity', 'cornerRadius'];

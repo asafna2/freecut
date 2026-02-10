@@ -32,12 +32,13 @@ import {
   getAllMedia,
   getProjectMediaIds,
   getDBStats,
+  createProject,
 } from '@/lib/storage/indexeddb';
 
 /**
  * Debug API interface
  */
-export interface ProjectDebugAPI {
+interface ProjectDebugAPI {
   // Export functions
   exportProject: (projectId: string, options?: SnapshotExportOptions) => Promise<ProjectSnapshot>;
   exportProjectString: (projectId: string, options?: SnapshotExportOptions) => Promise<string>;
@@ -179,7 +180,6 @@ function createDebugAPI(): ProjectDebugAPI {
       const { generateFixture } = await import(
         '@/features/project-bundle/services/test-fixtures'
       );
-      const { createProject } = await import('@/lib/storage/indexeddb');
       const { project } = generateFixture(type, options);
       await createProject(project);
       return project;

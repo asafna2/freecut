@@ -24,13 +24,13 @@ import * as timelineActions from '../stores/timeline-actions';
 import { getTransitionBlockedRanges } from '@/features/keyframes/utils/transition-region';
 
 /** Height of the panel header bar in pixels */
-export const GRAPH_PANEL_HEADER_HEIGHT = 32;
+const GRAPH_PANEL_HEADER_HEIGHT = 32;
 
 /** Height of the resize handle in pixels */
 const RESIZE_HANDLE_HEIGHT = 6;
 
 /** Default height of the graph content area in pixels */
-export const GRAPH_PANEL_CONTENT_HEIGHT = 200;
+const GRAPH_PANEL_CONTENT_HEIGHT = 200;
 
 /** Minimum content height */
 const MIN_CONTENT_HEIGHT = 100;
@@ -305,7 +305,7 @@ export const KeyframeGraphPanel = memo(function KeyframeGraphPanel({
 
       // If there are existing keyframes, interpolate value
       if (propKeyframes && propKeyframes.keyframes.length > 0) {
-        const sorted = [...propKeyframes.keyframes].sort((a, b) => a.frame - b.frame);
+        const sorted = propKeyframes.keyframes.toSorted((a, b) => a.frame - b.frame);
         const before = sorted.filter((kf) => kf.frame <= frame).pop();
         const after = sorted.find((kf) => kf.frame > frame);
 
@@ -454,5 +454,3 @@ export const KeyframeGraphPanel = memo(function KeyframeGraphPanel({
     </div>
   );
 });
-
-export default KeyframeGraphPanel;

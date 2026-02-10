@@ -45,11 +45,13 @@ export function useTimelineTracks() {
   /**
    * Remove multiple tracks by IDs
    * Reads latest state to avoid stale closure bugs
+   * Uses Set for O(1) lookups instead of O(n) includes()
    */
   const removeTracks = useCallback(
     (ids: string[]) => {
       const currentTracks = useTimelineStore.getState().tracks;
-      setTracks(currentTracks.filter((track) => !ids.includes(track.id)));
+      const idsSet = new Set(ids);
+      setTracks(currentTracks.filter((track) => !idsSet.has(track.id)));
     },
     [setTracks]
   );

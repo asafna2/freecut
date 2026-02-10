@@ -2,7 +2,7 @@
  * Types for the value graph editor.
  */
 
-import type { Keyframe, AnimatableProperty, EasingConfig } from '@/types/keyframe';
+import type { Keyframe, AnimatableProperty } from '@/types/keyframe';
 
 /**
  * Viewport configuration for the graph.
@@ -41,20 +41,6 @@ export interface GraphKeyframePoint {
   isSelected: boolean;
   /** Whether this point is being dragged */
   isDragging: boolean;
-}
-
-/**
- * A curve segment between two keyframes.
- */
-export interface GraphCurveSegment {
-  /** Start keyframe */
-  startPoint: GraphKeyframePoint;
-  /** End keyframe */
-  endPoint: GraphKeyframePoint;
-  /** SVG path for the curve */
-  path: string;
-  /** Easing configuration for this segment */
-  easingConfig?: EasingConfig;
 }
 
 /**
@@ -102,7 +88,7 @@ export interface GraphDragState {
 /**
  * Value range configuration for a property.
  */
-export interface PropertyValueRange {
+interface PropertyValueRange {
   /** Property type */
   property: AnimatableProperty;
   /** Minimum value */

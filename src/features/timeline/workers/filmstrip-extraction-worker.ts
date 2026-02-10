@@ -111,7 +111,7 @@ async function extractAndSave(
 ): Promise<void> {
   const {
     requestId, mediaId, blobUrl, duration, width, height, skipIndices,
-    startIndex, endIndex, totalFrames: totalFramesOverride, workerId = 0
+    startIndex, endIndex, totalFrames: totalFramesOverride
   } = request;
 
   // Calculate frame range - support both full extraction and chunked
@@ -176,13 +176,11 @@ async function extractAndSave(
     // Track extracted frames
     let extractedCount = skipSet.size;
     let frameListIndex = 0;
-    let timestampsYielded = 0;
 
     // Generator for timestamps
     async function* timestampGenerator(): AsyncGenerator<number> {
       for (const frame of framesToExtract) {
         if (state.aborted) return;
-        timestampsYielded++;
         yield frame.timestamp;
       }
     }

@@ -2,7 +2,7 @@ import { memo } from 'react';
 import { Link2Off, Diamond } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-export interface ClipIndicatorsProps {
+interface ClipIndicatorsProps {
   /** Whether the item has keyframe animations */
   hasKeyframes: boolean;
   /** Current playback speed (1 = normal) */

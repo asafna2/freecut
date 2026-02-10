@@ -10,7 +10,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Volume2, VolumeX } from 'lucide-react';
 
-export interface UnsupportedCodecFile {
+interface UnsupportedCodecFile {
   fileName: string;
   audioCodec: string;
 }

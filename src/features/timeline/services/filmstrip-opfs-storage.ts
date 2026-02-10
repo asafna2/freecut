@@ -18,7 +18,7 @@ const logger = createLogger('FilmstripOPFS');
 const FILMSTRIP_DIR = 'filmstrips';
 const FRAME_RATE = 1; // Must match worker - 1fps for filmstrip thumbnails
 
-export interface FilmstripMetadata {
+interface FilmstripMetadata {
   width: number;
   height: number;
   isComplete: boolean;
@@ -31,7 +31,7 @@ export interface FilmstripFrame {
   url: string; // Object URL for img src
 }
 
-export interface LoadedFilmstrip {
+interface LoadedFilmstrip {
   metadata: FilmstripMetadata;
   frames: FilmstripFrame[];
   existingIndices: number[];

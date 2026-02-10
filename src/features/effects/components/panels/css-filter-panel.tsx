@@ -5,7 +5,7 @@ import type { ItemEffect, CSSFilterEffect } from '@/types/effects';
 import { CSS_FILTER_CONFIGS } from '@/types/effects';
 import { PropertyRow, NumberInput } from '@/features/editor/components/properties-sidebar/components';
 
-export interface CSSFilterPanelProps {
+interface CSSFilterPanelProps {
   effect: ItemEffect;
   cssEffect: CSSFilterEffect;
   onEffectChange: (effectId: string, value: number) => void;

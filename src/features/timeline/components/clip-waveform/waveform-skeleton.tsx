@@ -3,7 +3,7 @@ import { memo } from 'react';
 // Waveform dimensions
 const WAVEFORM_HEIGHT = 32;
 
-export interface WaveformSkeletonProps {
+interface WaveformSkeletonProps {
   /** Width of the clip in pixels */
   clipWidth: number;
   /** Height of the skeleton (default: 32px) */

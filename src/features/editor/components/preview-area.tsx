@@ -1,10 +1,8 @@
 import { useState, useEffect, useRef, memo, useMemo } from 'react';
-import {
-  VideoPreview,
-  PlaybackControls,
-  TimecodeDisplay,
-  PreviewZoomControls,
-} from '@/features/preview';
+import { VideoPreview } from '@/features/preview/components/video-preview';
+import { PlaybackControls } from '@/features/preview/components/playback-controls';
+import { TimecodeDisplay } from '@/features/preview/components/timecode-display';
+import { PreviewZoomControls } from '@/features/preview/components/preview-zoom-controls';
 import { useTimelineStore } from '@/features/timeline/stores/timeline-store';
 import { useProjectStore } from '@/features/projects/stores/project-store';
 
@@ -15,6 +13,9 @@ interface PreviewAreaProps {
     fps: number;
   };
 }
+
+const PREVIEW_PADDING_PX = 48;
+const DEFAULT_EMPTY_TIMELINE_SECONDS = 10;
 
 /**
  * Preview Area Component
@@ -43,14 +44,20 @@ export const PreviewArea = memo(function PreviewArea({ project }: PreviewAreaPro
   const fps = projectFps ?? project.fps;
   const backgroundColor = projectBgColor ?? '#000000';
 
-  // Calculate total frames from timeline items using a derived selector
-  // Only re-renders when the computed totalFrames actually changes
-  const totalFrames = useTimelineStore(
-    useMemo(() => (s) => {
-      if (s.items.length === 0) return fps * 10; // Default 10 seconds if no items
-      return Math.max(...s.items.map(item => item.from + item.durationInFrames));
-    }, [fps])
-  );
+  // Derive timeline end frame directly from store state to avoid recreating selector functions.
+  const timelineEndFrame = useTimelineStore((s) => {
+    if (s.items.length === 0) return null;
+    let maxFrame = 0;
+    for (const item of s.items) {
+      const itemEnd = item.from + item.durationInFrames;
+      if (itemEnd > maxFrame) {
+        maxFrame = itemEnd;
+      }
+    }
+    return maxFrame;
+  });
+
+  const totalFrames = timelineEndFrame ?? fps * DEFAULT_EMPTY_TIMELINE_SECONDS;
 
   // Measure preview container size for zoom calculations
   useEffect(() => {
@@ -59,10 +66,15 @@ export const PreviewArea = memo(function PreviewArea({ project }: PreviewAreaPro
 
     const updateSize = () => {
       const rect = element.getBoundingClientRect();
-      // Account for padding (p-6 = 24px on each side)
-      setContainerSize({
-        width: rect.width - 48,
-        height: rect.height - 48,
+      const nextWidth = Math.max(0, Math.floor(rect.width - PREVIEW_PADDING_PX));
+      const nextHeight = Math.max(0, Math.floor(rect.height - PREVIEW_PADDING_PX));
+
+      // Bail out when dimensions are unchanged to avoid redundant re-renders.
+      setContainerSize((prev) => {
+        if (prev.width === nextWidth && prev.height === nextHeight) {
+          return prev;
+        }
+        return { width: nextWidth, height: nextHeight };
       });
     };
 
@@ -103,16 +115,11 @@ export const PreviewArea = memo(function PreviewArea({ project }: PreviewAreaPro
         </div>
 
         {/* Center: Playback Controls */}
-        <PlaybackControls totalFrames={totalFrames} fps={fps} />
+        <PlaybackControls totalFrames={totalFrames} />
 
         {/* Right: Zoom Controls */}
         <div className="absolute right-6">
-          <PreviewZoomControls
-            containerWidth={containerSize.width}
-            containerHeight={containerSize.height}
-            projectWidth={width}
-            projectHeight={height}
-          />
+          <PreviewZoomControls />
         </div>
       </div>
     </div>

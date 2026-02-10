@@ -20,7 +20,7 @@ import {
   ColorPicker,
 } from '@/features/editor/components/properties-sidebar/components';
 
-export interface HalftonePanelProps {
+interface HalftonePanelProps {
   effect: ItemEffect;
   halftone: HalftoneEffect;
   onPropertyChange: (effectId: string, property: keyof HalftoneEffect, value: number | string | boolean) => void;

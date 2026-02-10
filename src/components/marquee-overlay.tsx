@@ -1,6 +1,6 @@
 import { getMarqueeRect, type MarqueeState } from '@/hooks/use-marquee-selection';
 
-export interface MarqueeOverlayProps {
+interface MarqueeOverlayProps {
   /** Current marquee state */
   marqueeState: MarqueeState;
 

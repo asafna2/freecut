@@ -1,7 +1,7 @@
 import type { SnapTarget } from '../types/drag';
 import { useTimelineZoomContext } from '../contexts/timeline-zoom-context';
 
-export interface TimelineGuidelinesProps {
+interface TimelineGuidelinesProps {
   /** Currently snapped target (highlighted) */
   activeSnapTarget: SnapTarget | null;
 }

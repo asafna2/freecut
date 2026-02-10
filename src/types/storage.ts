@@ -69,17 +69,6 @@ export interface ProjectMediaAssociation {
   addedAt: number;
 }
 
-export interface ProjectMetadata {
-  id: string;
-  name: string;
-  description: string;
-  duration: number;
-  resolution: { width: number; height: number };
-  fps: number;
-  createdAt: number;
-  updatedAt: number;
-}
-
 export interface ThumbnailData {
   id: string;
   mediaId: string;

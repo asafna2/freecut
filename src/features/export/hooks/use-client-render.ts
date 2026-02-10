@@ -1,19 +1,12 @@
 /**
  * Client-side render hook
  *
- * Provides a React hook for client-side video rendering using mediabunny.
- * This is an alternative to the server-side `useRender` hook that doesn't
- * require a backend server.
- *
- * Key differences from server-side rendering:
- * - No media upload required (uses blob URLs directly)
- * - Limited codec support (WebCodecs-based)
- * - Runs entirely in the browser
- * - Progress reported via callbacks, not Socket.IO
+ * Provides a React hook for video rendering using mediabunny.
+ * Uses blob URLs directly, runs entirely in the browser with WebCodecs.
  */
 
 import { useState, useCallback, useRef } from 'react';
-import type { ExportSettings, ExtendedExportSettings } from '@/types/export';
+import type { ExportSettings, ExtendedExportSettings, CompositionInputProps } from '@/types/export';
 import type { RenderProgress, ClientRenderResult, ClientVideoContainer, ClientAudioContainer } from '../utils/client-renderer';
 import {
   mapToClientSettings,
@@ -25,15 +18,19 @@ import {
   getAudioBitrateForQuality,
 } from '../utils/client-renderer';
 import { renderComposition, renderAudioOnly } from '../utils/client-render-engine';
-import { convertTimelineToRemotion } from '../utils/timeline-to-remotion';
+import { convertTimelineToComposition } from '../utils/timeline-to-composition';
 import { useTimelineStore } from '@/features/timeline/stores/timeline-store';
 import { useProjectStore } from '@/features/projects/stores/project-store';
 import { resolveMediaUrls } from '@/features/preview/utils/media-resolver';
 import { createLogger } from '@/lib/logger';
+import type {
+  ExportRenderWorkerRequest,
+  ExportRenderWorkerResponse,
+} from '../workers/export-render-worker.types';
 
 const log = createLogger('useClientRender');
 
-export type ClientRenderStatus =
+type ClientRenderStatus =
   | 'idle'
   | 'preparing'
   | 'rendering'
@@ -75,6 +72,16 @@ export function useClientRender(): UseClientRenderReturn {
 
   // AbortController for cancellation
   const abortControllerRef = useRef<AbortController | null>(null);
+  const exportWorkerRef = useRef<Worker | null>(null);
+  const exportWorkerRequestIdRef = useRef<string | null>(null);
+
+  const terminateExportWorker = useCallback(() => {
+    if (exportWorkerRef.current) {
+      exportWorkerRef.current.terminate();
+      exportWorkerRef.current = null;
+    }
+    exportWorkerRequestIdRef.current = null;
+  }, []);
 
   /**
    * Handle progress updates from the render engine
@@ -109,6 +116,111 @@ export function useClientRender(): UseClientRenderReturn {
   const isExtendedSettings = (settings: ExportSettings | ExtendedExportSettings): settings is ExtendedExportSettings => {
     return 'mode' in settings;
   };
+
+  const renderOnMainThread = useCallback(async (
+    exportMode: 'video' | 'audio',
+    clientSettings: ReturnType<typeof mapToClientSettings>,
+    composition: CompositionInputProps,
+    signal: AbortSignal
+  ): Promise<ClientRenderResult> => {
+    if (exportMode === 'audio') {
+      return renderAudioOnly({
+        settings: clientSettings,
+        composition,
+        onProgress: handleProgress,
+        signal,
+      });
+    }
+
+    return renderComposition({
+      settings: clientSettings,
+      composition,
+      onProgress: handleProgress,
+      signal,
+    });
+  }, [handleProgress]);
+
+  const renderInWorker = useCallback(async (
+    clientSettings: ReturnType<typeof mapToClientSettings>,
+    composition: CompositionInputProps,
+    signal: AbortSignal
+  ): Promise<ClientRenderResult> => {
+    if (typeof Worker === 'undefined') {
+      throw new Error('WORKER_UNAVAILABLE');
+    }
+
+    return new Promise<ClientRenderResult>((resolve, reject) => {
+      if (signal.aborted) {
+        reject(new DOMException('Render cancelled', 'AbortError'));
+        return;
+      }
+
+      const requestId = `export-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const worker = new Worker(
+        new URL('../workers/export-render.worker.ts', import.meta.url),
+        { type: 'module' }
+      );
+
+      exportWorkerRef.current = worker;
+      exportWorkerRequestIdRef.current = requestId;
+
+      const cleanup = () => {
+        signal.removeEventListener('abort', onAbort);
+        terminateExportWorker();
+      };
+
+      const onAbort = () => {
+        const cancelMessage: ExportRenderWorkerRequest = {
+          type: 'cancel',
+          requestId,
+        };
+        worker.postMessage(cancelMessage);
+      };
+
+      signal.addEventListener('abort', onAbort, { once: true });
+
+      worker.onmessage = (event: MessageEvent<ExportRenderWorkerResponse>) => {
+        const response = event.data;
+        if (response.requestId !== requestId) {
+          return;
+        }
+
+        switch (response.type) {
+          case 'progress':
+            handleProgress(response.progress);
+            break;
+          case 'complete':
+            cleanup();
+            resolve(response.result);
+            break;
+          case 'cancelled':
+            cleanup();
+            reject(new DOMException('Render cancelled', 'AbortError'));
+            break;
+          case 'error':
+            cleanup();
+            reject(new Error(response.error));
+            break;
+        }
+      };
+
+      worker.onerror = (event: ErrorEvent) => {
+        cleanup();
+        const location = event.filename
+          ? ` @${event.filename}:${event.lineno}:${event.colno}`
+          : '';
+        reject(new Error(`EXPORT_WORKER_RUNTIME_ERROR:${event.message}${location}`));
+      };
+
+      const startMessage: ExportRenderWorkerRequest = {
+        type: 'start',
+        requestId,
+        settings: clientSettings,
+        composition,
+      };
+      worker.postMessage(startMessage);
+    });
+  }, [handleProgress, terminateExportWorker]);
 
   /**
    * Start client-side export
@@ -212,9 +324,9 @@ export function useClientRender(): UseClientRenderReturn {
           }
         }
 
-        // Convert timeline to Remotion format (handles I/O point trimming)
+        // Convert timeline to Composition format (handles I/O point trimming)
         // Use PROJECT resolution so transforms match preview (will scale to export res later)
-        const composition = convertTimelineToRemotion(
+        const composition = convertTimelineToComposition(
           tracks,
           items,
           transitions,
@@ -257,20 +369,20 @@ export function useClientRender(): UseClientRenderReturn {
         for (const track of resolvedTracks) {
           for (const item of track.items ?? []) {
             totalResolvedItems++;
-            if ((item as any).src) {
+            if ('src' in item && item.src) {
               itemsWithSrc++;
               log.debug('Item with resolved src', {
                 itemId: item.id,
                 type: item.type,
                 from: item.from,
                 duration: item.durationInFrames,
-                srcPrefix: ((item as any).src as string)?.substring(0, 50),
+                srcPrefix: (item.src as string)?.substring(0, 50),
               });
             } else if (item.type === 'video' || item.type === 'audio' || item.type === 'image') {
               log.warn('Media item missing src', {
                 itemId: item.id,
                 type: item.type,
-                mediaId: (item as any).mediaId,
+                mediaId: item.mediaId,
               });
             }
           }
@@ -283,23 +395,32 @@ export function useClientRender(): UseClientRenderReturn {
 
         // Run the render based on export mode
         let renderResult: ClientRenderResult;
+        const signal = abortControllerRef.current.signal;
 
-        if (exportMode === 'audio') {
-          // Audio-only export
-          renderResult = await renderAudioOnly({
-            settings: clientSettings,
-            composition,
-            onProgress: handleProgress,
-            signal: abortControllerRef.current.signal,
-          });
-        } else {
-          // Video export (includes audio)
-          renderResult = await renderComposition({
-            settings: clientSettings,
-            composition,
-            onProgress: handleProgress,
-            signal: abortControllerRef.current.signal,
-          });
+        try {
+          renderResult = await renderInWorker(clientSettings, composition, signal);
+        } catch (workerError) {
+          if (workerError instanceof DOMException && workerError.name === 'AbortError') {
+            throw workerError;
+          }
+
+          const workerMessage = workerError instanceof Error
+            ? workerError.message
+            : String(workerError);
+
+          const shouldFallbackToMainThread = workerMessage.startsWith('WORKER_REQUIRES_MAIN_THREAD:')
+            || workerMessage.startsWith('WORKER_UNAVAILABLE')
+            || workerMessage.startsWith('EXPORT_WORKER_RUNTIME_ERROR:');
+
+          if (!shouldFallbackToMainThread) {
+            throw workerError;
+          }
+
+          log.warn(
+            `Worker export unavailable for this composition, falling back to main thread (${workerMessage})`
+          );
+
+          renderResult = await renderOnMainThread(exportMode, clientSettings, composition, signal);
         }
 
         setResult(renderResult);
@@ -321,23 +442,33 @@ export function useClientRender(): UseClientRenderReturn {
           setStatus('failed');
         }
       } finally {
+        terminateExportWorker();
         setIsExporting(false);
         abortControllerRef.current = null;
       }
     },
-    [handleProgress]
+    [renderInWorker, renderOnMainThread, terminateExportWorker]
   );
 
   /**
    * Cancel the current export
    */
   const cancelExport = useCallback(() => {
+    if (exportWorkerRef.current && exportWorkerRequestIdRef.current) {
+      const cancelMessage: ExportRenderWorkerRequest = {
+        type: 'cancel',
+        requestId: exportWorkerRequestIdRef.current,
+      };
+      exportWorkerRef.current.postMessage(cancelMessage);
+    }
+
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       setStatus('cancelled');
       setIsExporting(false);
     }
-  }, []);
+    terminateExportWorker();
+  }, [terminateExportWorker]);
 
   /**
    * Download the rendered video/audio
@@ -373,6 +504,7 @@ export function useClientRender(): UseClientRenderReturn {
    * Reset state
    */
   const resetState = useCallback(() => {
+    terminateExportWorker();
     setIsExporting(false);
     setProgress(0);
     setRenderedFrames(undefined);
@@ -381,7 +513,7 @@ export function useClientRender(): UseClientRenderReturn {
     setError(null);
     setResult(null);
     abortControllerRef.current = null;
-  }, []);
+  }, [terminateExportWorker]);
 
   /**
    * Get supported codecs for the current resolution

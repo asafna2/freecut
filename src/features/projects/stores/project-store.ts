@@ -16,16 +16,7 @@ import { createProjectObject, duplicateProject } from '../utils/project-helpers'
 // v3: Import media service for cascade operations
 import { mediaLibraryService } from '@/features/media-library/services/media-library-service';
 
-// IMPORTANT: Always use granular selectors to prevent unnecessary re-renders!
-//
-// ✅ CORRECT: Use granular selectors
-// const projects = useProjectStore(s => s.projects);
-// const loadProjects = useProjectStore(s => s.loadProjects);
-//
-// ❌ WRONG: Don't destructure the entire store
-// const { projects, loadProjects } = useProjectStore();
-
-export interface ProjectState {
+interface ProjectState {
   // Data
   projects: Project[];
   currentProject: Project | null;
@@ -42,7 +33,7 @@ export interface ProjectState {
   filterFps?: number;
 }
 
-export interface ProjectActions {
+interface ProjectActions {
   // CRUD Operations
   loadProjects: () => Promise<void>;
   loadProject: (id: string) => Promise<Project | null>;

@@ -1,7 +1,7 @@
 import { useHotkeys } from 'react-hotkeys-hook';
 import { HOTKEYS, HOTKEY_OPTIONS } from '@/config/hotkeys';
 
-export interface EditorHotkeyCallbacks {
+interface EditorHotkeyCallbacks {
   onSave?: () => void;
   onExport?: () => void;
 }

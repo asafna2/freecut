@@ -5,7 +5,7 @@ import { create } from 'zustand';
  * These are UI/editor settings, not timeline content.
  */
 
-export interface TimelineSettingsState {
+interface TimelineSettingsState {
   fps: number;
   scrollPosition: number;
   snapEnabled: boolean;
@@ -14,7 +14,7 @@ export interface TimelineSettingsState {
   isTimelineLoading: boolean;
 }
 
-export interface TimelineSettingsActions {
+interface TimelineSettingsActions {
   setFps: (fps: number) => void;
   setScrollPosition: (position: number) => void;
   setSnapEnabled: (enabled: boolean) => void;

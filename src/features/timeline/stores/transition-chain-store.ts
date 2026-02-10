@@ -26,7 +26,7 @@ import {
  * Enriched visual item with track metadata for rendering.
  * Matches the structure expected by MainComposition.
  */
-export type EnrichedVisualItem = TimelineItem & {
+type EnrichedVisualItem = TimelineItem & {
   zIndex: number;
   muted: boolean;
   trackOrder: number;
@@ -73,7 +73,7 @@ interface TransitionChainActions {
 
 type TransitionChainStore = TransitionChainState & TransitionChainActions;
 
-export const useTransitionChainStore = create<TransitionChainStore>()(
+const useTransitionChainStore = create<TransitionChainStore>()(
   (set, get) => ({
     // Initial state (empty)
     transitionsByClipId: new Map(),
@@ -182,17 +182,3 @@ export function initTransitionChainSubscription(): () => void {
 
   return unsubscribe;
 }
-
-// Selectors for efficient component subscriptions
-
-/**
- * Select transition indexes by clip
- */
-export const selectTransitionsByClipId = (state: TransitionChainStore) =>
-  state.transitionsByClipId;
-
-/**
- * Select compute version (for cache invalidation)
- */
-export const selectComputeVersion = (state: TransitionChainStore) =>
-  state.computeVersion;

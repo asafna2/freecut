@@ -314,7 +314,7 @@ const projectResolutionSchema = z.object({
 // Project Schema
 // ============================================================================
 
-export const projectSchema = z.object({
+const projectSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1).max(100),
   description: z.string().max(500),
@@ -331,7 +331,7 @@ export const projectSchema = z.object({
 // Media Reference Schema
 // ============================================================================
 
-export const mediaReferenceSchema = z.object({
+const mediaReferenceSchema = z.object({
   id: z.string().min(1),
   fileName: z.string().min(1),
   fileSize: z.number().int().min(0),
@@ -349,7 +349,7 @@ export const mediaReferenceSchema = z.object({
 // Snapshot Schema
 // ============================================================================
 
-export const snapshotSchema = z.object({
+const snapshotSchema = z.object({
   version: z.string(),
   exportedAt: z.string().datetime(),
   editorVersion: z.string(),
@@ -362,12 +362,8 @@ export const snapshotSchema = z.object({
 // Type Exports (inferred from schemas)
 // ============================================================================
 
-export type ValidatedProject = z.infer<typeof projectSchema>;
-export type ValidatedTimeline = z.infer<typeof timelineSchema>;
-export type ValidatedTimelineItem = z.infer<typeof timelineItemSchema>;
-export type ValidatedTrack = z.infer<typeof trackSchema>;
-export type ValidatedMediaReference = z.infer<typeof mediaReferenceSchema>;
-export type ValidatedSnapshot = z.infer<typeof snapshotSchema>;
+type ValidatedProject = z.infer<typeof projectSchema>;
+type ValidatedSnapshot = z.infer<typeof snapshotSchema>;
 
 // ============================================================================
 // Validation Functions

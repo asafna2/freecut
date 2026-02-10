@@ -22,6 +22,7 @@ import {
   getProjectsUsingMedia,
   getMediaForProject as getMediaForProjectDB,
 } from '@/lib/storage/indexeddb';
+import { gifFrameCache } from '@/features/timeline/services/gif-frame-cache';
 import { opfsService } from './opfs-service';
 import { validateMediaFile, getMimeType } from '../utils/validation';
 import { mediaProcessorService } from './media-processor-service';
@@ -69,7 +70,7 @@ export class FileAccessError extends Error {
  * Provides atomic operations for media management, ensuring OPFS and IndexedDB
  * stay in sync.
  */
-export class MediaLibraryService {
+class MediaLibraryService {
   /** In-memory cache for thumbnail blob URLs to prevent flicker on re-renders */
   private thumbnailUrlCache = new Map<string, string>();
 
@@ -197,8 +198,7 @@ export class MediaLibraryService {
     // Pre-extract GIF frames in background
     if (resolvedMimeType === 'image/gif') {
       const blobUrl = URL.createObjectURL(file);
-      import('@/features/timeline/services/gif-frame-cache')
-        .then(({ gifFrameCache }) => gifFrameCache.getGifFrames(id, blobUrl))
+      void gifFrameCache.getGifFrames(id, blobUrl)
         .catch((err) => logger.warn('Failed to pre-extract GIF frames:', err))
         .finally(() => URL.revokeObjectURL(blobUrl));
     }
@@ -290,9 +290,6 @@ export class MediaLibraryService {
 
       // Delete GIF frame cache if applicable
       try {
-        const { gifFrameCache } = await import(
-          '@/features/timeline/services/gif-frame-cache'
-        );
         await gifFrameCache.clearMedia(mediaId);
       } catch (error) {
         logger.warn('Failed to delete GIF frame cache:', error);

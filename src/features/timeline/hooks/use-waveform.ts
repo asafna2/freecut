@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useEffectEvent } from 'react';
 import { waveformCache, type CachedWaveform } from '../services/waveform-cache';
 
-export interface UseWaveformOptions {
+interface UseWaveformOptions {
   /** Media ID from the timeline item */
   mediaId: string;
   /** Blob URL for the audio file */
@@ -12,7 +12,7 @@ export interface UseWaveformOptions {
   enabled?: boolean;
 }
 
-export interface UseWaveformResult {
+interface UseWaveformResult {
   /** Peak amplitude data (null if loading or not available) */
   peaks: Float32Array | null;
   /** Audio duration in seconds */

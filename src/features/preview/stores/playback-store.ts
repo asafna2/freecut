@@ -2,15 +2,6 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { PlaybackState, PlaybackActions } from '../types';
 
-// IMPORTANT: Always use granular selectors to prevent unnecessary re-renders!
-//
-// ✅ CORRECT: Use granular selectors
-// const isPlaying = usePlaybackStore(s => s.isPlaying);
-// const togglePlayPause = usePlaybackStore(s => s.togglePlayPause);
-//
-// ❌ WRONG: Don't destructure the entire store
-// const { isPlaying, togglePlayPause } = usePlaybackStore();
-
 export const usePlaybackStore = create<PlaybackState & PlaybackActions>()(
   persist(
     (set) => ({
@@ -22,6 +13,7 @@ export const usePlaybackStore = create<PlaybackState & PlaybackActions>()(
       volume: 1,
       muted: false,
       zoom: -1, // -1 = auto-fit, positive values = specific zoom percentage
+      previewFrame: null,
       captureFrame: null, // Set by VideoPreview when Player is mounted
 
       // Actions
@@ -34,6 +26,7 @@ export const usePlaybackStore = create<PlaybackState & PlaybackActions>()(
       setVolume: (volume) => set({ volume }),
       toggleMute: () => set((state) => ({ muted: !state.muted })),
       setZoom: (zoom) => set({ zoom }),
+      setPreviewFrame: (frame) => set({ previewFrame: frame }),
       setCaptureFrame: (fn) => set({ captureFrame: fn }),
     }),
     {

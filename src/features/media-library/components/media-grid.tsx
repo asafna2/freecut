@@ -20,7 +20,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 
-export interface MediaGridProps {
+interface MediaGridProps {
   onMediaSelect?: (mediaId: string) => void;
   onImportHandles: (handles: FileSystemFileHandle[]) => Promise<void>;
   onShowNotification: (notification: { type: 'info' | 'warning' | 'error'; message: string }) => void;

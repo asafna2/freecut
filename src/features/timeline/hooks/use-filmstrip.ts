@@ -3,7 +3,7 @@ import { filmstripCache, type Filmstrip, type FilmstripFrame } from '../services
 
 export type { FilmstripFrame };
 
-export interface UseFilmstripOptions {
+interface UseFilmstripOptions {
   /** Media ID from the timeline item */
   mediaId: string;
   /** Blob URL for the video file */
@@ -16,7 +16,7 @@ export interface UseFilmstripOptions {
   enabled?: boolean;
 }
 
-export interface UseFilmstripResult {
+interface UseFilmstripResult {
   /** Array of frames with URLs for img src */
   frames: FilmstripFrame[] | null;
   /** Whether filmstrip is currently loading/extracting */

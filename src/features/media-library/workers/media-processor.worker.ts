@@ -313,7 +313,11 @@ async function generateAudioThumbnail(
   const centerY = height / 2;
   for (let x = 0; x < width; x++) {
     const y = centerY + Math.sin(x * 0.02) * amplitude;
-    x === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    if (x === 0) {
+      ctx.moveTo(x, y);
+    } else {
+      ctx.lineTo(x, y);
+    }
   }
   ctx.stroke();
 
