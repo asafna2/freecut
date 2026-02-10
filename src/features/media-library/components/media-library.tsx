@@ -23,6 +23,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { MediaGrid } from './media-grid';
+import { MediaInfoPanel } from './media-info-panel';
 import { MissingMediaDialog } from './missing-media-dialog';
 import { OrphanedClipsDialog } from './orphaned-clips-dialog';
 import { UnsupportedAudioCodecDialog } from './unsupported-audio-codec-dialog';
@@ -38,6 +39,7 @@ export const MediaLibrary = memo(function MediaLibrary({ onMediaSelect }: MediaL
   const isFocusedRef = useRef(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [idsToDelete, setIdsToDelete] = useState<string[]>([]);
+  const [infoPanelDismissed, setInfoPanelDismissed] = useState(false);
 
   // Timeline store selectors - don't subscribe to items to avoid re-renders
   // Read items from store directly when needed (in delete handler)
@@ -59,6 +61,7 @@ export const MediaLibrary = memo(function MediaLibrary({ onMediaSelect }: MediaL
   const viewMode = useMediaLibraryStore((s) => s.viewMode);
   const setViewMode = useMediaLibraryStore((s) => s.setViewMode);
   const selectedMediaIds = useMediaLibraryStore((s) => s.selectedMediaIds);
+  const mediaItems = useMediaLibraryStore((s) => s.mediaItems);
   const clearSelection = useMediaLibraryStore((s) => s.clearSelection);
   const error = useMediaLibraryStore((s) => s.error);
   const clearError = useMediaLibraryStore((s) => s.clearError);
@@ -87,6 +90,23 @@ export const MediaLibrary = memo(function MediaLibrary({ onMediaSelect }: MediaL
       loadMediaItems();
     }
   }, []); // Intentionally empty - run only on mount
+
+  // Reset info panel dismissed state when selection changes
+  const prevSelectionRef = useRef<string[]>([]);
+  useEffect(() => {
+    const changed = selectedMediaIds.length !== prevSelectionRef.current.length ||
+      selectedMediaIds.some((id, i) => id !== prevSelectionRef.current[i]);
+    if (changed) {
+      setInfoPanelDismissed(false);
+      prevSelectionRef.current = selectedMediaIds;
+    }
+  }, [selectedMediaIds]);
+
+  // Resolve the selected media item for the info panel (single selection only)
+  const selectedMediaForInfo = useMemo(() => {
+    if (selectedMediaIds.length !== 1 || infoPanelDismissed) return null;
+    return mediaItems.find((m) => m.id === selectedMediaIds[0]) ?? null;
+  }, [selectedMediaIds, mediaItems, infoPanelDismissed]);
 
   // Track focus and clear selection when clicking outside the media library
   useEffect(() => {
@@ -470,6 +490,15 @@ export const MediaLibrary = memo(function MediaLibrary({ onMediaSelect }: MediaL
           viewMode={viewMode}
         />
       </div>
+
+      {/* Media info panel - slides up from bottom when single item selected */}
+      {selectedMediaForInfo && (
+        <MediaInfoPanel
+          key={selectedMediaForInfo.id}
+          media={selectedMediaForInfo}
+          onClose={() => setInfoPanelDismissed(true)}
+        />
+      )}
 
       {/* Delete confirmation dialog */}
       <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
