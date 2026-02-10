@@ -409,7 +409,7 @@ export const TimelineItem = memo(function TimelineItem({ item, timelineDuration 
       const tracksContainer = e.currentTarget.closest('.timeline-tracks') as HTMLElement | null;
       const tracksRect = tracksContainer?.getBoundingClientRect();
       const cursorX = tracksRect
-        ? e.clientX - tracksRect.left
+        ? e.clientX - tracksRect.left + tracksContainer.scrollLeft
         : frameToPixels(item.from) + (e.clientX - e.currentTarget.getBoundingClientRect().left);
       const { currentFrame, isPlaying } = usePlaybackStore.getState();
       const { splitFrame } = getRazorSplitPosition({

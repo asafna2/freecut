@@ -426,7 +426,7 @@ export const TimelineContent = memo(function TimelineContent({ duration, scrollR
 
     if (itemElement) {
       const rect = e.currentTarget.getBoundingClientRect();
-      setRazorCursorX(e.clientX - rect.left);
+      setRazorCursorX(e.clientX - rect.left + e.currentTarget.scrollLeft);
       if (hoveredItemElementRef.current !== itemElement) setHoveredItemElement(itemElement);
     } else {
       if (razorCursorXRef.current !== null) setRazorCursorX(null);
