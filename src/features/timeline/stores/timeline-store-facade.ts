@@ -11,7 +11,7 @@
  * - This facade combines them into a single unified API
  */
 
-import { useSyncExternalStore } from 'react';
+import { useSyncExternalStore, useRef, useCallback } from 'react';
 import type { TimelineState, TimelineActions } from '../types';
 import type { ItemKeyframes } from '@/types/keyframe';
 import type { TimelineItem, TimelineTrack } from '@/types/timeline';
@@ -524,14 +524,48 @@ type TimelineStoreFacade = {
  * This mimics Zustand's API for backward compatibility.
  */
 function createTimelineStoreFacade(): TimelineStoreFacade {
-  // The main hook function
+  // The main hook function — uses selector memoization so components only
+  // re-render when their *selected* value changes, not on every domain change.
   function useTimelineStore<T>(selector: (state: TimelineState & TimelineActions) => T): T {
-    const state = useSyncExternalStore(
+    const selectorRef = useRef(selector);
+    const lastSnapshotRef = useRef<(TimelineState & TimelineActions) | null>(null);
+    const lastSelectionRef = useRef<T | undefined>(undefined);
+
+    // Always keep the latest selector in the ref so the stable getSelection
+    // callback below can access it during subscription notifications.
+    selectorRef.current = selector;
+
+    // Stable callback: compares the selected value across snapshot changes.
+    // If the selector returns the same value (via Object.is), the previous
+    // reference is returned — useSyncExternalStore sees no change and skips
+    // the re-render for this component.
+    const getSelection = useCallback((): T => {
+      const snapshot = getSnapshot();
+
+      // Snapshot reference unchanged → selection unchanged
+      if (lastSnapshotRef.current === snapshot && lastSelectionRef.current !== undefined) {
+        return lastSelectionRef.current;
+      }
+
+      const nextSelection = selectorRef.current(snapshot);
+
+      // Selected value unchanged despite new snapshot (e.g. markers changed
+      // but this component only selects items) → reuse previous reference
+      if (lastSelectionRef.current !== undefined && Object.is(lastSelectionRef.current, nextSelection)) {
+        lastSnapshotRef.current = snapshot;
+        return lastSelectionRef.current;
+      }
+
+      lastSnapshotRef.current = snapshot;
+      lastSelectionRef.current = nextSelection;
+      return nextSelection;
+    }, []);
+
+    return useSyncExternalStore(
       subscribeToCombinedState,
-      getSnapshot,
-      getSnapshot
+      getSelection,
+      getSelection
     );
-    return selector(state);
   }
 
   // Static methods

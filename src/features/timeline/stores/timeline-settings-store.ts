@@ -26,7 +26,7 @@ interface TimelineSettingsActions {
 }
 
 export const useTimelineSettingsStore = create<TimelineSettingsState & TimelineSettingsActions>()(
-  (set) => ({
+  (set, get) => ({
     // State
     fps: 30,
     scrollPosition: 0,
@@ -40,7 +40,7 @@ export const useTimelineSettingsStore = create<TimelineSettingsState & TimelineS
     setSnapEnabled: (enabled) => set({ snapEnabled: enabled }),
     toggleSnap: () => set((state) => ({ snapEnabled: !state.snapEnabled })),
     setIsDirty: (dirty) => set({ isDirty: dirty }),
-    markDirty: () => set({ isDirty: true }),
+    markDirty: () => { if (!get().isDirty) set({ isDirty: true }); },
     markClean: () => set({ isDirty: false }),
     setTimelineLoading: (loading) => set({ isTimelineLoading: loading }),
   })

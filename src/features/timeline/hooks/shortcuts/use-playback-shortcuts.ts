@@ -4,24 +4,44 @@
 
 import { useHotkeys } from 'react-hotkeys-hook';
 import { usePlaybackStore } from '@/features/preview/stores/playback-store';
-import { useTimelineStore } from '../../stores/timeline-store';
+import { useItemsStore } from '../../stores/items-store';
+import { useMarkersStore } from '../../stores/markers-store';
 import { HOTKEYS, HOTKEY_OPTIONS } from '@/config/hotkeys';
 import type { TimelineShortcutCallbacks } from '../use-timeline-shortcuts';
+import { useSourcePlayerStore } from '@/features/preview/stores/source-player-store';
+
+/** Compute snap points on-demand from current store state (avoids reactive subscriptions). */
+function getSnapPoints(): number[] {
+  const items = useItemsStore.getState().items;
+  const markers = useMarkersStore.getState().markers;
+  const points = new Set<number>();
+  for (const item of items) {
+    points.add(item.from);
+    points.add(item.from + item.durationInFrames);
+  }
+  for (const marker of markers) {
+    points.add(marker.frame);
+  }
+  return Array.from(points).sort((a, b) => a - b);
+}
 
 export function usePlaybackShortcuts(
   callbacks: TimelineShortcutCallbacks,
-  snapPoints: number[]
 ) {
   const togglePlayPause = usePlaybackStore((s) => s.togglePlayPause);
   const setCurrentFrame = usePlaybackStore((s) => s.setCurrentFrame);
   const isPlaying = usePlaybackStore((s) => s.isPlaying);
-  const items = useTimelineStore((s) => s.items);
 
   // Playback: Space - Play/Pause
   useHotkeys(
     HOTKEYS.PLAY_PAUSE,
     (event) => {
       event.preventDefault();
+      const { hoveredPanel, playerMethods } = useSourcePlayerStore.getState();
+      if (hoveredPanel === 'source' && playerMethods) {
+        playerMethods.toggle();
+        return;
+      }
       togglePlayPause();
       if (isPlaying && callbacks.onPause) {
         callbacks.onPause();
@@ -38,6 +58,11 @@ export function usePlaybackShortcuts(
     HOTKEYS.PREVIOUS_FRAME,
     (event) => {
       event.preventDefault();
+      const { hoveredPanel, playerMethods } = useSourcePlayerStore.getState();
+      if (hoveredPanel === 'source' && playerMethods) {
+        playerMethods.frameBack(1);
+        return;
+      }
       const currentFrame = usePlaybackStore.getState().currentFrame;
       setCurrentFrame(Math.max(0, currentFrame - 1));
     },
@@ -50,6 +75,11 @@ export function usePlaybackShortcuts(
     HOTKEYS.NEXT_FRAME,
     (event) => {
       event.preventDefault();
+      const { hoveredPanel, playerMethods } = useSourcePlayerStore.getState();
+      if (hoveredPanel === 'source' && playerMethods) {
+        playerMethods.frameForward(1);
+        return;
+      }
       const currentFrame = usePlaybackStore.getState().currentFrame;
       setCurrentFrame(currentFrame + 1);
     },
@@ -62,6 +92,11 @@ export function usePlaybackShortcuts(
     HOTKEYS.GO_TO_START,
     (event) => {
       event.preventDefault();
+      const { hoveredPanel, playerMethods } = useSourcePlayerStore.getState();
+      if (hoveredPanel === 'source' && playerMethods) {
+        playerMethods.seek(0);
+        return;
+      }
       setCurrentFrame(0);
     },
     HOTKEY_OPTIONS,
@@ -73,14 +108,20 @@ export function usePlaybackShortcuts(
     HOTKEYS.GO_TO_END,
     (event) => {
       event.preventDefault();
-      const lastFrame = items.reduce((max, item) => {
+      const { hoveredPanel, playerMethods } = useSourcePlayerStore.getState();
+      if (hoveredPanel === 'source' && playerMethods) {
+        playerMethods.seek(playerMethods.getDurationInFrames() - 1);
+        return;
+      }
+      const currentItems = useItemsStore.getState().items;
+      const lastFrame = currentItems.reduce((max, item) => {
         const itemEnd = item.from + item.durationInFrames;
         return Math.max(max, itemEnd);
       }, 0);
       setCurrentFrame(lastFrame);
     },
     HOTKEY_OPTIONS,
-    [setCurrentFrame, items]
+    [setCurrentFrame]
   );
 
   // Navigation: Down - Jump to next snap point (clip edge or marker)
@@ -89,13 +130,13 @@ export function usePlaybackShortcuts(
     (event) => {
       event.preventDefault();
       const currentFrame = usePlaybackStore.getState().currentFrame;
-      const nextEdge = snapPoints.find((edge) => edge > currentFrame);
+      const nextEdge = getSnapPoints().find((edge) => edge > currentFrame);
       if (nextEdge !== undefined) {
         setCurrentFrame(nextEdge);
       }
     },
     HOTKEY_OPTIONS,
-    [setCurrentFrame, snapPoints]
+    [setCurrentFrame]
   );
 
   // Navigation: Up - Jump to previous snap point (clip edge or marker)
@@ -104,10 +145,11 @@ export function usePlaybackShortcuts(
     (event) => {
       event.preventDefault();
       const currentFrame = usePlaybackStore.getState().currentFrame;
+      const snapPoints = getSnapPoints();
       let previousEdge: number | undefined;
       for (let i = snapPoints.length - 1; i >= 0; i--) {
-        if (snapPoints[i] < currentFrame) {
-          previousEdge = snapPoints[i];
+        if (snapPoints[i]! < currentFrame) {
+          previousEdge = snapPoints[i]!;
           break;
         }
       }
@@ -116,6 +158,6 @@ export function usePlaybackShortcuts(
       }
     },
     HOTKEY_OPTIONS,
-    [setCurrentFrame, snapPoints]
+    [setCurrentFrame]
   );
 }

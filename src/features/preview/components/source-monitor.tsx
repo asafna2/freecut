@@ -9,6 +9,7 @@ import { SourceComposition } from './source-composition';
 import { resolveMediaUrl } from '../utils/media-resolver';
 import { useMediaLibraryStore } from '@/features/media-library/stores/media-library-store';
 import { getMediaType } from '@/features/media-library/utils/validation';
+import { useSourcePlayerStore } from '../stores/source-player-store';
 
 interface SourceMonitorProps {
   mediaId: string;
@@ -76,7 +77,7 @@ export const SourceMonitor = memo(function SourceMonitor({ mediaId, onClose }: S
   );
 });
 
-// ── Inner component (rendered inside provider tree) ──
+// -- Inner component (rendered inside provider tree) --
 
 interface SourceMonitorInnerProps {
   src: string;
@@ -103,7 +104,7 @@ function SourceMonitorInner({
   const contentHostRef = useRef<HTMLDivElement>(null);
   const contentScaleRef = useRef<HTMLDivElement>(null);
 
-  // Scale composition to fit container — subtract same padding as program monitor
+  // Scale composition to fit container - subtract same padding as program monitor
   const PADDING_PX = 48;
   const updateLayout = useCallback(() => {
     const container = containerRef.current;
@@ -150,8 +151,35 @@ function SourceMonitorInner({
     };
   }, [updateLayout]);
 
+  // When media URL resolves, the preview host nodes mount after the initial
+  // layout pass. Force one more measurement so the source appears immediately.
+  useEffect(() => {
+    if (!src) return;
+    const rafId = requestAnimationFrame(() => {
+      updateLayout();
+    });
+    return () => {
+      cancelAnimationFrame(rafId);
+    };
+  }, [src, updateLayout]);
+
+  const setHoveredPanel = useSourcePlayerStore((s) => s.setHoveredPanel);
+  const setPlayerMethods = useSourcePlayerStore((s) => s.setPlayerMethods);
+
+  // Reset hover and player methods on unmount
+  useEffect(() => {
+    return () => {
+      setHoveredPanel(null);
+      setPlayerMethods(null);
+    };
+  }, [setHoveredPanel, setPlayerMethods]);
+
   return (
-    <div className="flex-1 flex flex-col min-w-0">
+    <div
+      className="flex-1 flex flex-col min-w-0"
+      onMouseEnter={() => setHoveredPanel('source')}
+      onMouseLeave={() => setHoveredPanel(null)}
+    >
       {/* Header */}
       <div className="h-9 border-b border-border flex items-center px-3 justify-between flex-shrink-0">
         <span className="text-xs text-muted-foreground truncate">
@@ -166,7 +194,7 @@ function SourceMonitorInner({
         </button>
       </div>
 
-      {/* Video area — same gradient bg as composition panel */}
+      {/* Video area - same gradient bg as composition panel */}
       <div
         ref={containerRef}
         className="flex-1 min-h-0 relative overflow-hidden bg-gradient-to-br from-background to-secondary/20"
@@ -199,13 +227,13 @@ function SourceMonitorInner({
         )}
       </div>
 
-      {/* Controls bar — same h-16 as program monitor */}
+      {/* Controls bar - same h-16 as program monitor */}
       <SourcePlaybackControls durationInFrames={durationInFrames} fps={fps} />
     </div>
   );
 }
 
-// ── Playback controls for the source monitor ──
+// -- Playback controls for the source monitor --
 
 function SourcePlaybackControls({
   durationInFrames,
@@ -217,6 +245,21 @@ function SourcePlaybackControls({
   const player = usePlayer(durationInFrames);
   const { frame, playing } = useBridgedTimelineContext();
   const lastFrame = Math.max(0, durationInFrames - 1);
+
+  // Bridge player methods into the source player store for keyboard shortcuts
+  useEffect(() => {
+    const setPlayerMethods = useSourcePlayerStore.getState().setPlayerMethods;
+    setPlayerMethods({
+      toggle: player.toggle,
+      seek: player.seek,
+      frameBack: player.frameBack,
+      frameForward: player.frameForward,
+      getDurationInFrames: () => durationInFrames,
+    });
+    return () => {
+      useSourcePlayerStore.getState().setPlayerMethods(null);
+    };
+  }, [player.toggle, player.seek, player.frameBack, player.frameForward, durationInFrames]);
 
   const formatTime = (f: number) => {
     const secs = f / fps;

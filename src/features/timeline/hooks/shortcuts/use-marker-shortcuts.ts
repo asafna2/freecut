@@ -4,16 +4,14 @@
 
 import { useHotkeys } from 'react-hotkeys-hook';
 import { usePlaybackStore } from '@/features/preview/stores/playback-store';
-import { useTimelineStore } from '../../stores/timeline-store';
+import { useMarkersStore } from '../../stores/markers-store';
 import { useSelectionStore } from '@/features/editor/stores/selection-store';
 import { HOTKEYS, HOTKEY_OPTIONS } from '@/config/hotkeys';
+import { addMarker, removeMarker } from '../../stores/actions/marker-actions';
 
 export function useMarkerShortcuts() {
   const setCurrentFrame = usePlaybackStore((s) => s.setCurrentFrame);
-  const selectedMarkerId = useSelectionStore((s) => s.selectedMarkerId);
   const clearSelection = useSelectionStore((s) => s.clearSelection);
-  const addMarker = useTimelineStore((s) => s.addMarker);
-  const removeMarker = useTimelineStore((s) => s.removeMarker);
 
   // Markers: M - Add marker at playhead
   useHotkeys(
@@ -24,7 +22,7 @@ export function useMarkerShortcuts() {
       addMarker(currentFrame);
     },
     HOTKEY_OPTIONS,
-    [addMarker]
+    []
   );
 
   // Markers: Shift+M - Remove selected marker
@@ -32,13 +30,14 @@ export function useMarkerShortcuts() {
     HOTKEYS.REMOVE_MARKER,
     (event) => {
       event.preventDefault();
-      if (selectedMarkerId) {
-        removeMarker(selectedMarkerId);
+      const id = useSelectionStore.getState().selectedMarkerId;
+      if (id) {
+        removeMarker(id);
         clearSelection();
       }
     },
     HOTKEY_OPTIONS,
-    [selectedMarkerId, removeMarker, clearSelection]
+    [clearSelection]
   );
 
   // Markers: [ - Jump to previous marker
@@ -46,7 +45,7 @@ export function useMarkerShortcuts() {
     HOTKEYS.PREVIOUS_MARKER,
     (event) => {
       event.preventDefault();
-      const currentMarkers = useTimelineStore.getState().markers;
+      const currentMarkers = useMarkersStore.getState().markers;
       if (currentMarkers.length === 0) return;
       const currentFrame = usePlaybackStore.getState().currentFrame;
       let previousFrame: number | undefined;
@@ -70,7 +69,7 @@ export function useMarkerShortcuts() {
     HOTKEYS.NEXT_MARKER,
     (event) => {
       event.preventDefault();
-      const currentMarkers = useTimelineStore.getState().markers;
+      const currentMarkers = useMarkersStore.getState().markers;
       if (currentMarkers.length === 0) return;
       const currentFrame = usePlaybackStore.getState().currentFrame;
       let nextFrame: number | undefined;
