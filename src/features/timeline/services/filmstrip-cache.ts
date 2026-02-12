@@ -32,7 +32,12 @@ type FilmstripUpdateCallback = (filmstrip: Filmstrip) => void;
 // Configuration for parallel extraction
 const FRAME_RATE = 1; // Must match worker - 1fps for filmstrip thumbnails
 const MIN_FRAMES_PER_WORKER = 30; // Don't spawn workers for tiny chunks
-const MAX_WORKERS = 2; // Limit parallel workers (reduced for 1fps)
+const MAX_WORKERS = 2; // Max workers per extraction on high-core devices
+const MIN_CORES_FOR_PARALLEL_WORKERS = 12; // Prefer single worker on typical laptops
+const MAX_CONCURRENT_EXTRACTIONS = 1; // Global cap across all clips to avoid CPU spikes
+const PROGRESS_NOTIFY_INTERVAL_MS = 200;
+const PROGRESS_NOTIFY_FRAME_DELTA = 4;
+const MAX_INCREMENTAL_FRAME_LOAD = 8;
 const IMAGE_FORMAT = 'image/webp';
 const IMAGE_QUALITY = 0.6;
 
@@ -43,6 +48,7 @@ interface WorkerState {
   endIndex: number;
   completed: boolean;
   frameCount: number;
+  lastLoadedCount: number;
 }
 
 interface PendingExtraction {
@@ -59,6 +65,8 @@ interface PendingExtraction {
   onProgress?: (progress: number) => void;
   // Track frames incrementally during extraction
   extractedFrames: Map<number, FilmstripFrame>;
+  lastNotifyAt: number;
+  lastNotifiedFrameCount: number;
 }
 
 class FilmstripCacheService {
@@ -66,6 +74,8 @@ class FilmstripCacheService {
   private pendingExtractions = new Map<string, PendingExtraction>();
   private updateCallbacks = new Map<string, Set<FilmstripUpdateCallback>>();
   private loadingPromises = new Map<string, Promise<Filmstrip>>();
+  private activeExtractions = new Set<string>();
+  private extractionQueue: string[] = [];
 
   /**
    * Subscribe to filmstrip updates
@@ -163,7 +173,7 @@ class FilmstripCacheService {
       frames: existingFrames,
       isComplete: false,
       isExtracting: true,
-      progress: existingFrames.length > 0 ? Math.round((existingFrames.length / Math.ceil(duration * 24)) * 100) : 0,
+      progress: existingFrames.length > 0 ? Math.round((existingFrames.length / Math.ceil(duration * FRAME_RATE)) * 100) : 0,
     };
     this.notifyUpdate(mediaId, initialFilmstrip);
 
@@ -190,14 +200,7 @@ class FilmstripCacheService {
     // Calculate total frames and worker count
     const totalFrames = Math.ceil(duration * FRAME_RATE);
     const skipSet = new Set(skipIndices);
-    const framesToExtract = totalFrames - skipSet.size;
-
-    // Determine number of workers based on frame count
-    const maxWorkers = forceSingleWorker ? 1 : MAX_WORKERS;
-    const workerCount = Math.min(
-      maxWorkers,
-      Math.max(1, Math.floor(framesToExtract / MIN_FRAMES_PER_WORKER))
-    );
+    const framesToExtract = Math.max(0, totalFrames - skipSet.size);
 
     // Initialize with existing frames
     const extractedFrames = new Map<number, FilmstripFrame>();
@@ -219,8 +222,98 @@ class FilmstripCacheService {
       completedWorkers: 0,
       onProgress,
       extractedFrames,
+      lastNotifyAt: 0,
+      lastNotifiedFrameCount: existingFrames.length,
     };
     this.pendingExtractions.set(mediaId, pending);
+
+    if (framesToExtract === 0) {
+      this.notifyUpdate(mediaId, {
+        frames: [...existingFrames].sort((a, b) => a.index - b.index),
+        isComplete: true,
+        isExtracting: false,
+        progress: 100,
+      });
+      onProgress?.(100);
+      this.cleanupExtraction(mediaId);
+      return;
+    }
+
+    this.enqueueExtraction(mediaId);
+  }
+
+  private enqueueExtraction(mediaId: string): void {
+    if (this.activeExtractions.has(mediaId)) {
+      return;
+    }
+
+    if (this.extractionQueue.includes(mediaId)) {
+      return;
+    }
+
+    if (this.activeExtractions.size >= MAX_CONCURRENT_EXTRACTIONS) {
+      this.extractionQueue.push(mediaId);
+      logger.debug(`Queued filmstrip extraction for ${mediaId}`);
+      return;
+    }
+
+    this.activeExtractions.add(mediaId);
+    this.startPendingExtraction(mediaId);
+  }
+
+  private startNextQueuedExtraction(): void {
+    if (this.activeExtractions.size >= MAX_CONCURRENT_EXTRACTIONS) {
+      return;
+    }
+
+    while (this.extractionQueue.length > 0) {
+      const nextMediaId = this.extractionQueue.shift();
+      if (!nextMediaId) {
+        return;
+      }
+
+      if (!this.pendingExtractions.has(nextMediaId)) {
+        continue;
+      }
+
+      this.activeExtractions.add(nextMediaId);
+      this.startPendingExtraction(nextMediaId);
+      return;
+    }
+  }
+
+  private startPendingExtraction(mediaId: string): void {
+    const pending = this.pendingExtractions.get(mediaId);
+    if (!pending) {
+      this.activeExtractions.delete(mediaId);
+      this.startNextQueuedExtraction();
+      return;
+    }
+
+    if (pending.isVideoFallback) {
+      void this.extractWithVideoElement(mediaId);
+      return;
+    }
+
+    this.startWorkerExtraction(pending);
+  }
+
+  private startWorkerExtraction(pending: PendingExtraction): void {
+    const { mediaId, blobUrl, duration, skipIndices, forceSingleWorker, totalFrames } = pending;
+    const skipSet = new Set(skipIndices);
+    const framesToExtract = Math.max(0, totalFrames - skipSet.size);
+    const hardwareConcurrency = typeof navigator !== 'undefined'
+      ? (navigator.hardwareConcurrency || 4)
+      : 4;
+
+    // Determine workers per extraction based on hardware and frame count
+    const maxWorkers = forceSingleWorker || hardwareConcurrency < MIN_CORES_FOR_PARALLEL_WORKERS
+      ? 1
+      : MAX_WORKERS;
+    const workerCount = Math.min(
+      maxWorkers,
+      Math.max(1, Math.floor(framesToExtract / MIN_FRAMES_PER_WORKER))
+    );
 
     // Calculate frame ranges for each worker
     const framesPerWorker = Math.ceil(totalFrames / workerCount);
@@ -238,6 +331,7 @@ class FilmstripCacheService {
         new URL('../workers/filmstrip-extraction-worker.ts', import.meta.url),
         { type: 'module' }
       );
+      const rangeSkipIndices = skipIndices.filter(idx => idx >= startIndex && idx < endIndex);
 
       const workerState: WorkerState = {
         worker,
@@ -245,7 +339,8 @@ class FilmstripCacheService {
         startIndex,
         endIndex,
         completed: false,
-        frameCount: 0,
+        frameCount: rangeSkipIndices.length,
+        lastLoadedCount: rangeSkipIndices.length,
       };
       pending.workers.push(workerState);
 
@@ -259,21 +354,31 @@ class FilmstripCacheService {
           // Calculate overall progress from all workers
           const totalExtracted = pending.workers.reduce((sum, w) => sum + w.frameCount, 0);
           const overallProgress = Math.round((totalExtracted / totalFrames) * 100);
-          onProgress?.(overallProgress);
+          pending.onProgress?.(overallProgress);
 
-          // Load new frames from this worker's range
-          await this.loadNewFrames(mediaId, workerState.startIndex, response.frameCount);
+          // Load only newly reported frames from this worker's range
+          const newFrameCount = Math.max(0, response.frameCount - workerState.lastLoadedCount);
+          if (newFrameCount > 0) {
+            await this.loadNewFrames(
+              mediaId,
+              workerState.startIndex + workerState.lastLoadedCount,
+              newFrameCount
+            );
+            workerState.lastLoadedCount = response.frameCount;
+          }
 
-          // Notify with current state
-          const frames = Array.from(pending.extractedFrames.values())
-            .sort((a, b) => a.index - b.index);
+          if (this.shouldNotifyProgress(pending, totalExtracted, overallProgress)) {
+            // Notify with current state
+            const frames = Array.from(pending.extractedFrames.values())
+              .sort((a, b) => a.index - b.index);
 
-          this.notifyUpdate(mediaId, {
-            frames,
-            isComplete: false,
-            isExtracting: true,
-            progress: overallProgress,
-          });
+            this.notifyUpdate(mediaId, {
+              frames,
+              isComplete: false,
+              isExtracting: true,
+              progress: overallProgress,
+            });
+          }
 
         } else if (response.type === 'complete') {
           workerState.completed = true;
@@ -292,7 +397,7 @@ class FilmstripCacheService {
               isExtracting: false,
               progress: 100,
             });
-            onProgress?.(100);
+            pending.onProgress?.(100);
             this.cleanupExtraction(mediaId);
             logger.info(`Filmstrip ${mediaId} complete: ${final?.frames.length || 0} frames`);
           }
@@ -325,7 +430,7 @@ class FilmstripCacheService {
         duration,
         width: THUMBNAIL_WIDTH,
         height: THUMBNAIL_HEIGHT,
-        skipIndices: skipIndices.filter(idx => idx >= startIndex && idx < endIndex),
+        skipIndices: rangeSkipIndices,
         startIndex,
         endIndex,
         totalFrames,
@@ -335,25 +440,46 @@ class FilmstripCacheService {
     }
   }
 
+  private shouldNotifyProgress(
+    pending: PendingExtraction,
+    totalExtracted: number,
+    overallProgress: number
+  ): boolean {
+    const now = Date.now();
+    const frameDelta = totalExtracted - pending.lastNotifiedFrameCount;
+    const elapsed = now - pending.lastNotifyAt;
+    const shouldNotify = overallProgress >= 99
+      || frameDelta >= PROGRESS_NOTIFY_FRAME_DELTA
+      || elapsed >= PROGRESS_NOTIFY_INTERVAL_MS;
+
+    if (shouldNotify) {
+      pending.lastNotifyAt = now;
+      pending.lastNotifiedFrameCount = totalExtracted;
+      return true;
+    }
+
+    return false;
+  }
+
   private async loadNewFrames(
     mediaId: string,
-    workerStartIndex: number,
-    workerFrameCount: number
+    startIndex: number,
+    frameCount: number
   ): Promise<void> {
     const pending = this.pendingExtractions.get(mediaId);
     if (!pending) return;
 
     // Load frames from this worker's range that we don't have yet
     const framesToLoad: number[] = [];
-    for (let i = workerStartIndex; i < workerStartIndex + workerFrameCount; i++) {
+    for (let i = startIndex; i < startIndex + frameCount; i++) {
       if (!pending.extractedFrames.has(i)) {
         framesToLoad.push(i);
       }
     }
 
     if (framesToLoad.length > 0) {
-      // Load up to 20 frames in parallel
-      const loadPromises = framesToLoad.slice(0, 20).map(async (index) => {
+      // Load a small batch in parallel to avoid UI thread I/O spikes.
+      const loadPromises = framesToLoad.slice(0, MAX_INCREMENTAL_FRAME_LOAD).map(async (index) => {
         const frame = await filmstripOPFSStorage.loadSingleFrame(mediaId, index);
         if (frame) {
           pending.extractedFrames.set(index, frame);
@@ -400,12 +526,14 @@ class FilmstripCacheService {
       completedWorkers: 0,
       onProgress,
       extractedFrames,
+      lastNotifyAt: 0,
+      lastNotifiedFrameCount: existingFrames.length,
     };
 
     this.pendingExtractions.set(mediaId, pending);
     logger.warn(`Falling back to HTMLVideoElement extraction for ${mediaId}`);
 
-    void this.extractWithVideoElement(mediaId);
+    this.enqueueExtraction(mediaId);
   }
 
   private async extractWithVideoElement(mediaId: string): Promise<void> {
@@ -677,12 +805,22 @@ class FilmstripCacheService {
 
   private cleanupExtraction(mediaId: string): void {
     const pending = this.pendingExtractions.get(mediaId);
+    const wasActive = this.activeExtractions.delete(mediaId);
+    const queueIndex = this.extractionQueue.indexOf(mediaId);
+    if (queueIndex !== -1) {
+      this.extractionQueue.splice(queueIndex, 1);
+    }
+
     if (pending) {
       // Terminate all workers
       for (const workerState of pending.workers) {
         workerState.worker.terminate();
       }
       this.pendingExtractions.delete(mediaId);
+    }
+
+    if (wasActive) {
+      this.startNextQueuedExtraction();
     }
   }
 
@@ -737,6 +875,8 @@ class FilmstripCacheService {
     this.cache.clear();
     this.updateCallbacks.clear();
     this.loadingPromises.clear();
+    this.activeExtractions.clear();
+    this.extractionQueue = [];
   }
 }
 
