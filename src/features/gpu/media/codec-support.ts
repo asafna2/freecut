@@ -1,8 +1,7 @@
 /**
  * Codec Support Detection
  *
- * Detects which video/audio codecs can be decoded via WebCodecs (fast path)
- * versus requiring FFmpeg.wasm fallback.
+ * Detects which video/audio codecs can be decoded via WebCodecs.
  */
 
 /**
@@ -40,7 +39,7 @@ export type AudioCodec =
 /**
  * Decoder path for a codec
  */
-export type DecoderPath = 'webcodecs' | 'ffmpeg' | 'unsupported';
+export type DecoderPath = 'webcodecs' | 'unsupported';
 
 /**
  * Codec support result
@@ -118,12 +117,12 @@ export function checkWebCodecsSupport(): WebCodecsSupport {
 export async function checkVideoCodecSupport(codec: VideoCodec): Promise<CodecSupportResult> {
   const codecString = WEBCODECS_VIDEO_CONFIGS[codec];
 
-  // No WebCodecs string means FFmpeg required
+  // No WebCodecs string means unsupported
   if (!codecString) {
     return {
       codec,
-      supported: true, // Supported via FFmpeg
-      decoderPath: 'ffmpeg',
+      supported: false,
+      decoderPath: 'unsupported',
     };
   }
 
@@ -131,8 +130,8 @@ export async function checkVideoCodecSupport(codec: VideoCodec): Promise<CodecSu
   if (typeof VideoDecoder === 'undefined') {
     return {
       codec,
-      supported: true,
-      decoderPath: 'ffmpeg',
+      supported: false,
+      decoderPath: 'unsupported',
     };
   }
 
@@ -152,13 +151,13 @@ export async function checkVideoCodecSupport(codec: VideoCodec): Promise<CodecSu
       };
     }
   } catch {
-    // isConfigSupported threw, fall back to FFmpeg
+    // isConfigSupported threw
   }
 
   return {
     codec,
-    supported: true,
-    decoderPath: 'ffmpeg',
+    supported: false,
+    decoderPath: 'unsupported',
   };
 }
 
@@ -177,12 +176,12 @@ export async function checkAudioCodecSupport(codec: AudioCodec): Promise<CodecSu
     };
   }
 
-  // No WebCodecs string means FFmpeg required
+  // No WebCodecs string means unsupported
   if (!codecString) {
     return {
       codec,
-      supported: true,
-      decoderPath: 'ffmpeg',
+      supported: false,
+      decoderPath: 'unsupported',
     };
   }
 
@@ -190,8 +189,8 @@ export async function checkAudioCodecSupport(codec: AudioCodec): Promise<CodecSu
   if (typeof AudioDecoder === 'undefined') {
     return {
       codec,
-      supported: true,
-      decoderPath: 'ffmpeg',
+      supported: false,
+      decoderPath: 'unsupported',
     };
   }
 
@@ -210,13 +209,13 @@ export async function checkAudioCodecSupport(codec: AudioCodec): Promise<CodecSu
       };
     }
   } catch {
-    // isConfigSupported threw, fall back to FFmpeg
+    // isConfigSupported threw
   }
 
   return {
     codec,
-    supported: true,
-    decoderPath: 'ffmpeg',
+    supported: false,
+    decoderPath: 'unsupported',
   };
 }
 
@@ -231,14 +230,14 @@ export function getVideoDecoderPath(codec: VideoCodec): DecoderPath {
     return 'webcodecs';
   }
 
-  // Codecs requiring FFmpeg
-  const ffmpegCodecs: VideoCodec[] = ['prores', 'dnxhd', 'h265', 'mpeg2', 'theora'];
+  // Codecs without WebCodecs support
+  const unsupportedCodecs: VideoCodec[] = ['prores', 'dnxhd', 'h265', 'mpeg2', 'theora'];
 
-  if (ffmpegCodecs.includes(codec)) {
-    return 'ffmpeg';
+  if (unsupportedCodecs.includes(codec)) {
+    return 'unsupported';
   }
 
-  return 'ffmpeg'; // Default to FFmpeg for unknown
+  return 'unsupported';
 }
 
 /**
@@ -252,14 +251,14 @@ export function getAudioDecoderPath(codec: AudioCodec): DecoderPath {
     return 'webcodecs';
   }
 
-  // Codecs requiring FFmpeg
-  const ffmpegCodecs: AudioCodec[] = ['ac3', 'eac3', 'alac'];
+  // Codecs without WebCodecs support
+  const unsupportedCodecs: AudioCodec[] = ['ac3', 'eac3', 'alac'];
 
-  if (ffmpegCodecs.includes(codec)) {
-    return 'ffmpeg';
+  if (unsupportedCodecs.includes(codec)) {
+    return 'unsupported';
   }
 
-  return 'ffmpeg';
+  return 'unsupported';
 }
 
 /**

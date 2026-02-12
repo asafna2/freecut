@@ -22,7 +22,6 @@ import {
   getAudioDecoderPath,
 } from './codec-support';
 import { WebCodecsDecoder, createWebCodecsDecoder } from './webcodecs-decoder';
-import { FFmpegDecoder, createFFmpegDecoder } from './ffmpeg-decoder';
 import { FrameCache, createFrameCache } from './frame-cache';
 
 /**
@@ -66,7 +65,7 @@ export class ManagedMediaSource implements MediaSource {
   private _probeResult: ProbeResult | null = null;
   private _decoderType: DecoderPath = 'webcodecs';
 
-  private decoder: WebCodecsDecoder | FFmpegDecoder | null = null;
+  private decoder: WebCodecsDecoder | null = null;
   private frameCache: FrameCache | null = null;
   private listeners: Map<MediaEventType, Set<MediaEventListener>> = new Map();
   private videoElement: HTMLVideoElement | null = null;
@@ -420,9 +419,9 @@ export class ManagedMediaSource implements MediaSource {
       decoderPath = this.config.preferredDecoder;
     }
 
-    // Check if WebCodecs is available, fall back to FFmpeg if not
+    // Check if WebCodecs is available
     if (decoderPath === 'webcodecs' && typeof VideoDecoder === 'undefined') {
-      decoderPath = 'ffmpeg';
+      decoderPath = 'unsupported';
     }
 
     this._decoderType = decoderPath;
@@ -432,7 +431,8 @@ export class ManagedMediaSource implements MediaSource {
       if (decoderPath === 'webcodecs') {
         this.decoder = createWebCodecsDecoder();
       } else {
-        this.decoder = createFFmpegDecoder();
+        this.decoder = null;
+        return;
       }
 
       // Configure decoder

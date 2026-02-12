@@ -44,20 +44,20 @@ describe('Codec Support', () => {
       expect(getVideoDecoderPath('av1')).toBe('webcodecs');
     });
 
-    it('should recommend ffmpeg for ProRes', () => {
-      expect(getVideoDecoderPath('prores')).toBe('ffmpeg');
+    it('should return unsupported for ProRes', () => {
+      expect(getVideoDecoderPath('prores')).toBe('unsupported');
     });
 
-    it('should recommend ffmpeg for DNxHD', () => {
-      expect(getVideoDecoderPath('dnxhd')).toBe('ffmpeg');
+    it('should return unsupported for DNxHD', () => {
+      expect(getVideoDecoderPath('dnxhd')).toBe('unsupported');
     });
 
-    it('should recommend ffmpeg for HEVC', () => {
-      expect(getVideoDecoderPath('h265')).toBe('ffmpeg');
+    it('should return unsupported for HEVC', () => {
+      expect(getVideoDecoderPath('h265')).toBe('unsupported');
     });
 
-    it('should recommend ffmpeg for unknown codecs', () => {
-      expect(getVideoDecoderPath('unknown')).toBe('ffmpeg');
+    it('should return unsupported for unknown codecs', () => {
+      expect(getVideoDecoderPath('unknown')).toBe('unsupported');
     });
   });
 
@@ -78,12 +78,12 @@ describe('Codec Support', () => {
       expect(getAudioDecoderPath('pcm')).toBe('webcodecs');
     });
 
-    it('should recommend ffmpeg for AC3', () => {
-      expect(getAudioDecoderPath('ac3')).toBe('ffmpeg');
+    it('should return unsupported for AC3', () => {
+      expect(getAudioDecoderPath('ac3')).toBe('unsupported');
     });
 
-    it('should recommend ffmpeg for E-AC3', () => {
-      expect(getAudioDecoderPath('eac3')).toBe('ffmpeg');
+    it('should return unsupported for E-AC3', () => {
+      expect(getAudioDecoderPath('eac3')).toBe('unsupported');
     });
   });
 
@@ -199,24 +199,30 @@ describe('Codec Support', () => {
       const result = await checkVideoCodecSupport('h264');
 
       expect(result.codec).toBe('h264');
-      expect(result.supported).toBe(true);
-      expect(['webcodecs', 'ffmpeg']).toContain(result.decoderPath);
+      // In environments without WebCodecs, falls back to unsupported
+      if (typeof VideoDecoder !== 'undefined') {
+        expect(result.supported).toBe(true);
+        expect(result.decoderPath).toBe('webcodecs');
+      } else {
+        expect(result.supported).toBe(false);
+        expect(result.decoderPath).toBe('unsupported');
+      }
     });
 
-    it('should return FFmpeg path for ProRes', async () => {
+    it('should return unsupported path for ProRes', async () => {
       const result = await checkVideoCodecSupport('prores');
 
       expect(result.codec).toBe('prores');
-      expect(result.supported).toBe(true);
-      expect(result.decoderPath).toBe('ffmpeg');
+      expect(result.supported).toBe(false);
+      expect(result.decoderPath).toBe('unsupported');
     });
 
-    it('should return FFmpeg path for DNxHD', async () => {
+    it('should return unsupported path for DNxHD', async () => {
       const result = await checkVideoCodecSupport('dnxhd');
 
       expect(result.codec).toBe('dnxhd');
-      expect(result.supported).toBe(true);
-      expect(result.decoderPath).toBe('ffmpeg');
+      expect(result.supported).toBe(false);
+      expect(result.decoderPath).toBe('unsupported');
     });
   });
 
@@ -225,8 +231,14 @@ describe('Codec Support', () => {
       const result = await checkAudioCodecSupport('aac');
 
       expect(result.codec).toBe('aac');
-      expect(result.supported).toBe(true);
-      expect(['webcodecs', 'ffmpeg']).toContain(result.decoderPath);
+      // In environments without WebCodecs, falls back to unsupported
+      if (typeof AudioDecoder !== 'undefined') {
+        expect(result.supported).toBe(true);
+        expect(result.decoderPath).toBe('webcodecs');
+      } else {
+        expect(result.supported).toBe(false);
+        expect(result.decoderPath).toBe('unsupported');
+      }
     });
 
     it('should handle PCM specially', async () => {
@@ -237,12 +249,12 @@ describe('Codec Support', () => {
       expect(result.decoderPath).toBe('webcodecs'); // Native handling
     });
 
-    it('should return FFmpeg path for AC3', async () => {
+    it('should return unsupported path for AC3', async () => {
       const result = await checkAudioCodecSupport('ac3');
 
       expect(result.codec).toBe('ac3');
-      expect(result.supported).toBe(true);
-      expect(result.decoderPath).toBe('ffmpeg');
+      expect(result.supported).toBe(false);
+      expect(result.decoderPath).toBe('unsupported');
     });
   });
 
