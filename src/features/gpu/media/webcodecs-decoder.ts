@@ -17,7 +17,12 @@ import type {
   AudioDecoderConfig,
 } from './types';
 import type { VideoCodec, AudioCodec, DecoderPath } from './codec-support';
-import { getVideoDecoderPath, getAudioDecoderPath } from './codec-support';
+import {
+  getVideoDecoderPath,
+  getAudioDecoderPath,
+  WEBCODECS_VIDEO_CONFIGS,
+  WEBCODECS_AUDIO_CONFIGS,
+} from './codec-support';
 
 /**
  * WebCodecs decoder state
@@ -428,41 +433,20 @@ export function isWebCodecsAvailable(): boolean {
 }
 
 /**
- * Get WebCodecs codec string for a video codec
+ * Get WebCodecs codec string for a video codec.
+ * An optional profile override can replace the default codec string.
  */
 export function getWebCodecsVideoCodec(codec: VideoCodec, profile?: string): string | null {
-  switch (codec) {
-    case 'h264':
-      return profile ?? 'avc1.42E01E'; // Baseline Profile Level 3.0
-    case 'h265':
-      return profile ?? 'hvc1.1.6.L93.B0';
-    case 'vp8':
-      return 'vp8';
-    case 'vp9':
-      return profile ?? 'vp09.00.10.08';
-    case 'av1':
-      return profile ?? 'av01.0.04M.08';
-    default:
-      return null;
+  const defaultCodec = WEBCODECS_VIDEO_CONFIGS[codec];
+  if (!defaultCodec) {
+    return null;
   }
+  return profile ?? defaultCodec;
 }
 
 /**
  * Get WebCodecs codec string for an audio codec
  */
 export function getWebCodecsAudioCodec(codec: AudioCodec): string | null {
-  switch (codec) {
-    case 'aac':
-      return 'mp4a.40.2';
-    case 'mp3':
-      return 'mp3';
-    case 'opus':
-      return 'opus';
-    case 'vorbis':
-      return 'vorbis';
-    case 'flac':
-      return 'flac';
-    default:
-      return null;
-  }
+  return WEBCODECS_AUDIO_CONFIGS[codec] ?? null;
 }

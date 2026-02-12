@@ -264,6 +264,8 @@ export class FrameCache {
    * Clear all entries from the cache
    */
   clear(): void {
+    const count = this.entries.size;
+
     for (const entry of this.entries.values()) {
       this.closeFrameIfNeeded(entry.frame);
       this.config.onEvict(entry);
@@ -273,7 +275,7 @@ export class FrameCache {
     this.accessOrder.length = 0;
     this.insertOrder.length = 0;
     this.currentSizeBytes = 0;
-    this.evictions += this.entries.size;
+    this.evictions += count;
   }
 
   /**

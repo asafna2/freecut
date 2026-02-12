@@ -65,7 +65,7 @@ interface WebCodecsSupport {
 /**
  * Common codec strings for WebCodecs
  */
-const WEBCODECS_VIDEO_CONFIGS: Record<VideoCodec, string | null> = {
+export const WEBCODECS_VIDEO_CONFIGS: Record<VideoCodec, string | null> = {
   h264: 'avc1.42E01E', // H.264 Baseline Profile Level 3.0
   h265: 'hvc1.1.6.L93.B0', // HEVC Main Profile Level 3.1
   vp8: 'vp8',
@@ -80,7 +80,7 @@ const WEBCODECS_VIDEO_CONFIGS: Record<VideoCodec, string | null> = {
   unknown: null,
 };
 
-const WEBCODECS_AUDIO_CONFIGS: Record<AudioCodec, string | null> = {
+export const WEBCODECS_AUDIO_CONFIGS: Record<AudioCodec, string | null> = {
   aac: 'mp4a.40.2', // AAC-LC
   mp3: 'mp3',
   opus: 'opus',
@@ -92,6 +92,13 @@ const WEBCODECS_AUDIO_CONFIGS: Record<AudioCodec, string | null> = {
   alac: null, // Apple Lossless - limited support
   unknown: null,
 };
+
+/**
+ * Build an unsupported codec result
+ */
+function unsupportedResult(codec: VideoCodec | AudioCodec): CodecSupportResult {
+  return { codec, supported: false, decoderPath: 'unsupported' };
+}
 
 /**
  * Check if WebCodecs API is available
@@ -117,22 +124,8 @@ export function checkWebCodecsSupport(): WebCodecsSupport {
 export async function checkVideoCodecSupport(codec: VideoCodec): Promise<CodecSupportResult> {
   const codecString = WEBCODECS_VIDEO_CONFIGS[codec];
 
-  // No WebCodecs string means unsupported
-  if (!codecString) {
-    return {
-      codec,
-      supported: false,
-      decoderPath: 'unsupported',
-    };
-  }
-
-  // Check if WebCodecs is available
-  if (typeof VideoDecoder === 'undefined') {
-    return {
-      codec,
-      supported: false,
-      decoderPath: 'unsupported',
-    };
+  if (!codecString || typeof VideoDecoder === 'undefined') {
+    return unsupportedResult(codec);
   }
 
   try {
@@ -154,44 +147,22 @@ export async function checkVideoCodecSupport(codec: VideoCodec): Promise<CodecSu
     // isConfigSupported threw
   }
 
-  return {
-    codec,
-    supported: false,
-    decoderPath: 'unsupported',
-  };
+  return unsupportedResult(codec);
 }
 
 /**
  * Check if a specific audio codec is supported by WebCodecs
  */
 export async function checkAudioCodecSupport(codec: AudioCodec): Promise<CodecSupportResult> {
-  const codecString = WEBCODECS_AUDIO_CONFIGS[codec];
-
   // PCM is handled directly without decoder
   if (codec === 'pcm') {
-    return {
-      codec,
-      supported: true,
-      decoderPath: 'webcodecs', // Native handling
-    };
+    return { codec, supported: true, decoderPath: 'webcodecs' };
   }
 
-  // No WebCodecs string means unsupported
-  if (!codecString) {
-    return {
-      codec,
-      supported: false,
-      decoderPath: 'unsupported',
-    };
-  }
+  const codecString = WEBCODECS_AUDIO_CONFIGS[codec];
 
-  // Check if WebCodecs is available
-  if (typeof AudioDecoder === 'undefined') {
-    return {
-      codec,
-      supported: false,
-      decoderPath: 'unsupported',
-    };
+  if (!codecString || typeof AudioDecoder === 'undefined') {
+    return unsupportedResult(codec);
   }
 
   try {
@@ -202,63 +173,37 @@ export async function checkAudioCodecSupport(codec: AudioCodec): Promise<CodecSu
     });
 
     if (support.supported) {
-      return {
-        codec,
-        supported: true,
-        decoderPath: 'webcodecs',
-      };
+      return { codec, supported: true, decoderPath: 'webcodecs' };
     }
   } catch {
     // isConfigSupported threw
   }
 
-  return {
-    codec,
-    supported: false,
-    decoderPath: 'unsupported',
-  };
+  return unsupportedResult(codec);
 }
+
+/**
+ * Codecs that WebCodecs typically supports
+ */
+const WEBCODECS_VIDEO_CODECS: ReadonlySet<VideoCodec> = new Set(['h264', 'vp8', 'vp9', 'av1']);
 
 /**
  * Get the recommended decoder path for a video codec
  */
 export function getVideoDecoderPath(codec: VideoCodec): DecoderPath {
-  // Codecs that WebCodecs typically supports
-  const webCodecsCodecs: VideoCodec[] = ['h264', 'vp8', 'vp9', 'av1'];
-
-  if (webCodecsCodecs.includes(codec)) {
-    return 'webcodecs';
-  }
-
-  // Codecs without WebCodecs support
-  const unsupportedCodecs: VideoCodec[] = ['prores', 'dnxhd', 'h265', 'mpeg2', 'theora'];
-
-  if (unsupportedCodecs.includes(codec)) {
-    return 'unsupported';
-  }
-
-  return 'unsupported';
+  return WEBCODECS_VIDEO_CODECS.has(codec) ? 'webcodecs' : 'unsupported';
 }
+
+/**
+ * Codecs that WebCodecs typically supports
+ */
+const WEBCODECS_AUDIO_CODECS: ReadonlySet<AudioCodec> = new Set(['aac', 'mp3', 'opus', 'vorbis', 'flac', 'pcm']);
 
 /**
  * Get the recommended decoder path for an audio codec
  */
 export function getAudioDecoderPath(codec: AudioCodec): DecoderPath {
-  // Codecs that WebCodecs typically supports
-  const webCodecsCodecs: AudioCodec[] = ['aac', 'mp3', 'opus', 'vorbis', 'flac', 'pcm'];
-
-  if (webCodecsCodecs.includes(codec)) {
-    return 'webcodecs';
-  }
-
-  // Codecs without WebCodecs support
-  const unsupportedCodecs: AudioCodec[] = ['ac3', 'eac3', 'alac'];
-
-  if (unsupportedCodecs.includes(codec)) {
-    return 'unsupported';
-  }
-
-  return 'unsupported';
+  return WEBCODECS_AUDIO_CODECS.has(codec) ? 'webcodecs' : 'unsupported';
 }
 
 /**

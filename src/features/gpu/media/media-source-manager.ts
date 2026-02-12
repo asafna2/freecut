@@ -284,8 +284,8 @@ export class ManagedMediaSource implements MediaSource {
     const container = this.detectContainer();
 
     // Try to detect codecs from MIME type or container
-    const videoCodec = this.detectVideoCodec();
-    const audioCodec = this.detectAudioCodec();
+    const videoCodec = this.detectVideoCodec(container);
+    const audioCodec = this.detectAudioCodec(container);
 
     const result: ProbeResult = {
       container,
@@ -357,10 +357,7 @@ export class ManagedMediaSource implements MediaSource {
   /**
    * Detect video codec from container/MIME
    */
-  private detectVideoCodec(): VideoCodec {
-    const container = this.detectContainer();
-
-    // Map common containers to likely codecs
+  private detectVideoCodec(container: string): VideoCodec {
     switch (container) {
       case 'mp4':
       case 'mov':
@@ -380,9 +377,7 @@ export class ManagedMediaSource implements MediaSource {
   /**
    * Detect audio codec from container/MIME
    */
-  private detectAudioCodec(): AudioCodec {
-    const container = this.detectContainer();
-
+  private detectAudioCodec(container: string): AudioCodec {
     switch (container) {
       case 'mp4':
       case 'mov':
@@ -412,30 +407,18 @@ export class ManagedMediaSource implements MediaSource {
     }
 
     // Determine decoder path
-    let decoderPath = probeResult.video.decoderPath;
+    const decoderPath = this.config.preferredDecoder ?? probeResult.video.decoderPath;
 
-    // Apply preference if set
-    if (this.config.preferredDecoder) {
-      decoderPath = this.config.preferredDecoder;
+    // WebCodecs is the only supported decoder path
+    const canUseWebCodecs = decoderPath === 'webcodecs' && typeof VideoDecoder !== 'undefined';
+    this._decoderType = canUseWebCodecs ? 'webcodecs' : 'unsupported';
+
+    if (!canUseWebCodecs) {
+      return;
     }
 
-    // Check if WebCodecs is available
-    if (decoderPath === 'webcodecs' && typeof VideoDecoder === 'undefined') {
-      decoderPath = 'unsupported';
-    }
-
-    this._decoderType = decoderPath;
-
-    // Create decoder
     try {
-      if (decoderPath === 'webcodecs') {
-        this.decoder = createWebCodecsDecoder();
-      } else {
-        this.decoder = null;
-        return;
-      }
-
-      // Configure decoder
+      this.decoder = createWebCodecsDecoder();
       await this.decoder.configure({
         video: {
           codec: probeResult.video.codecString,
