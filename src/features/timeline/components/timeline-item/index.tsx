@@ -190,9 +190,10 @@ export const TimelineItem = memo(function TimelineItem({ item, timelineDuration 
         rafIdRef.current = null;
       }
       if (transformRef.current) {
+        const baseOpacity = trackHidden ? 0.3 : trackLocked ? 0.6 : 1;
         transformRef.current.style.transition = 'none';
         transformRef.current.style.transform = '';
-        transformRef.current.style.opacity = '';
+        transformRef.current.style.opacity = String(baseOpacity);
         transformRef.current.style.pointerEvents = '';
         transformRef.current.style.zIndex = '';
       }
@@ -268,7 +269,7 @@ export const TimelineItem = memo(function TimelineItem({ item, timelineDuration 
       cleanupDragStyles();
       if (dragWasActiveTimeout) clearTimeout(dragWasActiveTimeout);
     };
-  }, [item.id, isDragging]); // Use refs for position values to avoid recreation on drag
+  }, [item.id, isDragging, trackHidden, trackLocked]); // Use refs for position values to avoid recreation on drag
 
   // Computed values from refs for rendering
   const isPartOfMultiDrag = dragParticipationRef.current > 0;
@@ -621,7 +622,7 @@ export const TimelineItem = memo(function TimelineItem({ item, timelineDuration 
             width: `${visualWidth}px`,
             transform: isDragging && !isAltDrag ? `translate(${dragOffset.x}px, ${dragOffset.y}px)` : undefined,
             opacity: isDragging && !isAltDrag ? DRAG_OPACITY : trackHidden ? 0.3 : trackLocked ? 0.6 : 1,
-            pointerEvents: isDragging || trackHidden ? 'none' : 'auto',
+            pointerEvents: isDragging ? 'none' : 'auto',
             zIndex: isBeingDragged ? 50 : undefined,
             contentVisibility: 'auto',
             containIntrinsicSize: `0 ${DEFAULT_TRACK_HEIGHT}px`,

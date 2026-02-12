@@ -255,7 +255,6 @@ export const TransitionItem = memo(function TransitionItem({
             height: `${overlayHeight}px`,
             zIndex: isResizing ? 50 : 10,
             opacity: trackHidden ? 0.3 : undefined,
-            pointerEvents: trackHidden ? 'none' : undefined,
             cursor,
           }}
           onMouseDown={handleMouseDown}
