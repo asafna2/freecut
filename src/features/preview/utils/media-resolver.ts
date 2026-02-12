@@ -1,16 +1,8 @@
 import { mediaLibraryService, FileAccessError } from '@/features/media-library/services/media-library-service';
 import { useMediaLibraryStore } from '@/features/media-library/stores/media-library-store';
 import { proxyService } from '@/features/media-library/services/proxy-service';
+import { blobUrlManager } from '@/lib/blob-url-manager';
 import type { TimelineTrack } from '@/types/timeline';
-
-/**
- * Cache to prevent creating duplicate blob URLs for the same media.
- *
- * IMPORTANT: This cache persists for the lifetime of the page. Blob URLs are
- * only revoked when explicitly requested (e.g., media deleted) or on page unload.
- * This prevents race conditions where components try to use revoked URLs.
- */
-const blobUrlCache = new Map<string, string>();
 
 /**
  * Pending requests to prevent concurrent OPFS access to the same file
@@ -25,9 +17,10 @@ const pendingRequests = new Map<string, Promise<string>>();
  * @returns Blob URL for the media, or empty string if not found
  */
 export async function resolveMediaUrl(mediaId: string): Promise<string> {
-  // Check cache first - URLs persist until page unload or explicit revocation
-  if (blobUrlCache.has(mediaId)) {
-    return blobUrlCache.get(mediaId)!;
+  // Check centralized manager first - URLs persist until explicit release
+  const cached = blobUrlManager.get(mediaId);
+  if (cached) {
+    return cached;
   }
 
   // Check if there's already a pending request for this media
@@ -54,13 +47,8 @@ export async function resolveMediaUrl(mediaId: string): Promise<string> {
         return '';
       }
 
-      // Create blob URL from the Blob object
-      const blobUrl = URL.createObjectURL(blob);
-
-      // Cache it to prevent memory leaks and improve performance
-      blobUrlCache.set(mediaId, blobUrl);
-
-      return blobUrl;
+      // Acquire blob URL through centralized manager (handles caching + ref counting)
+      return blobUrlManager.acquire(mediaId, blob);
     } catch (error) {
       console.error(`Failed to resolve media ${mediaId}:`, error);
 
@@ -105,9 +93,10 @@ function resolveProxyUrl(mediaId: string): string | null {
  */
 export async function resolveMediaUrls(
   tracks: TimelineTrack[],
-  options?: { useProxy?: boolean }
+  options?: { useProxy?: boolean; signal?: AbortSignal }
 ): Promise<TimelineTrack[]> {
   const useProxy = options?.useProxy ?? true;
+  const signal = options?.signal;
 
   // Deep clone tracks to avoid mutating original
   const resolvedTracks: TimelineTrack[] = JSON.parse(JSON.stringify(tracks));
@@ -139,6 +128,11 @@ export async function resolveMediaUrls(
   // Wait for all resolutions to complete
   await Promise.all(resolutionPromises);
 
+  // Check if aborted after resolution
+  if (signal?.aborted) {
+    throw new DOMException('Media resolution aborted', 'AbortError');
+  }
+
   return resolvedTracks;
 }
 
@@ -147,9 +141,6 @@ export async function resolveMediaUrls(
  * Call this on component unmount to prevent memory leaks
  */
 export function cleanupBlobUrls(): void {
-  for (const url of blobUrlCache.values()) {
-    URL.revokeObjectURL(url);
-  }
-  blobUrlCache.clear();
-  pendingRequests.clear(); // Clear any pending requests
+  blobUrlManager.releaseAll();
+  pendingRequests.clear();
 }

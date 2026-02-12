@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { toast } from 'sonner';
 import { useSettingsStore } from '@/features/settings/stores/settings-store';
 import { createLogger } from '@/lib/logger';
 
@@ -51,6 +52,7 @@ export function useAutoSave({ isDirty, onSave, enabled = true }: UseAutoSaveOpti
         logger.debug('Auto-save completed');
       } catch (error) {
         logger.error('Auto-save failed:', error);
+        toast.error('Auto-save failed');
       } finally {
         isSavingRef.current = false;
       }

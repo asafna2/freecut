@@ -32,6 +32,8 @@ export const SourceMonitor = memo(function SourceMonitor({ mediaId, onClose }: S
     let cancelled = false;
     resolveMediaUrl(mediaId).then((url) => {
       if (!cancelled) setBlobUrl(url);
+    }).catch(() => {
+      // Resolution failure already logged in resolveMediaUrl
     });
     return () => { cancelled = true; };
   }, [mediaId]);

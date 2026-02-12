@@ -533,6 +533,8 @@ class WaveformCacheService {
           logger.warn('Waveform prefetch failed:', error);
         });
       }
+    }).catch((error) => {
+      logger.warn('Waveform storage load failed during prefetch:', error);
     });
   }
 

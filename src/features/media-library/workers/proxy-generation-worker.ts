@@ -11,6 +11,8 @@
  *     meta.json - { width, height, status, createdAt }
  */
 
+import type { Conversion as ConversionType } from 'mediabunny';
+
 const PROXY_DIR = 'proxies';
 const PROXY_WIDTH = 1280;
 const PROXY_HEIGHT = 720;
@@ -109,8 +111,7 @@ async function generateProxy(request: ProxyGenerateRequest): Promise<void> {
     target,
   });
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let conversion: any = null;
+  let conversion: ConversionType | null = null;
 
   try {
     conversion = await Conversion.init({

@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { toast } from 'sonner';
 import { useTimelineStore } from '../stores/timeline-store';
 import type { TimelineState, TimelineActions } from '../types';
 import type { TransitionBreakage } from '@/types/transition';
@@ -54,19 +55,15 @@ export function useTransitionBreakageNotifications() {
 }
 
 /**
- * Show notification for transition breakages.
- * Currently uses console.warn. Can be replaced with toast library.
+ * Show notification for transition breakages via toast.
  */
 function showBreakageNotification(breakages: TransitionBreakage[]) {
   if (breakages.length === 1) {
     const breakage = breakages[0]!;
-    console.warn(`[Transition] ${breakage.message}`);
+    toast.warning(breakage.message);
   } else {
-    console.warn(
-      `[Transition] ${breakages.length} transitions removed due to clip changes`
+    toast.warning(
+      `${breakages.length} transitions removed due to clip changes`
     );
-    for (const breakage of breakages) {
-      console.warn(`  - ${breakage.message}`);
-    }
   }
 }

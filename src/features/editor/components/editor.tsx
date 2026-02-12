@@ -13,6 +13,7 @@ import { PreviewArea } from './preview-area';
 import { ProjectDebugPanel } from './project-debug-panel';
 import { Timeline } from '@/features/timeline/components/timeline';
 import { ClearKeyframesDialog } from './clear-keyframes-dialog';
+import { toast } from 'sonner';
 import { useEditorHotkeys } from '@/hooks/use-editor-hotkeys';
 import { useAutoSave } from '../hooks/use-auto-save';
 import { useTimelineShortcuts } from '@/features/timeline/hooks/use-timeline-shortcuts';
@@ -20,6 +21,7 @@ import { useTransitionBreakageNotifications } from '@/features/timeline/hooks/us
 import { initTransitionChainSubscription } from '@/features/timeline/stores/transition-chain-store';
 import { useTimelineStore } from '@/features/timeline/stores/timeline-store';
 import { usePlaybackStore } from '@/features/preview/stores/playback-store';
+import { cleanupBlobUrls } from '@/features/preview/utils/media-resolver';
 import { useMediaLibraryStore } from '@/features/media-library/stores/media-library-store';
 import { useProjectStore } from '@/features/projects/stores/project-store';
 
@@ -111,11 +113,12 @@ export const Editor = memo(function Editor({ projectId, project }: EditorProps) 
       logger.error('Failed to load timeline:', error);
     });
 
-    // Cleanup: clear project context and stop playback when leaving editor
+    // Cleanup: clear project context, stop playback, and release blob URLs when leaving editor
     return () => {
       useMediaLibraryStore.getState().setCurrentProject(null);
       useProjectStore.getState().setCurrentProject(null);
       usePlaybackStore.getState().pause();
+      cleanupBlobUrls();
     };
   }, [projectId]); // Re-initialize when projectId changes
 
@@ -135,10 +138,10 @@ export const Editor = memo(function Editor({ projectId, project }: EditorProps) 
     try {
       await saveTimeline(projectId);
       logger.debug('Project saved successfully');
-      // TODO: Show success toast notification
+      toast.success('Project saved');
     } catch (error) {
       logger.error('Failed to save project:', error);
-      // TODO: Show error toast notification
+      toast.error('Failed to save project');
       throw error; // Re-throw so callers know save failed
     } finally {
       isSavingRef.current = false;
