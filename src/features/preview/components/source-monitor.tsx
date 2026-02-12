@@ -183,13 +183,13 @@ function SourceMonitorInner({
       onMouseLeave={() => setHoveredPanel(null)}
     >
       {/* Header */}
-      <div className="h-9 border-b border-border flex items-center px-3 justify-between flex-shrink-0">
+      <div className="h-9 border-b border-border flex items-center px-3 justify-between shrink-0">
         <span className="text-xs text-muted-foreground truncate">
           Source: {fileName}
         </span>
         <button
           onClick={onClose}
-          className="p-1 rounded hover:bg-muted transition-colors flex-shrink-0"
+          className="p-1 rounded hover:bg-muted transition-colors shrink-0"
           aria-label="Close source monitor"
         >
           <X className="w-3.5 h-3.5 text-muted-foreground" />
@@ -199,7 +199,7 @@ function SourceMonitorInner({
       {/* Video area - same gradient bg as composition panel */}
       <div
         ref={containerRef}
-        className="flex-1 min-h-0 relative overflow-hidden bg-gradient-to-br from-background to-secondary/20"
+        className="flex-1 min-h-0 relative overflow-hidden bg-linear-to-br from-background to-secondary/20"
       >
         {src ? (
           <div
@@ -333,7 +333,7 @@ function SourcePlaybackControls({
   const progress = lastFrame > 0 ? (frame / lastFrame) * 100 : 0;
 
   return (
-    <div className="h-16 border-t border-border panel-header flex flex-col justify-center px-4 flex-shrink-0 gap-1.5">
+    <div className="h-16 border-t border-border panel-header flex flex-col justify-center px-4 shrink-0 gap-1.5">
       {/* Progress bar */}
       <div
         ref={barRef}
