@@ -24,6 +24,8 @@ interface ItemContextMenuProps {
   closerEdge: 'left' | 'right' | null;
   /** Keyframed properties for the item (used to build clear submenu) */
   keyframedProperties?: PropertyKeyframes[];
+  /** Number of currently selected items (for multi-selection features) */
+  selectedCount: number;
   onJoinSelected: () => void;
   onJoinLeft: () => void;
   onJoinRight: () => void;
@@ -31,6 +33,7 @@ interface ItemContextMenuProps {
   onDelete: () => void;
   onClearAllKeyframes?: () => void;
   onClearPropertyKeyframes?: (property: AnimatableProperty) => void;
+  onBentoLayout?: () => void;
 }
 
 /**
@@ -51,8 +54,10 @@ export const ItemContextMenu = memo(function ItemContextMenu({
   onJoinRight,
   onRippleDelete,
   onDelete,
+  selectedCount,
   onClearAllKeyframes,
   onClearPropertyKeyframes,
+  onBentoLayout,
 }: ItemContextMenuProps) {
   // Filter to only properties that actually have keyframes
   const propertiesWithKeyframes = useMemo(() => {
@@ -123,6 +128,16 @@ export const ItemContextMenu = memo(function ItemContextMenu({
                 ))}
               </ContextMenuSubContent>
             </ContextMenuSub>
+            <ContextMenuSeparator />
+          </>
+        )}
+
+        {/* Bento Layout - only show when 2+ items selected */}
+        {selectedCount >= 2 && onBentoLayout && (
+          <>
+            <ContextMenuItem onClick={onBentoLayout}>
+              Bento Layout...
+            </ContextMenuItem>
             <ContextMenuSeparator />
           </>
         )}
