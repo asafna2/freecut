@@ -4,6 +4,7 @@ import { useToolShortcuts } from './shortcuts/use-tool-shortcuts';
 import { useMarkerShortcuts } from './shortcuts/use-marker-shortcuts';
 import { useUIShortcuts } from './shortcuts/use-ui-shortcuts';
 import { useClipboardShortcuts } from './shortcuts/use-clipboard-shortcuts';
+import { useSourceMonitorShortcuts } from './shortcuts/use-source-monitor-shortcuts';
 
 export interface TimelineShortcutCallbacks {
   onPlay?: () => void;
@@ -35,4 +36,5 @@ export function useTimelineShortcuts(callbacks: TimelineShortcutCallbacks = {}) 
   useMarkerShortcuts();
   useUIShortcuts(callbacks);
   useClipboardShortcuts();
+  useSourceMonitorShortcuts();
 }

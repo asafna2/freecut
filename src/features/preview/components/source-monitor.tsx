@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useCallback, memo } from 'react';
-import { X, Play, Pause, SkipBack, SkipForward, ChevronLeft, ChevronRight } from 'lucide-react';
+import { X, Play, Pause, SkipBack, SkipForward, ChevronLeft, ChevronRight, Repeat, ArrowLeftToLine, ArrowRightToLine, XCircle, ArrowDownToLine, Replace } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
+import { performInsertEdit, performOverwriteEdit } from '@/features/timeline/stores/actions/source-edit-actions';
 import { PlayerEmitterProvider } from '@/features/player/event-emitter';
 import { ClockBridgeProvider, useBridgedTimelineContext } from '@/features/player/clock';
 import { VideoConfigProvider } from '@/features/player/video-config-context';
@@ -19,6 +21,14 @@ interface SourceMonitorProps {
 export const SourceMonitor = memo(function SourceMonitor({ mediaId, onClose }: SourceMonitorProps) {
   const [blobUrl, setBlobUrl] = useState<string>('');
   const media = useMediaLibraryStore((s) => s.mediaItems.find((m) => m.id === mediaId));
+
+  // Sync current media ID into source player store for I/O points
+  useEffect(() => {
+    useSourcePlayerStore.getState().setCurrentMediaId(mediaId);
+    return () => {
+      useSourcePlayerStore.getState().setCurrentMediaId(null);
+    };
+  }, [mediaId]);
 
   // Auto-close if media is deleted
   useEffect(() => {
@@ -176,11 +186,53 @@ function SourceMonitorInner({
     };
   }, [setHoveredPanel, setPlayerMethods]);
 
+  // Handle I/O shortcuts locally on this element (not global useHotkeys)
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const hadFocusRef = useRef(false);
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+    const { currentSourceFrame, setInPoint, setOutPoint, clearInOutPoints } = useSourcePlayerStore.getState();
+    if (e.key === 'i' || e.key === 'I') {
+      e.preventDefault();
+      e.stopPropagation();
+      setInPoint(currentSourceFrame);
+    } else if (e.key === 'o' || e.key === 'O') {
+      e.preventDefault();
+      e.stopPropagation();
+      setOutPoint(currentSourceFrame);
+    } else if (e.altKey && (e.key === 'x' || e.key === 'X')) {
+      e.preventDefault();
+      e.stopPropagation();
+      clearInOutPoints();
+    }
+  }, []);
+
+  const handleMouseEnter = useCallback(() => {
+    setHoveredPanel('source');
+    // Only grab focus if nothing meaningful is focused (avoid stealing from inputs)
+    const active = document.activeElement;
+    if (active === document.body || wrapperRef.current?.contains(active)) {
+      wrapperRef.current?.focus();
+      hadFocusRef.current = true;
+    }
+  }, [setHoveredPanel]);
+
+  const handleMouseLeave = useCallback(() => {
+    setHoveredPanel(null);
+    if (hadFocusRef.current) {
+      wrapperRef.current?.blur();
+      hadFocusRef.current = false;
+    }
+  }, [setHoveredPanel]);
+
   return (
     <div
-      className="flex-1 flex flex-col min-w-0"
-      onMouseEnter={() => setHoveredPanel('source')}
-      onMouseLeave={() => setHoveredPanel(null)}
+      ref={wrapperRef}
+      tabIndex={-1}
+      className="flex-1 flex flex-col min-w-0 outline-none"
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
+      onKeyDown={handleKeyDown}
     >
       {/* Header */}
       <div className="h-9 border-b border-border flex items-center px-3 justify-between shrink-0">
@@ -263,6 +315,24 @@ function SourcePlaybackControls({
     };
   }, [player.toggle, player.seek, player.frameBack, player.frameForward, durationInFrames]);
 
+  // Sync current frame into source player store for Mark I/O
+  useEffect(() => {
+    useSourcePlayerStore.getState().setCurrentSourceFrame(frame);
+  }, [frame]);
+
+  // Consume pending seek (e.g. double-click opens clip at its In point)
+  const pendingSeekFrame = useSourcePlayerStore((s) => s.pendingSeekFrame);
+  useEffect(() => {
+    if (pendingSeekFrame !== null) {
+      player.seek(pendingSeekFrame);
+      useSourcePlayerStore.getState().setPendingSeekFrame(null);
+    }
+  }, [pendingSeekFrame, player]);
+
+  // Read I/O points from store
+  const inPoint = useSourcePlayerStore((s) => s.inPoint);
+  const outPoint = useSourcePlayerStore((s) => s.outPoint);
+
   const formatTime = (f: number) => {
     const secs = f / fps;
     const m = Math.floor(secs / 60);
@@ -332,45 +402,195 @@ function SourcePlaybackControls({
 
   const progress = lastFrame > 0 ? (frame / lastFrame) * 100 : 0;
 
+  // I/O marker positions as percentages
+  const inPct = inPoint !== null && lastFrame > 0 ? (inPoint / lastFrame) * 100 : null;
+  const outPct = outPoint !== null && lastFrame > 0 ? (outPoint / lastFrame) * 100 : null;
+
+  // Duration display when both I/O are set
+  const ioDuration = inPoint !== null && outPoint !== null
+    ? formatTime(outPoint - inPoint)
+    : null;
+
+  const handleMarkIn = useCallback(() => {
+    useSourcePlayerStore.getState().setInPoint(frame);
+  }, [frame]);
+
+  const handleMarkOut = useCallback(() => {
+    useSourcePlayerStore.getState().setOutPoint(frame);
+  }, [frame]);
+
+  const handleClearIO = useCallback(() => {
+    useSourcePlayerStore.getState().clearInOutPoints();
+  }, []);
+
+  // Auto-stop playback at out point
+  const replayingRef = useRef(false);
+
+  useEffect(() => {
+    if (!replayingRef.current || !playing) {
+      if (!playing) replayingRef.current = false;
+      return;
+    }
+    if (outPoint !== null && frame >= outPoint) {
+      player.pause();
+      replayingRef.current = false;
+    }
+  }, [frame, playing, outPoint, player]);
+
+  const handleReplaySegment = useCallback(() => {
+    const { inPoint: ip, outPoint: op } = useSourcePlayerStore.getState();
+    if (ip === null && op === null) return;
+    replayingRef.current = true;
+    player.seek(ip ?? 0);
+    player.play();
+  }, [player]);
+
   return (
     <div className="h-16 border-t border-border panel-header flex flex-col justify-center px-4 shrink-0 gap-1.5">
-      {/* Progress bar */}
+      {/* Progress bar with I/O markers drawn on top */}
       <div
         ref={barRef}
-        className="w-full h-1.5 bg-muted rounded cursor-pointer overflow-hidden"
+        className="w-full h-1.5 bg-muted rounded cursor-pointer relative"
         onMouseDown={handleBarMouseDown}
       >
+        {/* Playhead progress (bottom layer) */}
         <div
-          className="h-full bg-primary transition-none pointer-events-none"
+          className="absolute inset-y-0 left-0 bg-primary transition-none pointer-events-none rounded-l"
           style={{ width: `${progress}%` }}
         />
+        {/* Shaded region between in/out points */}
+        {inPct !== null && outPct !== null && (
+          <div
+            className="absolute inset-y-0 bg-blue-400/50 pointer-events-none z-10"
+            style={{ left: `${inPct}%`, width: `${outPct - inPct}%` }}
+          />
+        )}
+        {/* In marker */}
+        {inPct !== null && (
+          <div
+            className="absolute inset-y-0 w-0.5 bg-blue-400 pointer-events-none z-20"
+            style={{ left: `${inPct}%` }}
+          />
+        )}
+        {/* Out marker */}
+        {outPct !== null && (
+          <div
+            className="absolute inset-y-0 w-0.5 bg-orange-400 pointer-events-none z-20"
+            style={{ left: `${outPct}%` }}
+          />
+        )}
       </div>
 
       {/* Transport row */}
       <div className="flex items-center justify-between">
-        <span className="text-xs font-mono text-muted-foreground">
+        <span className="text-xs font-mono text-muted-foreground w-[11ch] shrink-0">
           {formatTime(frame)} / {formatTime(lastFrame)}
         </span>
+        <span className="text-xs font-mono text-primary/70 w-[7ch] shrink-0">
+          {ioDuration ? `[${ioDuration}]` : ''}
+        </span>
 
-        <div className="flex items-center gap-0.5">
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => player.seek(0)}>
-            <SkipBack className="w-3.5 h-3.5" />
-          </Button>
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => player.frameBack(1)}>
-            <ChevronLeft className="w-3.5 h-3.5" />
-          </Button>
-          <Button size="icon" className="h-8 w-8" onClick={() => player.toggle()}>
-            {playing ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 ml-0.5" />}
-          </Button>
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => player.frameForward(1)}>
-            <ChevronRight className="w-3.5 h-3.5" />
-          </Button>
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => player.seek(lastFrame)}>
-            <SkipForward className="w-3.5 h-3.5" />
-          </Button>
+        <div className="flex items-center gap-0.5 shrink-0">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => player.seek(0)}>
+                <SkipBack className="w-3.5 h-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="top">Go to start (Home)</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => player.frameBack(1)}>
+                <ChevronLeft className="w-3.5 h-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="top">Previous frame (←)</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button size="icon" className="h-8 w-8" onClick={() => player.toggle()}>
+                {playing ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 ml-0.5" />}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="top">{playing ? 'Pause' : 'Play'} (Space)</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => player.frameForward(1)}>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="top">Next frame (→)</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => player.seek(lastFrame)}>
+                <SkipForward className="w-3.5 h-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="top">Go to end (End)</TooltipContent>
+          </Tooltip>
         </div>
 
-        <div className="w-20" />
+        {/* Source editing buttons */}
+        <div className="flex items-center gap-0.5 shrink-0">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7"
+                disabled={inPoint === null && outPoint === null}
+                onClick={handleReplaySegment}
+              >
+                <Repeat className="w-3.5 h-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="top">Play In to Out</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleMarkIn}>
+                <ArrowLeftToLine className="w-3.5 h-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="top">Mark In (I)</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleMarkOut}>
+                <ArrowRightToLine className="w-3.5 h-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="top">Mark Out (O)</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleClearIO}>
+                <XCircle className="w-3.5 h-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="top">Clear In/Out (Alt+X)</TooltipContent>
+          </Tooltip>
+          <div className="w-px h-4 bg-border mx-0.5" />
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => performInsertEdit()}>
+                <ArrowDownToLine className="w-3.5 h-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="top">Insert (,)</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => performOverwriteEdit()}>
+                <Replace className="w-3.5 h-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="top">Overwrite (.)</TooltipContent>
+          </Tooltip>
+        </div>
       </div>
     </div>
   );

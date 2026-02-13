@@ -57,6 +57,13 @@ export const HOTKEYS = {
   ADD_KEYFRAME: 'k',
   CLEAR_KEYFRAMES: 'shift+k',
   TOGGLE_KEYFRAME_EDITOR: 'mod+k',
+
+  // Source Monitor
+  MARK_IN: 'i',
+  MARK_OUT: 'o',
+  CLEAR_IN_OUT: 'alt+x',
+  INSERT_EDIT: 'comma',
+  OVERWRITE_EDIT: 'period',
 } as const;
 
 export type HotkeyKey = keyof typeof HOTKEYS;
@@ -117,6 +124,13 @@ export const HOTKEY_DESCRIPTIONS: Record<HotkeyKey, string> = {
   ADD_KEYFRAME: 'Add keyframe at playhead',
   CLEAR_KEYFRAMES: 'Clear all keyframes from selected items',
   TOGGLE_KEYFRAME_EDITOR: 'Toggle keyframe editor panel',
+
+  // Source Monitor
+  MARK_IN: 'Mark In point',
+  MARK_OUT: 'Mark Out point',
+  CLEAR_IN_OUT: 'Clear In/Out points',
+  INSERT_EDIT: 'Insert edit',
+  OVERWRITE_EDIT: 'Overwrite edit',
 };
 
 /**

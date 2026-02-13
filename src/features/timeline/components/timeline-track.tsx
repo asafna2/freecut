@@ -4,7 +4,6 @@ import { createLogger } from '@/lib/logger';
 
 const logger = createLogger('TimelineTrack');
 import type { TimelineTrack as TimelineTrackType, TimelineItem as TimelineItemType, VideoItem, AudioItem, ImageItem } from '@/types/timeline';
-import type { TransformProperties } from '@/types/transform';
 import { TimelineItem } from './timeline-item';
 import { TransitionItem } from './transition-item';
 import { useTimelineStore } from '../stores/timeline-store';
@@ -16,32 +15,7 @@ import { mediaLibraryService } from '@/features/media-library/services/media-lib
 import { findNearestAvailableSpace } from '../utils/collision-utils';
 import { getMediaDragData } from '@/features/media-library/utils/drag-data-cache';
 import { DEFAULT_TRACK_HEIGHT } from '@/features/timeline/constants';
-
-/**
- * Compute initial fit-to-canvas transform for an item.
- * This locks in the initial size so it doesn't change when canvas changes.
- */
-function computeInitialTransform(
-  sourceWidth: number,
-  sourceHeight: number,
-  canvasWidth: number,
-  canvasHeight: number
-): TransformProperties {
-  const scaleX = canvasWidth / sourceWidth;
-  const scaleY = canvasHeight / sourceHeight;
-  const fitScale = Math.min(scaleX, scaleY);
-
-  // Note: opacity is intentionally omitted - undefined means "use default (1.0)"
-  // Only set opacity explicitly when user changes it, so we can distinguish
-  // between "default 100%" and "explicitly set to 100%"
-  return {
-    x: 0,
-    y: 0,
-    width: Math.round(sourceWidth * fitScale),
-    height: Math.round(sourceHeight * fitScale),
-    rotation: 0,
-  };
-}
+import { computeInitialTransform } from '../utils/transform-init';
 import {
   ContextMenu,
   ContextMenuContent,

@@ -19,3 +19,4 @@ export * from './actions/transition-actions';
 export * from './actions/keyframe-actions';
 export * from './actions/marker-actions';
 export * from './actions/settings-actions';
+export * from './actions/source-edit-actions';

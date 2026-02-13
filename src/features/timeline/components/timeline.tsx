@@ -156,6 +156,9 @@ export const Timeline = memo(function Timeline({ duration, onGraphPanelOpenChang
   // Keyboard shortcuts for in/out markers
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Another focused panel (e.g. Source Monitor) already handled this key.
+      if (e.defaultPrevented) return;
+
       // Ignore if typing in an input, textarea, or contenteditable
       const target = e.target as HTMLElement;
       if (

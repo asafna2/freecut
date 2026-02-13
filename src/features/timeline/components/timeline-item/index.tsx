@@ -3,6 +3,8 @@ import type { TimelineItem as TimelineItemType } from '@/types/timeline';
 import { useTimelineZoomContext } from '../../contexts/timeline-zoom-context';
 import { useTimelineStore } from '../../stores/timeline-store';
 import { useSelectionStore } from '@/features/editor/stores/selection-store';
+import { useEditorStore } from '@/features/editor/stores/editor-store';
+import { useSourcePlayerStore } from '@/features/preview/stores/source-player-store';
 import { usePlaybackStore } from '@/features/preview/stores/playback-store';
 import { useMediaLibraryStore } from '@/features/media-library/stores/media-library-store';
 import { useTimelineDrag, dragOffsetRef } from '../../hooks/use-timeline-drag';
@@ -440,6 +442,32 @@ export const TimelineItem = memo(function TimelineItem({ item, timelineDuration 
     }
   }, [trackLocked, frameToPixels, pixelsToFrame, item.from, item.id]);
 
+  // Double-click: open media in source monitor with clip's source range as I/O
+  const handleDoubleClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (trackLocked || !item.mediaId) return;
+    if (activeToolRef.current === 'razor') return;
+
+    // Pre-set currentMediaId so SourceMonitor's useEffect is a no-op
+    const sourceStore = useSourcePlayerStore.getState();
+    sourceStore.setCurrentMediaId(item.mediaId);
+
+    // Clear any existing I/O then transfer the clip's source range
+    sourceStore.clearInOutPoints();
+    if (item.sourceStart !== undefined) {
+      sourceStore.setInPoint(item.sourceStart);
+    }
+    if (item.sourceEnd !== undefined) {
+      sourceStore.setOutPoint(item.sourceEnd);
+    }
+
+    // Seek source playhead to In point once the player is ready
+    sourceStore.setPendingSeekFrame(item.sourceStart ?? 0);
+
+    // Open the source monitor (triggers SourceMonitor render)
+    useEditorStore.getState().setSourcePreviewMediaId(item.mediaId);
+  }, [trackLocked, item.mediaId, item.sourceStart, item.sourceEnd]);
+
   // Handle mouse move for edge hover detection
   const hoveredEdgeRef = useRef(hoveredEdge);
   hoveredEdgeRef.current = hoveredEdge;
@@ -628,6 +656,7 @@ export const TimelineItem = memo(function TimelineItem({ item, timelineDuration 
             containIntrinsicSize: `0 ${DEFAULT_TRACK_HEIGHT}px`,
           }}
           onClick={handleClick}
+          onDoubleClick={handleDoubleClick}
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseLeave={() => setHoveredEdge(null)}

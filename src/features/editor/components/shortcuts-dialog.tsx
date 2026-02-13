@@ -56,6 +56,10 @@ const SHORTCUT_CATEGORIES: { name: string; keys: HotkeyKey[]; extra?: { descript
     name: 'Keyframes',
     keys: ['ADD_KEYFRAME', 'CLEAR_KEYFRAMES', 'TOGGLE_KEYFRAME_EDITOR'],
   },
+  {
+    name: 'Source Monitor',
+    keys: ['MARK_IN', 'MARK_OUT', 'CLEAR_IN_OUT', 'INSERT_EDIT', 'OVERWRITE_EDIT'],
+  },
 ];
 
 // Format key binding for display
@@ -63,6 +67,8 @@ function formatKeyBinding(key: string): string {
   return key
     .replace('mod', 'Ctrl')
     .replace('space', 'Space')
+    .replace('comma', ',')
+    .replace('period', '.')
     .replace('bracketleft', '[')
     .replace('bracketright', ']')
     .replace('left', '←')
