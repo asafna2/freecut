@@ -194,8 +194,12 @@ export async function performInsertEdit(): Promise<void> {
         item.from < insertFrame &&
         item.from + item.durationInFrames > insertFrame
     );
+    let splitIds: string[] = [];
     if (straddleItem) {
-      store._splitItem(straddleItem.id, insertFrame);
+      const splitResult = store._splitItem(straddleItem.id, insertFrame);
+      if (splitResult) {
+        splitIds = [splitResult.leftItem.id, splitResult.rightItem.id];
+      }
     }
 
     // Re-read items after potential split; shift items at or after insertFrame forward
@@ -211,8 +215,7 @@ export async function performInsertEdit(): Promise<void> {
     store._addItem(newItem);
 
     // Repair transitions on affected items
-    const affectedIds = [newItem.id, ...itemsToShift.map((i) => i.id)];
-    if (straddleItem) affectedIds.push(straddleItem.id);
+    const affectedIds = [newItem.id, ...itemsToShift.map((i) => i.id), ...splitIds];
     applyTransitionRepairs(affectedIds);
 
     useTimelineSettingsStore.getState().markDirty();

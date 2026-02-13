@@ -188,6 +188,7 @@ function SourceMonitorInner({
 
   // Handle I/O shortcuts locally on this element (not global useHotkeys)
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const hadFocusRef = useRef(false);
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
     const { currentSourceFrame, setInPoint, setOutPoint, clearInOutPoints } = useSourcePlayerStore.getState();
@@ -206,13 +207,31 @@ function SourceMonitorInner({
     }
   }, []);
 
+  const handleMouseEnter = useCallback(() => {
+    setHoveredPanel('source');
+    // Only grab focus if nothing meaningful is focused (avoid stealing from inputs)
+    const active = document.activeElement;
+    if (active === document.body || wrapperRef.current?.contains(active)) {
+      wrapperRef.current?.focus();
+      hadFocusRef.current = true;
+    }
+  }, [setHoveredPanel]);
+
+  const handleMouseLeave = useCallback(() => {
+    setHoveredPanel(null);
+    if (hadFocusRef.current) {
+      wrapperRef.current?.blur();
+      hadFocusRef.current = false;
+    }
+  }, [setHoveredPanel]);
+
   return (
     <div
       ref={wrapperRef}
       tabIndex={-1}
       className="flex-1 flex flex-col min-w-0 outline-none"
-      onMouseEnter={() => { setHoveredPanel('source'); wrapperRef.current?.focus(); }}
-      onMouseLeave={() => { setHoveredPanel(null); wrapperRef.current?.blur(); }}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
       onKeyDown={handleKeyDown}
     >
       {/* Header */}
