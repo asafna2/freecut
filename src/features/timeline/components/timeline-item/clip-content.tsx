@@ -1,4 +1,4 @@
-import { memo } from 'react';
+import { memo, useCallback } from 'react';
 import type { TimelineItem } from '@/types/timeline';
 import { ClipFilmstrip } from '../clip-filmstrip';
 import { ClipWaveform } from '../clip-waveform';
@@ -7,6 +7,7 @@ import {
   VIDEO_WAVEFORM_HEIGHT,
 } from '@/features/timeline/constants';
 import { useSettingsStore } from '@/features/settings/stores/settings-store';
+import { useMediaLibraryStore } from '@/features/media-library/stores/media-library-store';
 
 interface ClipContentProps {
   item: TimelineItem;
@@ -34,8 +35,17 @@ export const ClipContent = memo(function ClipContent({
   const showWaveforms = useSettingsStore((s) => s.showWaveforms);
   const showFilmstrips = useSettingsStore((s) => s.showFilmstrips);
 
-  const sourceStart = (item.sourceStart ?? 0) / fps;
-  const sourceDuration = (item.sourceDuration ?? item.durationInFrames) / fps;
+  // sourceStart/sourceDuration are in source-native FPS frames, not project FPS
+  const sourceFps = useMediaLibraryStore(
+    useCallback((s) => {
+      if (!item.mediaId) return fps;
+      const media = s.mediaItems.find((m) => m.id === item.mediaId);
+      return media?.fps || fps;
+    }, [item.mediaId, fps])
+  );
+
+  const sourceStart = (item.sourceStart ?? 0) / sourceFps;
+  const sourceDuration = (item.sourceDuration ?? item.durationInFrames) / sourceFps;
   const trimStart = (item.trimStart ?? 0) / fps;
   const speed = item.speed ?? 1;
 
