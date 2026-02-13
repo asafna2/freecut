@@ -190,10 +190,10 @@ export const TimelineItem = memo(function TimelineItem({ item, timelineDuration 
         rafIdRef.current = null;
       }
       if (transformRef.current) {
-        const baseOpacity = trackHidden ? 0.3 : trackLocked ? 0.6 : 1;
         transformRef.current.style.transition = 'none';
         transformRef.current.style.transform = '';
-        transformRef.current.style.opacity = String(baseOpacity);
+        // Clear imperative opacity so React's inline style takes precedence
+        transformRef.current.style.opacity = '';
         transformRef.current.style.pointerEvents = '';
         transformRef.current.style.zIndex = '';
       }
@@ -269,7 +269,7 @@ export const TimelineItem = memo(function TimelineItem({ item, timelineDuration 
       cleanupDragStyles();
       if (dragWasActiveTimeout) clearTimeout(dragWasActiveTimeout);
     };
-  }, [item.id, isDragging, trackHidden, trackLocked]); // Use refs for position values to avoid recreation on drag
+  }, [item.id, isDragging]); // Only re-create when item identity or drag anchor status changes
 
   // Computed values from refs for rendering
   const isPartOfMultiDrag = dragParticipationRef.current > 0;
