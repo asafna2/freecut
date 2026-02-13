@@ -1,6 +1,13 @@
 import { memo } from 'react';
 import { Button } from '@/components/ui/button';
-import { Eye, EyeOff, Lock, GripVertical, Volume2, VolumeX, Radio } from 'lucide-react';
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu';
+import { Eye, EyeOff, Lock, GripVertical, Volume2, VolumeX, Radio, ChevronRight, ChevronDown, Folder, Layers } from 'lucide-react';
 import type { TimelineTrack } from '@/types/timeline';
 import { useTrackDrag } from '../hooks/use-track-drag';
 
@@ -8,11 +15,22 @@ interface TrackHeaderProps {
   track: TimelineTrack;
   isActive: boolean;
   isSelected: boolean;
+  /** Whether this group track is a drop target for dragged tracks */
+  isDropTarget?: boolean;
+  groupDepth: number;
+  /** Whether grouping is available for current selection (2+ top-level non-group tracks) */
+  canGroup: boolean;
+  /** Whether the parent group has mute/visibility/lock gated on */
+  parentGated?: { muted?: boolean; hidden?: boolean; locked?: boolean };
   onToggleLock: () => void;
   onToggleVisibility: () => void;
   onToggleMute: () => void;
   onToggleSolo: () => void;
+  onToggleCollapse?: () => void;
   onSelect: (e: React.MouseEvent) => void;
+  onGroup?: () => void;
+  onUngroup?: () => void;
+  onRemoveFromGroup?: () => void;
 }
 
 /**
@@ -22,7 +40,11 @@ function areTrackHeaderPropsEqual(prev: TrackHeaderProps, next: TrackHeaderProps
   return (
     prev.track === next.track &&
     prev.isActive === next.isActive &&
-    prev.isSelected === next.isSelected
+    prev.isSelected === next.isSelected &&
+    prev.isDropTarget === next.isDropTarget &&
+    prev.groupDepth === next.groupDepth &&
+    prev.canGroup === next.canGroup &&
+    prev.parentGated === next.parentGated
   );
   // Callbacks (onToggleLock, etc.) are ignored - they're recreated each render but functionality is same
 }
@@ -32,122 +54,202 @@ function areTrackHeaderPropsEqual(prev: TrackHeaderProps, next: TrackHeaderProps
  *
  * Displays track name, controls, and handles selection.
  * Shows active state with background color.
+ * Supports group tracks with collapse/expand and indentation.
+ * Right-click context menu for group operations.
  * Memoized to prevent re-renders when props haven't changed.
  */
 export const TrackHeader = memo(function TrackHeader({
   track,
   isActive,
   isSelected,
+  isDropTarget,
+  groupDepth,
+  canGroup,
+  parentGated,
   onToggleLock,
   onToggleVisibility,
   onToggleMute,
   onToggleSolo,
+  onToggleCollapse,
   onSelect,
+  onGroup,
+  onUngroup,
+  onRemoveFromGroup,
 }: TrackHeaderProps) {
-  // Use track drag hook
-  const { isDragging, dragOffset, handleDragStart } = useTrackDrag(track);
-  const isBeingDragged = isDragging;
+  // Use track drag hook (visuals handled centrally by timeline.tsx via DOM)
+  const { handleDragStart } = useTrackDrag(track);
+  const isGroup = !!track.isGroup;
+  const isInGroup = !!track.parentTrackId;
 
   return (
-    <div
-      className={`
-        flex items-center justify-between px-2 border-b border-border
-        cursor-grab active:cursor-grabbing relative
-        ${isSelected ? 'bg-primary/10' : 'hover:bg-secondary/50'}
-        ${isActive ? 'border-l-3 border-l-primary' : 'border-l-3 border-l-transparent'}
-        ${isBeingDragged ? 'opacity-50 shadow-lg ring-2 ring-primary/30' : ''}
-        ${!isBeingDragged ? 'transition-all duration-150' : ''}
-      `}
-      style={{
-        height: `${track.height}px`,
-        transform: isDragging ? `translateY(${dragOffset}px) scale(1.02)` : undefined,
-        transition: isDragging ? 'none' : undefined,
-        zIndex: isBeingDragged ? 100 : undefined,
-        // content-visibility optimization for long track lists (rendering-content-visibility)
-        contentVisibility: 'auto',
-        containIntrinsicSize: `192px ${track.height}px`,
-      }}
-      onClick={onSelect}
-      onMouseDown={handleDragStart}
-      data-track-id={track.id}
-    >
-      {/* Drag Handle Icon & Track Name */}
-      <div className="flex items-center gap-1 flex-1 min-w-0">
-        <GripVertical className="w-4 h-4 shrink-0 text-muted-foreground" />
-        <span className="text-xs font-medium font-mono whitespace-nowrap">
-          {track.name}
-        </span>
-      </div>
-
-      <div className="flex items-center gap-0.2 shrink-0">
-        {/* Visibility Button */}
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-6 w-6"
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggleVisibility();
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <div
+          className={`
+            flex items-center px-1 border-b border-border
+            cursor-grab active:cursor-grabbing relative
+            ${isSelected ? 'bg-primary/10' : 'hover:bg-secondary/50'}
+            ${isActive ? 'border-l-3 border-l-primary' : 'border-l-3 border-l-transparent'}
+            ${isDropTarget ? 'ring-2 ring-blue-500/60 bg-blue-500/15' : ''}
+            transition-all duration-150
+            ${isGroup && !isDropTarget && !isSelected ? 'bg-secondary/30' : ''}
+          `}
+          style={{
+            height: `${track.height}px`,
+            paddingLeft: `${4 + groupDepth * 16}px`,
+            // content-visibility optimization for long track lists (rendering-content-visibility)
+            contentVisibility: 'auto',
+            containIntrinsicSize: `192px ${track.height}px`,
           }}
-          onMouseDown={(e) => e.stopPropagation()}
+          onClick={onSelect}
+          onMouseDown={handleDragStart}
+          data-track-id={track.id}
         >
-          {track.visible ? (
-            <Eye className="w-1 h-1" />
-          ) : (
-            <EyeOff className="w-1 h-1 opacity-50" />
-          )}
-        </Button>
+          {/* Left column: Drag handle + collapse toggle */}
+          <div className="flex items-center shrink-0 mr-1">
+            <GripVertical className="w-4 h-4 text-muted-foreground" />
+            {isGroup && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-4 w-4 shrink-0 p-0 ml-0.5"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onToggleCollapse?.();
+                }}
+                onMouseDown={(e) => e.stopPropagation()}
+              >
+                {track.isCollapsed ? (
+                  <ChevronRight className="w-3 h-3 text-muted-foreground" />
+                ) : (
+                  <ChevronDown className="w-3 h-3 text-muted-foreground" />
+                )}
+              </Button>
+            )}
+          </div>
 
-        {/* Audio Mute Button */}
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-6 w-6"
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggleMute();
-          }}
-          onMouseDown={(e) => e.stopPropagation()}
-        >
-          {track.muted ? (
-            <VolumeX className="w-1 h-1 text-muted-foreground" />
-          ) : (
-            <Volume2 className="w-1 h-1" />
-          )}
-        </Button>
+          {/* Right column: Name row + Icons row, centered as a block */}
+          <div className="flex items-center justify-center min-w-0 flex-1">
+          <div className="flex flex-col items-start">
+            {/* Row 1: Name */}
+            <div className="flex items-center gap-1">
+              {isGroup ? (
+                <Folder className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
+              ) : (
+                <Layers className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
+              )}
+              <span className="text-sm font-bold font-mono truncate">
+                {track.name}
+              </span>
+            </div>
 
-        {/* Solo Button */}
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-6 w-6"
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggleSolo();
-          }}
-          onMouseDown={(e) => e.stopPropagation()}
-        >
-          <Radio
-            className={`w-1 h-1 ${track.solo ? 'text-primary' : ''}`}
-          />
-        </Button>
+            {/* Row 2: Control icons */}
+            <div className="flex items-center gap-0.5">
+            {/* Visibility Button */}
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-5 w-5 rounded hover:bg-secondary"
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleVisibility();
+              }}
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              {track.visible && !parentGated?.hidden ? (
+                <Eye className="w-3 h-3" />
+              ) : (
+                <EyeOff className={`w-3 h-3 ${parentGated?.hidden ? 'text-warning/50' : 'opacity-50'}`} />
+              )}
+            </Button>
 
-        {/* Lock Button */}
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-6 w-6"
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggleLock();
-          }}
-          onMouseDown={(e) => e.stopPropagation()}
-        >
-          <Lock
-            className={`w-1 h-1 ${track.locked ? 'text-primary' : ''}`}
-          />
-        </Button>
-      </div>
-    </div>
+            {/* Audio Mute Button */}
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-5 w-5 rounded hover:bg-secondary"
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleMute();
+              }}
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              {track.muted || parentGated?.muted ? (
+                <VolumeX className={`w-3 h-3 ${parentGated?.muted ? 'text-warning/50' : 'text-muted-foreground'}`} />
+              ) : (
+                <Volume2 className="w-3 h-3" />
+              )}
+            </Button>
+
+            {/* Solo Button */}
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-5 w-5 rounded hover:bg-secondary"
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleSolo();
+              }}
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              <Radio
+                className={`w-3 h-3 ${track.solo ? 'text-primary' : ''}`}
+              />
+            </Button>
+
+            {/* Lock Button */}
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-5 w-5 rounded hover:bg-secondary"
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleLock();
+              }}
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              <Lock
+                className={`w-3 h-3 ${track.locked || parentGated?.locked ? (parentGated?.locked ? 'text-warning/50' : 'text-primary') : ''}`}
+              />
+            </Button>
+          </div>
+          </div>
+          </div>
+        </div>
+      </ContextMenuTrigger>
+
+      <ContextMenuContent className="w-52">
+        {/* Group operations */}
+        {canGroup && !isGroup && (
+          <ContextMenuItem onClick={onGroup}>
+            Group Selected Tracks
+            <span className="ml-auto text-xs text-muted-foreground">Ctrl+G</span>
+          </ContextMenuItem>
+        )}
+        {isGroup && (
+          <ContextMenuItem onClick={onUngroup}>
+            Ungroup
+            <span className="ml-auto text-xs text-muted-foreground">Ctrl+Shift+G</span>
+          </ContextMenuItem>
+        )}
+        {isInGroup && !isGroup && (
+          <ContextMenuItem onClick={onRemoveFromGroup}>
+            Remove from Group
+          </ContextMenuItem>
+        )}
+
+        {/* Track controls */}
+        <ContextMenuSeparator />
+        <ContextMenuItem onClick={onToggleVisibility}>
+          {track.visible ? 'Hide Track' : 'Show Track'}
+        </ContextMenuItem>
+        <ContextMenuItem onClick={onToggleMute}>
+          {track.muted ? 'Unmute Track' : 'Mute Track'}
+        </ContextMenuItem>
+        <ContextMenuItem onClick={onToggleLock}>
+          {track.locked ? 'Unlock Track' : 'Lock Track'}
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }, areTrackHeaderPropsEqual);

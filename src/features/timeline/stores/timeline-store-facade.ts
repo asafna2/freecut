@@ -427,6 +427,11 @@ function getSnapshot(): TimelineState & TimelineActions {
 
       // Actions (static references, never change)
       setTracks: timelineActions.setTracks,
+      createGroup: timelineActions.createGroup,
+      ungroup: timelineActions.ungroup,
+      toggleGroupCollapse: timelineActions.toggleGroupCollapse,
+      addToGroup: timelineActions.addToGroup,
+      removeFromGroup: timelineActions.removeFromGroup,
       addItem: timelineActions.addItem,
       updateItem: timelineActions.updateItem,
       removeItems: timelineActions.removeItems,

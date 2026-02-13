@@ -58,6 +58,10 @@ export const HOTKEYS = {
   CLEAR_KEYFRAMES: 'shift+k',
   TOGGLE_KEYFRAME_EDITOR: 'mod+k',
 
+  // Track Groups
+  GROUP_TRACKS: 'mod+g',
+  UNGROUP_TRACKS: 'mod+shift+g',
+
   // Source Monitor
   MARK_IN: 'i',
   MARK_OUT: 'o',
@@ -124,6 +128,10 @@ export const HOTKEY_DESCRIPTIONS: Record<HotkeyKey, string> = {
   ADD_KEYFRAME: 'Add keyframe at playhead',
   CLEAR_KEYFRAMES: 'Clear all keyframes from selected items',
   TOGGLE_KEYFRAME_EDITOR: 'Toggle keyframe editor panel',
+
+  // Track Groups
+  GROUP_TRACKS: 'Group selected tracks',
+  UNGROUP_TRACKS: 'Ungroup selected tracks',
 
   // Source Monitor
   MARK_IN: 'Mark In point',

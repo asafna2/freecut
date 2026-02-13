@@ -22,6 +22,12 @@ export interface TimelineState {
 
 export interface TimelineActions {
   setTracks: (tracks: TimelineTrack[]) => void;
+  // Track group actions
+  createGroup: (trackIds: string[]) => void;
+  ungroup: (groupTrackId: string) => void;
+  toggleGroupCollapse: (groupTrackId: string) => void;
+  addToGroup: (trackIds: string[], groupTrackId: string) => void;
+  removeFromGroup: (trackIds: string[]) => void;
   addItem: (item: TimelineItem) => void;
   updateItem: (id: string, updates: Partial<TimelineItem>) => void;
   removeItems: (ids: string[]) => void;

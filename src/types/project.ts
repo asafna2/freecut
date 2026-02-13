@@ -41,6 +41,9 @@ export interface ProjectTimeline {
     solo: boolean;
     color?: string;
     order: number;
+    parentTrackId?: string;
+    isGroup?: boolean;
+    isCollapsed?: boolean;
   }>;
   items: Array<{
     id: string;

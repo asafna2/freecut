@@ -5,6 +5,7 @@ import { useTimelineStore } from '@/features/timeline/stores/timeline-store';
 import { useSelectionStore } from '@/features/editor/stores/selection-store';
 import { MainComposition } from '@/lib/composition-runtime/compositions/main-composition';
 import { resolveMediaUrl } from '../utils/media-resolver';
+import { resolveEffectiveTrackStates } from '@/features/timeline/utils/group-utils';
 import { GizmoOverlay } from './gizmo-overlay';
 import type { CompositionInputProps } from '@/types/export';
 import { isMarqueeJustFinished } from '@/hooks/use-marquee-selection';
@@ -250,8 +251,11 @@ export const VideoPreview = memo(function VideoPreview({
   const [isResolving, setIsResolving] = useState(false);
 
   // Combine tracks and items into TimelineTrack format
+  // resolveEffectiveTrackStates applies parent group gate behavior (mute/hide/lock)
+  // and filters out group container tracks (which hold no items)
   const combinedTracks = useMemo(() => {
-    return tracks
+    const effectiveTracks = resolveEffectiveTrackStates(tracks);
+    return effectiveTracks
       .map((track) => ({
         ...track,
         items: items.filter((item) => item.trackId === track.id),

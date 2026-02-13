@@ -26,9 +26,13 @@ import { TimelineMarkers } from './timeline-markers';
 import { TimelinePlayhead } from './timeline-playhead';
 import { TimelinePreviewScrubber } from './timeline-preview-scrubber';
 import { TimelineTrack } from './timeline-track';
+import { GroupSummaryTrack } from './group-summary-track';
 import { TimelineGuidelines } from './timeline-guidelines';
 import { TimelineSplitIndicator } from './timeline-split-indicator';
 import { MarqueeOverlay } from '@/components/marquee-overlay';
+
+// Group utilities
+import { getVisibleTracks } from '../utils/group-utils';
 
 interface TimelineContentProps {
   duration: number; // Total timeline duration in seconds
@@ -56,8 +60,11 @@ interface TimelineContentProps {
 export const TimelineContent = memo(function TimelineContent({ duration, scrollRef, onZoomHandlersReady }: TimelineContentProps) {
   void duration;
   // Use granular selectors - Zustand v5 best practice
-  const tracks = useTimelineStore((s) => s.tracks);
+  const allTracks = useTimelineStore((s) => s.tracks);
   const fps = useTimelineStore((s) => s.fps);
+
+  // Derive visible tracks (hides children of collapsed groups)
+  const tracks = useMemo(() => getVisibleTracks(allTracks), [allTracks]);
 
   // PERFORMANCE: Don't subscribe to items directly - it causes ALL tracks to re-render
   // when ANY item changes. Instead, use derived selectors for specific needs.
@@ -811,11 +818,15 @@ export const TimelineContent = memo(function TimelineContent({ duration, scrollR
           onMouseMove={handleMouseMoveForRazor}
           onMouseLeave={handleMouseLeaveForRazor}
         >
-          {/* Render all tracks - virtualization removed as it caused drag lag */}
+          {/* Render all visible tracks - virtualization removed as it caused drag lag */}
           {/* Video editors typically have <10 tracks, making virtualization overhead not worth it */}
-          {tracks.map((track) => (
-            <TimelineTrack key={track.id} track={track} timelineWidth={timelineWidth} />
-          ))}
+          {tracks.map((track) =>
+            track.isGroup && track.isCollapsed ? (
+              <GroupSummaryTrack key={track.id} track={track} />
+            ) : (
+              <TimelineTrack key={track.id} track={track} timelineWidth={timelineWidth} />
+            )
+          )}
 
           {/* Snap guidelines (shown during drag) */}
           {isDragging && (

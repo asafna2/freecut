@@ -3,6 +3,7 @@ import type { Transition } from '@/types/transition';
 import type { CompositionInputProps } from '@/types/export';
 import type { ItemKeyframes, Keyframe, PropertyKeyframes } from '@/types/keyframe';
 import { interpolatePropertyValue } from '@/features/keyframes/utils/interpolation';
+import { resolveEffectiveTrackStates } from '@/features/timeline/utils/group-utils';
 import { createLogger } from '@/lib/logger';
 
 const log = createLogger('TimelineToComposition');
@@ -33,6 +34,10 @@ export function convertTimelineToComposition(
   keyframes?: ItemKeyframes[],
   backgroundColor?: string
 ): CompositionInputProps {
+  // Resolve group gate behavior: parent group mute/hide propagates to children.
+  // Also filters out group container tracks (which hold no items).
+  tracks = resolveEffectiveTrackStates(tracks);
+
   // Determine if we're exporting a specific in/out range
   const hasInOutRange = inPoint !== null && inPoint !== undefined &&
                         outPoint !== null && outPoint !== undefined &&

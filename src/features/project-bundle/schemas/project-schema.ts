@@ -257,6 +257,9 @@ const trackSchema = z.object({
   solo: z.boolean(),
   color: z.string().optional(),
   order: z.number().int().min(0),
+  parentTrackId: z.string().optional(),
+  isGroup: z.boolean().optional(),
+  isCollapsed: z.boolean().optional(),
 });
 
 // ============================================================================

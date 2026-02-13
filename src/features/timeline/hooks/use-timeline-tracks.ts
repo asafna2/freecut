@@ -200,6 +200,12 @@ export function useTimelineTracks() {
     [setTracks]
   );
 
+  // Group actions (delegating to store actions via facade)
+  const createGroup = useTimelineStore((s) => s.createGroup);
+  const ungroupAction = useTimelineStore((s) => s.ungroup);
+  const toggleGroupCollapse = useTimelineStore((s) => s.toggleGroupCollapse);
+  const removeFromGroup = useTimelineStore((s) => s.removeFromGroup);
+
   return {
     tracks,
     addTrack,
@@ -212,5 +218,9 @@ export function useTimelineTracks() {
     toggleTrackVisibility,
     toggleTrackMute,
     toggleTrackSolo,
+    createGroup,
+    ungroup: ungroupAction,
+    toggleGroupCollapse,
+    removeFromGroup,
   };
 }
