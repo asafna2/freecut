@@ -31,6 +31,7 @@ import { useProjectStore } from '@/features/projects/stores/project-store';
 import { useTimelineStore } from '@/features/timeline/stores/timeline-store';
 import { formatTimecode, framesToSeconds } from '@/utils/time-utils';
 import type { ClientVideoContainer, ClientAudioContainer } from '../utils/client-renderer';
+import { ExportPreviewPlayer } from './export-preview-player';
 
 export interface ExportDialogProps {
   open: boolean;
@@ -256,6 +257,22 @@ export function ExportDialog({ open, onClose }: ExportDialogProps) {
   const preventClose = view === 'progress' || view === 'complete';
   const fileSize = clientRender.result?.fileSize;
 
+  // Preview blob URL for completed exports
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    const blob = clientRender.result?.blob;
+    if (!blob) {
+      setPreviewUrl(null);
+      return;
+    }
+    const url = URL.createObjectURL(blob);
+    setPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [clientRender.result?.blob]);
+
+  const isVideoResult = clientRender.result?.mimeType?.startsWith('video/') ?? false;
+
   // Dynamic title and description
   const getTitle = () => {
     switch (view) {
@@ -310,7 +327,7 @@ export function ExportDialog({ open, onClose }: ExportDialogProps) {
   return (
     <Dialog open={open} onOpenChange={handleClose} modal>
       <DialogContent
-        className="sm:max-w-[500px] overflow-hidden"
+        className={`overflow-hidden ${view === 'complete' && isVideoResult ? 'sm:max-w-[640px]' : 'sm:max-w-[500px]'}`}
         hideCloseButton={preventClose}
         onPointerDownOutside={(e) => preventClose && e.preventDefault()}
         onEscapeKeyDown={(e) => preventClose && e.preventDefault()}
@@ -602,10 +619,14 @@ export function ExportDialog({ open, onClose }: ExportDialogProps) {
         {/* Complete View */}
         {view === 'complete' && (
           <div className="space-y-4 py-4">
-            <Alert className="border-green-200 bg-green-50 dark:border-green-900 dark:bg-green-950">
-              <CheckCircle2 className="h-4 w-4 text-green-600" />
-              <AlertDescription className="text-green-700 dark:text-green-400">
-                Video exported successfully!
+            {previewUrl && (
+              <ExportPreviewPlayer src={previewUrl} isVideo={isVideoResult} />
+            )}
+
+            <Alert className="border-green-900 bg-green-950">
+              <CheckCircle2 className="h-4 w-4 text-green-500" />
+              <AlertDescription className="text-green-400">
+                {exportMode === 'audio' ? 'Audio' : 'Video'} exported successfully!
               </AlertDescription>
             </Alert>
 

@@ -31,7 +31,7 @@ export function useEditorHotkeys(callbacks: EditorHotkeyCallbacks = {}) {
     [callbacks.onSave]
   );
 
-  // Export: Cmd/Ctrl+E
+  // Export: Cmd/Ctrl+E — use capture phase to beat Chrome's Ctrl+E (address bar)
   useHotkeys(
     HOTKEYS.EXPORT,
     (event) => {
@@ -40,7 +40,7 @@ export function useEditorHotkeys(callbacks: EditorHotkeyCallbacks = {}) {
         callbacks.onExport();
       }
     },
-    HOTKEY_OPTIONS,
+    { ...HOTKEY_OPTIONS, eventListenerOptions: { capture: true } },
     [callbacks.onExport]
   );
 }
