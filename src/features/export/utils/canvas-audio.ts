@@ -76,7 +76,7 @@ interface AudioProcessingConfig {
  * @param composition - The composition with tracks
  * @returns Array of audio segments to process
  */
-function extractAudioSegments(composition: CompositionInputProps): AudioSegment[] {
+function extractAudioSegments(composition: CompositionInputProps, fps: number): AudioSegment[] {
   const { tracks = [], transitions = [] } = composition;
   const segments: AudioSegment[] = [];
   const audioOnlySegments: AudioSegment[] = [];
@@ -154,8 +154,8 @@ function extractAudioSegments(composition: CompositionInputProps): AudioSegment[
           durationFrames: item.durationInFrames,
           sourceStartFrame: audioItem.sourceStart ?? item.trimStart ?? 0,
           volume: item.volume ?? 0, // dB
-          fadeInFrames: item.audioFadeIn ?? 0,
-          fadeOutFrames: item.audioFadeOut ?? 0,
+          fadeInFrames: (item.audioFadeIn ?? 0) * fps,
+          fadeOutFrames: (item.audioFadeOut ?? 0) * fps,
           useEqualPowerFades: false,
           speed: audioItem.speed ?? 1, // Playback speed from BaseTimelineItem
           muted: track.muted ?? false,
@@ -261,8 +261,8 @@ function extractAudioSegments(composition: CompositionInputProps): AudioSegment[
       durationFrames: videoItem.durationInFrames + before + after,
       sourceStartFrame: baseTrimBefore - (before * speed),
       volume: videoItem.volume ?? 0,
-      fadeInFrames: before > 0 ? before : (videoItem.audioFadeIn ?? 0),
-      fadeOutFrames: after > 0 ? after : (videoItem.audioFadeOut ?? 0),
+      fadeInFrames: before > 0 ? before : ((videoItem.audioFadeIn ?? 0) * fps),
+      fadeOutFrames: after > 0 ? after : ((videoItem.audioFadeOut ?? 0) * fps),
       useEqualPowerFades: before > 0 || after > 0,
       speed,
       muted: entry.muted,
@@ -588,45 +588,47 @@ function applyFades(
 }
 
 /**
- * Apply speed change to audio samples with pitch preservation using SoundTouch algorithm.
- * Uses the low-level SoundTouch API for offline processing, which provides the same
- * WSOLA-based time stretching that browsers use for `preservesPitch`.
+ * Apply speed change to audio with pitch preservation using SoundTouch algorithm.
+ * Processes all channels together through a single SoundTouch instance so that
+ * WSOLA overlap windows are consistent across channels (prevents phase drift
+ * between L/R that causes a hollow sound).
  *
- * @param samples - Input audio samples (mono)
+ * @param channels - Input audio channels (mono or stereo)
  * @param speed - Playback rate (1.0 = normal, 2.0 = double speed, 0.5 = half speed)
  * @param sampleRate - Sample rate for the audio
+ * @returns Processed channels with the same channel count
  */
 async function applySpeed(
-  samples: Float32Array,
+  channels: Float32Array[],
   speed: number,
   sampleRate: number
-): Promise<Float32Array> {
-  if (speed === 1.0) return samples;
-  if (samples.length === 0) return samples;
+): Promise<Float32Array[]> {
+  if (speed === 1.0) return channels;
+  if (channels.length === 0 || channels[0]!.length === 0) return channels;
 
-  log.debug('Applying pitch-preserved speed change (SoundTouch)', { speed, sampleRate });
+  const numChannels = channels.length;
+  const samplesPerChannel = channels[0]!.length;
+
+  log.debug('Applying pitch-preserved speed change (SoundTouch)', { speed, sampleRate, numChannels });
 
   try {
-    // Dynamically import SoundTouchJS
     const soundtouch = await import('soundtouchjs');
-
-    // Create SoundTouch processor
     const st = new soundtouch.SoundTouch();
 
-    // Set tempo (speed change) while keeping pitch at 1.0
     st.tempo = speed;
     st.pitch = 1.0;
     st.rate = 1.0;
 
-    // SoundTouch processes interleaved stereo, so we need to convert
-    // mono to stereo (duplicate channel) for processing
-    const stereoInput = new Float32Array(samples.length * 2);
-    for (let i = 0; i < samples.length; i++) {
-      stereoInput[i * 2] = samples[i]!;     // Left
-      stereoInput[i * 2 + 1] = samples[i]!; // Right (duplicate)
+    // SoundTouch processes interleaved stereo. Interleave all channels
+    // (for mono, duplicate to stereo so SoundTouch gets valid input).
+    const stereoInput = new Float32Array(samplesPerChannel * 2);
+    const left = channels[0]!;
+    const right = numChannels >= 2 ? channels[1]! : left;
+    for (let i = 0; i < samplesPerChannel; i++) {
+      stereoInput[i * 2] = left[i]!;
+      stereoInput[i * 2 + 1] = right[i]!;
     }
 
-    // Create a source that feeds samples to SoundTouch
     let inputOffset = 0;
     const source = {
       extract: (target: Float32Array, numFrames: number): number => {
@@ -637,18 +639,15 @@ async function applySpeed(
           target[i] = stereoInput[inputOffset + i]!;
         }
         inputOffset += samplesToRead;
-        return samplesToRead / 2; // Return number of frames
+        return samplesToRead / 2;
       }
     };
 
-    // Create filter to process audio
     const filter = new soundtouch.SimpleFilter(source, st);
 
-    // Calculate expected output length
-    const expectedOutputLength = Math.floor(samples.length / speed);
+    const expectedOutputLength = Math.floor(samplesPerChannel / speed);
     const stereoOutput = new Float32Array(expectedOutputLength * 2);
 
-    // Extract processed samples in chunks
     let outputOffset = 0;
     const chunkSize = 4096;
     const chunk = new Float32Array(chunkSize * 2);
@@ -664,64 +663,85 @@ async function applySpeed(
       outputOffset += framesExtracted * 2;
     }
 
-    // Convert back to mono (take left channel)
+    // De-interleave back to separate channels
     const actualOutputLength = Math.floor(outputOffset / 2);
-    const output = new Float32Array(actualOutputLength);
+    const outputChannels: Float32Array[] = [];
+
+    // Always extract both L and R from the interleaved output
+    const outLeft = new Float32Array(actualOutputLength);
+    const outRight = new Float32Array(actualOutputLength);
     for (let i = 0; i < actualOutputLength; i++) {
-      output[i] = stereoOutput[i * 2]!;
+      outLeft[i] = stereoOutput[i * 2]!;
+      outRight[i] = stereoOutput[i * 2 + 1]!;
+    }
+
+    if (numChannels >= 2) {
+      outputChannels.push(outLeft, outRight);
+      // Pass through any additional channels beyond stereo (rare)
+      for (let c = 2; c < numChannels; c++) {
+        outputChannels.push(outLeft); // duplicate left for extra channels
+      }
+    } else {
+      // Mono source: return left channel only
+      outputChannels.push(outLeft);
     }
 
     log.debug('SoundTouch time stretch complete', {
-      inputLength: samples.length,
-      outputLength: output.length,
+      inputLength: samplesPerChannel,
+      outputLength: actualOutputLength,
       expectedLength: expectedOutputLength,
       speed,
+      numChannels,
     });
 
-    return output;
+    return outputChannels;
   } catch (error) {
     log.warn('SoundTouch failed, falling back to simple resampling', { error });
 
-    // Fallback: simple resampling (will change pitch)
-    const outputLength = Math.floor(samples.length / speed);
-    const output = new Float32Array(outputLength);
-
-    for (let i = 0; i < outputLength; i++) {
-      const sourceIndex = i * speed;
-      const index0 = Math.floor(sourceIndex);
-      const index1 = Math.min(index0 + 1, samples.length - 1);
-      const fraction = sourceIndex - index0;
-      output[i] = samples[index0]! * (1 - fraction) + samples[index1]! * fraction;
-    }
-
-    return output;
+    // Fallback: simple resampling per-channel (will change pitch)
+    const outputLength = Math.floor(samplesPerChannel / speed);
+    return channels.map((samples) => {
+      const output = new Float32Array(outputLength);
+      for (let i = 0; i < outputLength; i++) {
+        const sourceIndex = i * speed;
+        const index0 = Math.floor(sourceIndex);
+        const index1 = Math.min(index0 + 1, samples.length - 1);
+        const fraction = sourceIndex - index0;
+        output[i] = samples[index0]! * (1 - fraction) + samples[index1]! * fraction;
+      }
+      return output;
+    });
   }
 }
 
 /**
- * Resample audio to target sample rate.
+ * Resample audio to target sample rate using OfflineAudioContext for high-quality
+ * sinc interpolation (matches browser-native resampling quality).
  */
-function resample(
+async function resample(
   samples: Float32Array,
   sourceSampleRate: number,
   targetSampleRate: number
-): Float32Array {
+): Promise<Float32Array> {
   if (sourceSampleRate === targetSampleRate) return samples;
 
-  const ratio = targetSampleRate / sourceSampleRate;
-  const outputLength = Math.floor(samples.length * ratio);
-  const output = new Float32Array(outputLength);
+  const duration = samples.length / sourceSampleRate;
+  const offlineCtx = new OfflineAudioContext(
+    1,
+    Math.ceil(duration * targetSampleRate),
+    targetSampleRate
+  );
 
-  for (let i = 0; i < outputLength; i++) {
-    const sourceIndex = i / ratio;
-    const index0 = Math.floor(sourceIndex);
-    const index1 = Math.min(index0 + 1, samples.length - 1);
-    const fraction = sourceIndex - index0;
+  const buffer = offlineCtx.createBuffer(1, samples.length, sourceSampleRate);
+  buffer.getChannelData(0).set(samples);
 
-    output[i] = samples[index0]! * (1 - fraction) + samples[index1]! * fraction;
-  }
+  const source = offlineCtx.createBufferSource();
+  source.buffer = buffer;
+  source.connect(offlineCtx.destination);
+  source.start(0);
 
-  return output;
+  const rendered = await offlineCtx.startRendering();
+  return rendered.getChannelData(0);
 }
 
 /**
@@ -772,28 +792,22 @@ function mixAudioTracks(
     }
   }
 
-  // Normalize to prevent clipping
-  let maxSample = 0;
+  // Soft-clip to prevent harsh digital clipping while preserving overall loudness.
+  // This matches browser preview behavior where audio peaks are naturally saturated
+  // rather than the entire mix being reduced in volume.
+  let clippedSamples = 0;
   for (const channel of output) {
     for (let i = 0; i < channel.length; i++) {
       const sample = channel[i];
-      if (sample !== undefined) {
-        maxSample = Math.max(maxSample, Math.abs(sample));
+      if (sample !== undefined && Math.abs(sample) > 1.0) {
+        // tanh soft limiter: smoothly compresses peaks above 1.0
+        channel[i] = Math.tanh(sample);
+        clippedSamples++;
       }
     }
   }
-
-  if (maxSample > 1.0) {
-    log.debug('Normalizing audio to prevent clipping', { maxSample });
-    const normalizeGain = 0.95 / maxSample;
-    for (const channel of output) {
-      for (let i = 0; i < channel.length; i++) {
-        const sample = channel[i];
-        if (sample !== undefined) {
-          channel[i] = sample * normalizeGain;
-        }
-      }
-    }
+  if (clippedSamples > 0) {
+    log.debug('Soft-clipped audio peaks', { clippedSamples });
   }
 
   return output;
@@ -817,7 +831,7 @@ export async function processAudio(
   const { fps, durationInFrames = 0 } = composition;
 
   // Extract audio segments
-  const segments = extractAudioSegments(composition);
+  const segments = extractAudioSegments(composition, fps);
 
   // Filter out muted segments early
   const activeSegments = segments.filter((s) => !s.muted);
@@ -869,34 +883,31 @@ export async function processAudio(
         sourceEndTime
       );
 
-      // Process each channel
-      // Note: decoded audio is already trimmed to the range we requested
-      const processedChannels: Float32Array[] = [];
+      // Process audio channels.
+      // Note: decoded audio is already trimmed to the range we requested.
 
-      for (let c = 0; c < decoded.channels; c++) {
-        let channelSamples = decoded.samples[c]!;
+      // Apply speed across ALL channels at once to maintain phase coherence
+      // between L/R (SoundTouch WSOLA finds shared overlap windows).
+      let processedChannels = decoded.samples;
+      if (segment.speed !== 1.0) {
+        processedChannels = await applySpeed(processedChannels, segment.speed, decoded.sampleRate);
+      }
 
-        // Since we decoded exactly the range we need with mediabunny,
-        // we don't need to slice - the audio is already the exact portion needed.
-        // Just apply speed, volume, and fades.
+      // Apply per-channel volume, fades, and resampling
+      const fadeInSamples = Math.floor(
+        (segment.fadeInFrames / fps) * decoded.sampleRate
+      );
+      const fadeOutSamples = Math.floor(
+        (segment.fadeOutFrames / fps) * decoded.sampleRate
+      );
 
-        // Apply speed with pitch preservation (using SoundTouch)
-        if (segment.speed !== 1.0) {
-          channelSamples = await applySpeed(channelSamples, segment.speed, decoded.sampleRate);
-        }
+      for (let c = 0; c < processedChannels.length; c++) {
+        let channelSamples = processedChannels[c]!;
 
         // Apply volume
         if (segment.volume !== 0) {
           channelSamples = applyVolume(channelSamples, segment.volume);
         }
-
-        // Calculate fade samples
-        const fadeInSamples = Math.floor(
-          (segment.fadeInFrames / fps) * decoded.sampleRate
-        );
-        const fadeOutSamples = Math.floor(
-          (segment.fadeOutFrames / fps) * decoded.sampleRate
-        );
 
         // Apply fades
         if (fadeInSamples > 0 || fadeOutSamples > 0) {
@@ -910,10 +921,10 @@ export async function processAudio(
 
         // Resample to target sample rate
         if (decoded.sampleRate !== config.sampleRate) {
-          channelSamples = resample(channelSamples, decoded.sampleRate, config.sampleRate);
+          channelSamples = await resample(channelSamples, decoded.sampleRate, config.sampleRate);
         }
 
-        processedChannels.push(channelSamples);
+        processedChannels[c] = channelSamples;
       }
 
       // Calculate start position in output
@@ -1000,6 +1011,6 @@ export function createAudioBuffer(
  * Check if composition has any audio content.
  */
 export function hasAudioContent(composition: CompositionInputProps): boolean {
-  const segments = extractAudioSegments(composition);
+  const segments = extractAudioSegments(composition, composition.fps);
   return segments.some((s) => !s.muted);
 }
