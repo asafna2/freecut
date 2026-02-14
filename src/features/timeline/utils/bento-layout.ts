@@ -90,7 +90,7 @@ function computeGridLayout(
   const result = new Map<string, TransformProperties>();
   if (items.length === 0) return result;
 
-  const gap = config.gap ?? 8;
+  const gap = config.gap ?? 0;
   const padding = config.padding ?? 0;
 
   // Determine cols/rows based on preset
@@ -163,7 +163,7 @@ function computePipLayout(
   const result = new Map<string, TransformProperties>();
   if (items.length === 0) return result;
 
-  const gap = config.gap ?? 8;
+  const gap = config.gap ?? 0;
   const padding = config.padding ?? 0;
 
   const availableWidth = canvasWidth - padding * 2;
@@ -236,7 +236,7 @@ function computeFocusSidebarLayout(
   const result = new Map<string, TransformProperties>();
   if (items.length === 0) return result;
 
-  const gap = config.gap ?? 8;
+  const gap = config.gap ?? 0;
   const padding = config.padding ?? 0;
 
   const availableWidth = canvasWidth - padding * 2;

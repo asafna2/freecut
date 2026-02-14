@@ -336,7 +336,7 @@ export function BentoLayoutDialog() {
   const canvasHeight = useProjectStore((s) => s.currentProject?.metadata.height ?? 1080);
 
   const [selected, setSelected] = useState<SelectedPreset>({ kind: 'builtin', index: 0 });
-  const [gap, setGap] = useState(8);
+  const [gap, setGap] = useState(0);
   const [padding, setPadding] = useState(0);
   const [itemOrder, setItemOrder] = useState<string[]>([]);
 
@@ -349,7 +349,7 @@ export function BentoLayoutDialog() {
     if (isOpen && itemIds.length > 0) {
       setItemOrder(itemIds);
       setSelected({ kind: 'builtin', index: 0 });
-      setGap(8);
+      setGap(0);
       setPadding(0);
       setIsSaving(false);
       setPresetName('');
@@ -423,7 +423,7 @@ export function BentoLayoutDialog() {
       preset: cfg.preset,
       cols: cfg.cols ?? Math.ceil(Math.sqrt(itemCount)),
       rows: cfg.rows ?? Math.ceil(itemCount / Math.ceil(Math.sqrt(itemCount))),
-      gap: cfg.gap ?? 8,
+      gap: cfg.gap ?? 0,
       padding: cfg.padding ?? 0,
     });
 
