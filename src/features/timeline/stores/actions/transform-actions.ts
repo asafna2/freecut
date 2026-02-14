@@ -5,10 +5,12 @@
 import type { TransformProperties } from '@/types/transform';
 import type { AnimatableProperty } from '@/types/keyframe';
 import type { LayoutConfig } from '../../utils/bento-layout';
-import { computeLayout } from '../../utils/bento-layout';
+import { computeLayout, buildTransitionChains } from '../../utils/bento-layout';
 import { useItemsStore } from '../items-store';
 import { useKeyframesStore } from '../keyframes-store';
 import { useTimelineSettingsStore } from '../timeline-settings-store';
+import { useTransitionsStore } from '../transitions-store';
+import { buildTransitionIndexes } from '../../utils/transition-indexes';
 import { execute } from './shared';
 
 export function updateItemTransform(id: string, transform: Partial<TransformProperties>): void {
@@ -53,33 +55,50 @@ export function applyBentoLayout(
   const items = useItemsStore.getState().items;
 
   // Filter to visual items only (exclude audio)
-  const visualItems = itemIds
-    .map((id) => items.find((i) => i.id === id))
-    .filter((i) => i != null && i.type !== 'audio');
+  const visualItemIds = itemIds.filter((id) => {
+    const item = items.find((i) => i.id === id);
+    return item != null && item.type !== 'audio';
+  });
 
-  if (visualItems.length < 2) return;
+  if (visualItemIds.length < 2) return;
 
-  // Build layout input — use sourceWidth/sourceHeight for video/image, canvas dims for others
-  const layoutItems = visualItems.map((item) => {
-    const sw = ('sourceWidth' in item && item.sourceWidth) || canvasWidth;
-    const sh = ('sourceHeight' in item && item.sourceHeight) || canvasHeight;
-    return { id: item.id, sourceWidth: sw, sourceHeight: sh };
+  // Build transition chains — items connected by transitions share one layout cell
+  const transitions = useTransitionsStore.getState().transitions;
+  const { transitionsByClipId } = buildTransitionIndexes(transitions);
+  const chains = buildTransitionChains(visualItemIds, transitionsByClipId);
+
+  // One layout item per chain (use first item's source dimensions as representative)
+  const layoutItems = chains.map((chain) => {
+    const firstItem = items.find((i) => i.id === chain[0]);
+    const sw = (firstItem && 'sourceWidth' in firstItem && firstItem.sourceWidth) || canvasWidth;
+    const sh = (firstItem && 'sourceHeight' in firstItem && firstItem.sourceHeight) || canvasHeight;
+    return { id: chain[0]!, sourceWidth: sw, sourceHeight: sh };
   });
 
   const resolvedConfig: LayoutConfig = config ?? { preset: 'auto' };
-  const transformsMap = computeLayout(layoutItems, canvasWidth, canvasHeight, resolvedConfig);
+  const chainTransformsMap = computeLayout(layoutItems, canvasWidth, canvasHeight, resolvedConfig);
+
+  // Expand chain transforms to all items in each chain
+  const transformsMap = new Map<string, TransformProperties>();
+  for (const chain of chains) {
+    const transform = chainTransformsMap.get(chain[0]!);
+    if (!transform) continue;
+    for (const id of chain) {
+      transformsMap.set(id, transform);
+    }
+  }
 
   execute('APPLY_BENTO_LAYOUT', () => {
     // Clear transform keyframes that would conflict
     const kfStore = useKeyframesStore.getState();
-    for (const item of visualItems) {
+    for (const id of visualItemIds) {
       for (const prop of BENTO_PROPERTIES) {
-        kfStore._removeKeyframesForProperty(item.id, prop);
+        kfStore._removeKeyframesForProperty(id, prop);
       }
     }
 
     // Apply computed transforms
     useItemsStore.getState()._updateItemsTransformMap(transformsMap);
     useTimelineSettingsStore.getState().markDirty();
-  }, { count: visualItems.length });
+  }, { count: visualItemIds.length });
 }

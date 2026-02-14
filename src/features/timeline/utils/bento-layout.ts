@@ -4,6 +4,57 @@
  */
 
 import type { TransformProperties } from '@/types/transform';
+import type { ClipTransitionIndex } from '@/types/transition';
+
+// ── Transition chain grouping ────────────────────────────────────────────
+
+/**
+ * Build transition chains from a set of item IDs.
+ * Items connected by transitions are grouped into ordered chains.
+ * Items without transitions become single-item chains.
+ *
+ * @returns Array of chains, each an ordered array of item IDs (left→right).
+ */
+export function buildTransitionChains(
+  itemIds: string[],
+  transitionsByClipId: Map<string, ClipTransitionIndex>,
+): string[][] {
+  const itemIdSet = new Set(itemIds);
+  const visited = new Set<string>();
+  const chains: string[][] = [];
+
+  for (const id of itemIds) {
+    if (visited.has(id)) continue;
+
+    // Walk backwards to find the start of this chain
+    let start = id;
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const index = transitionsByClipId.get(start);
+      if (index?.incoming && itemIdSet.has(index.incoming.leftClipId) && !visited.has(index.incoming.leftClipId)) {
+        start = index.incoming.leftClipId;
+      } else {
+        break;
+      }
+    }
+
+    // Walk forward to build the chain
+    const chain: string[] = [];
+    let current: string | undefined = start;
+    while (current && itemIdSet.has(current) && !visited.has(current)) {
+      visited.add(current);
+      chain.push(current);
+      const index = transitionsByClipId.get(current);
+      current = index?.outgoing?.rightClipId;
+    }
+
+    if (chain.length > 0) {
+      chains.push(chain);
+    }
+  }
+
+  return chains;
+}
 
 // ── Types ────────────────────────────────────────────────────────────────
 

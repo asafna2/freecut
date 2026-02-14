@@ -15,8 +15,10 @@ import { useBentoLayoutDialogStore } from './bento-layout-dialog-store';
 import { useBentoPresetsStore } from '../stores/bento-presets-store';
 import { useProjectStore } from '@/features/projects/stores/project-store';
 import { useItemsStore } from '../stores/items-store';
+import { useTransitionsStore } from '../stores/transitions-store';
 import { applyBentoLayout } from '../stores/actions/transform-actions';
-import { computeLayout } from '../utils/bento-layout';
+import { computeLayout, buildTransitionChains } from '../utils/bento-layout';
+import { buildTransitionIndexes } from '../utils/transition-indexes';
 import type { LayoutPresetType, LayoutConfig, BentoLayoutItem } from '../utils/bento-layout';
 import type { TimelineItem } from '@/types/timeline';
 
@@ -149,14 +151,15 @@ function CanvasItem({
 // ── Layout canvas ────────────────────────────────────────────────────────
 
 function LayoutCanvas({
-  itemOrder,
+  chainOrder,
   onSwap,
   canvasWidth,
   canvasHeight,
   config,
   itemsLookup,
 }: {
-  itemOrder: string[];
+  /** Ordered chains — each chain is a group of item IDs sharing one layout cell */
+  chainOrder: string[][];
   onSwap: (fromIndex: number, toIndex: number) => void;
   canvasWidth: number;
   canvasHeight: number;
@@ -187,35 +190,41 @@ function LayoutCanvas({
   const displayHeight = containerWidth > 0 ? displayWidth / aspectRatio : 200;
   const scale = containerWidth > 0 ? displayWidth / safeCanvasWidth : 1;
 
-  // Build layout items and compute layout
+  // Build one layout item per chain (representative = first item in chain)
   const layoutItems: BentoLayoutItem[] = useMemo(() => {
-    return itemOrder.map((id) => {
-      const item = itemsLookup.get(id);
+    return chainOrder.map((chain) => {
+      const repId = chain[0]!;
+      const item = itemsLookup.get(repId);
       const sw = item && 'sourceWidth' in item && item.sourceWidth ? item.sourceWidth : safeCanvasWidth;
       const sh = item && 'sourceHeight' in item && item.sourceHeight ? item.sourceHeight : safeCanvasHeight;
-      return { id, sourceWidth: sw, sourceHeight: sh };
+      return { id: repId, sourceWidth: sw, sourceHeight: sh };
     });
-  }, [itemOrder, itemsLookup, safeCanvasWidth, safeCanvasHeight]);
+  }, [chainOrder, itemsLookup, safeCanvasWidth, safeCanvasHeight]);
 
   const transformsMap = useMemo(() => {
     if (layoutItems.length === 0) return new Map<string, { x?: number; y?: number; width?: number; height?: number }>();
     return computeLayout(layoutItems, safeCanvasWidth, safeCanvasHeight, config);
   }, [layoutItems, safeCanvasWidth, safeCanvasHeight, config]);
 
-  // Convert center-relative coords to absolute top-left, then scale
+  // Convert center-relative coords to absolute top-left, then scale — one rect per chain
   const canvasRects: CanvasItemRect[] = useMemo(() => {
     const cx = safeCanvasWidth / 2;
     const cy = safeCanvasHeight / 2;
-    return itemOrder.map((id) => {
-      const t = transformsMap.get(id);
-      const item = itemsLookup.get(id);
+    return chainOrder.map((chain) => {
+      const repId = chain[0]!;
+      const t = transformsMap.get(repId);
+      const item = itemsLookup.get(repId);
       const w = t?.width ?? safeCanvasWidth;
       const h = t?.height ?? safeCanvasHeight;
       const absLeft = cx + (t?.x ?? 0) - w / 2;
       const absTop = cy + (t?.y ?? 0) - h / 2;
+      // Build label: show all item labels in the chain
+      const label = chain.length === 1
+        ? (item?.label ?? repId.slice(0, 6))
+        : chain.map((id) => itemsLookup.get(id)?.label ?? id.slice(0, 4)).join(' \u2192 ');
       return {
-        id,
-        label: item?.label ?? id.slice(0, 6),
+        id: repId,
+        label,
         type: item?.type ?? 'video',
         left: absLeft * scale,
         top: absTop * scale,
@@ -223,7 +232,7 @@ function LayoutCanvas({
         height: h * scale,
       };
     });
-  }, [itemOrder, transformsMap, itemsLookup, safeCanvasWidth, safeCanvasHeight, scale]);
+  }, [chainOrder, transformsMap, itemsLookup, safeCanvasWidth, safeCanvasHeight, scale]);
 
   // Drag state
   const [dragIndex, setDragIndex] = useState<number | null>(null);
@@ -340,23 +349,29 @@ export function BentoLayoutDialog() {
   const [selected, setSelected] = useState<SelectedPreset>({ kind: 'builtin', index: 0 });
   const [gap, setGap] = useState(0);
   const [padding, setPadding] = useState(0);
-  const [itemOrder, setItemOrder] = useState<string[]>([]);
+  /** Chain order — each entry is a chain (group of transition-connected item IDs) */
+  const [chainOrder, setChainOrder] = useState<string[][]>([]);
 
   // Save preset inline state
   const [isSaving, setIsSaving] = useState(false);
   const [presetName, setPresetName] = useState('');
 
-  // Sync itemOrder when dialog opens or itemIds change
+  // Build transition chains when dialog opens
+  const transitions = useTransitionsStore((s) => s.transitions);
+
+  // Sync chainOrder when dialog opens or itemIds change
   useEffect(() => {
     if (isOpen && itemIds.length > 0) {
-      setItemOrder(itemIds);
+      const { transitionsByClipId } = buildTransitionIndexes(transitions);
+      const chains = buildTransitionChains(itemIds, transitionsByClipId);
+      setChainOrder(chains);
       setSelected({ kind: 'builtin', index: 0 });
       setGap(0);
       setPadding(0);
       setIsSaving(false);
       setPresetName('');
     }
-  }, [isOpen, itemIds]);
+  }, [isOpen, itemIds, transitions]);
 
   // Look up items from store (reactive)
   const items = useItemsStore((state) => state.items);
@@ -400,7 +415,7 @@ export function BentoLayoutDialog() {
   const config = useMemo(() => resolveConfig(), [resolveConfig]);
 
   const handleSwap = useCallback((fromIndex: number, toIndex: number) => {
-    setItemOrder((prev) => {
+    setChainOrder((prev) => {
       const next = [...prev];
       const temp = next[fromIndex]!;
       next[fromIndex] = next[toIndex]!;
@@ -410,18 +425,21 @@ export function BentoLayoutDialog() {
   }, []);
 
   const handleApply = useCallback(() => {
-    if (itemOrder.length < 2) return;
+    // Flatten chains back to item IDs (order matches chain order for layout)
+    const flatIds = chainOrder.flat();
+    if (flatIds.length < 2) return;
     const cfg = resolveConfig();
-    applyBentoLayout(itemOrder, canvasWidth, canvasHeight, cfg);
+    applyBentoLayout(flatIds, canvasWidth, canvasHeight, cfg);
     close();
-  }, [itemOrder, canvasWidth, canvasHeight, resolveConfig, close]);
+  }, [chainOrder, canvasWidth, canvasHeight, resolveConfig, close]);
 
   const handleSavePreset = useCallback(() => {
-    if (!presetName.trim() || itemCount < 1) return;
+    const layoutUnitCount = chainOrder.length;
+    if (!presetName.trim() || layoutUnitCount < 1) return;
 
     const cfg = resolveConfig();
-    const safeCols = cfg.cols ?? Math.max(1, Math.ceil(Math.sqrt(itemCount)));
-    const safeRows = cfg.rows ?? Math.max(1, Math.ceil(itemCount / safeCols));
+    const safeCols = cfg.cols ?? Math.max(1, Math.ceil(Math.sqrt(layoutUnitCount)));
+    const safeRows = cfg.rows ?? Math.max(1, Math.ceil(layoutUnitCount / safeCols));
     addPreset({
       name: presetName.trim(),
       preset: cfg.preset,
@@ -433,13 +451,14 @@ export function BentoLayoutDialog() {
 
     setPresetName('');
     setIsSaving(false);
-  }, [presetName, resolveConfig, itemCount, addPreset]);
+  }, [presetName, resolveConfig, chainOrder.length, addPreset]);
 
   const handleSelectPreset = useCallback(
     (sel: SelectedPreset) => {
       setSelected(sel);
-      // Reset order to original when switching presets
-      setItemOrder(itemIds);
+      // Reset chain order to original when switching presets
+      const { transitionsByClipId } = buildTransitionIndexes(transitions);
+      setChainOrder(buildTransitionChains(itemIds, transitionsByClipId));
 
       // For custom presets, also apply their gap/padding
       if (sel.kind === 'custom') {
@@ -450,7 +469,7 @@ export function BentoLayoutDialog() {
         }
       }
     },
-    [itemIds, customPresets],
+    [itemIds, transitions, customPresets],
   );
 
   const handleOpenChange = useCallback(
@@ -529,7 +548,7 @@ export function BentoLayoutDialog() {
 
         {/* Interactive canvas */}
         <LayoutCanvas
-          itemOrder={itemOrder}
+          chainOrder={chainOrder}
           onSwap={handleSwap}
           canvasWidth={canvasWidth}
           canvasHeight={canvasHeight}
