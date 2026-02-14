@@ -12,6 +12,7 @@ import { HOTKEYS, HOTKEY_OPTIONS } from '@/config/hotkeys';
 
 import { Button } from '@/components/ui/button';
 import { Plus, Minus } from 'lucide-react';
+import { CompositionBreadcrumbs } from './composition-breadcrumbs';
 import type { TimelineTrack } from '@/types/timeline';
 import { trackDropIndexRef, trackDropGroupIdRef, trackDropParentIdRef, trackDragOffsetRef, trackDragJustDroppedRef } from '../hooks/use-track-drag';
 import { DEFAULT_TRACK_HEIGHT } from '@/features/timeline/constants';
@@ -445,6 +446,9 @@ export const Timeline = memo(function Timeline({ duration, onGraphPanelOpenChang
           isGraphPanelOpen={isGraphPanelOpen}
           onToggleGraphPanel={handleToggleGraphPanel}
         />
+
+        {/* Composition Breadcrumbs - shown when inside a sub-composition */}
+        <CompositionBreadcrumbs />
 
       {/* Timeline Content */}
       <div className="flex-1 flex overflow-hidden min-h-0">
