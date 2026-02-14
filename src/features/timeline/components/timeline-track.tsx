@@ -159,8 +159,9 @@ export const TimelineTrack = memo(function TimelineTrack({ track }: TimelineTrac
   }, []);
 
   const handleDragOver = (e: React.DragEvent) => {
-    // Don't allow drops on locked tracks
-    if (track.locked) {
+    // Don't allow drops on locked or group tracks
+    if (track.locked || track.isGroup) {
+      e.preventDefault();
       e.dataTransfer.dropEffect = 'none';
       return;
     }
@@ -255,8 +256,8 @@ export const TimelineTrack = memo(function TimelineTrack({ track }: TimelineTrac
     setIsDragOver(false);
     setGhostPreviews([]);
 
-    // Don't allow drops on locked tracks
-    if (track.locked) {
+    // Don't allow drops on locked or group tracks
+    if (track.locked || track.isGroup) {
       return;
     }
 
@@ -533,7 +534,7 @@ export const TimelineTrack = memo(function TimelineTrack({ track }: TimelineTrac
         <div
           ref={trackRef}
           data-track-id={track.id}
-          className="relative border-b border-border"
+          className={`relative border-b border-border${track.isGroup ? ' bg-group-stripes' : ''}`}
           style={{
             height: `${track.height}px`,
             // CSS containment tells browser this element's layout is independent

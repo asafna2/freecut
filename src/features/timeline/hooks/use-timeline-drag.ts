@@ -11,6 +11,25 @@ import { DRAG_THRESHOLD_PIXELS } from '../constants';
 // Shared ref for drag offset (avoids re-renders from store updates)
 export const dragOffsetRef = { current: { x: 0, y: 0 } };
 
+const DRAG_CURSOR_CLASS_BY_MODE = {
+  grabbing: 'timeline-item-drag-cursor-grabbing',
+  copy: 'timeline-item-drag-cursor-copy',
+  'not-allowed': 'timeline-item-drag-cursor-not-allowed',
+} as const;
+
+type DragCursorMode = keyof typeof DRAG_CURSOR_CLASS_BY_MODE;
+
+const DRAG_CURSOR_CLASSES = Object.values(DRAG_CURSOR_CLASS_BY_MODE);
+
+function setGlobalDragCursor(mode: DragCursorMode): void {
+  document.body.classList.remove(...DRAG_CURSOR_CLASSES);
+  document.body.classList.add(DRAG_CURSOR_CLASS_BY_MODE[mode]);
+}
+
+function clearGlobalDragCursor(): void {
+  document.body.classList.remove(...DRAG_CURSOR_CLASSES);
+}
+
 /**
  * Timeline drag-and-drop hook - Phase 2 Enhanced
  *
@@ -112,20 +131,71 @@ export function useTimelineDrag(
   /**
    * Calculate which track the mouse is over based on Y position
    */
+  /**
+   * Resolve the track element at the cursor, ignoring dragged items.
+   * Dragged items are transformed visually but still live under their original track in the DOM,
+   * so we must skip them during hit-testing to get the real row under the pointer.
+   */
+  const getTrackElementAtPoint = useCallback((mouseX: number, mouseY: number): HTMLElement | null => {
+    const draggedItemIds = new Set(
+      dragStateRef.current?.draggedItems.map((draggedItem) => draggedItem.id) ?? []
+    );
+
+    const getTrackIfNotDraggedItem = (candidate: Element | null): HTMLElement | null => {
+      if (!(candidate instanceof HTMLElement)) return null;
+
+      const itemEl = candidate.closest<HTMLElement>('[data-item-id]');
+      if (itemEl) {
+        const itemId = itemEl.getAttribute('data-item-id');
+        if (itemId && draggedItemIds.has(itemId)) return null;
+      }
+
+      return candidate.closest<HTMLElement>('[data-track-id]');
+    };
+
+    // Fast path: top-most hit target
+    const topTrackEl = getTrackIfNotDraggedItem(document.elementFromPoint(mouseX, mouseY));
+    if (topTrackEl) return topTrackEl;
+
+    // Fallback: walk hit stack to find first non-dragged track element
+    for (const candidate of document.elementsFromPoint(mouseX, mouseY)) {
+      const trackEl = getTrackIfNotDraggedItem(candidate);
+      if (trackEl) return trackEl;
+    }
+
+    return null;
+  }, []);
+
+  const isMouseOverGroupTrack = useCallback((mouseX: number, mouseY: number): boolean => {
+    const trackEl = getTrackElementAtPoint(mouseX, mouseY);
+    if (!trackEl) return false;
+
+    const trackId = trackEl.getAttribute('data-track-id');
+    if (!trackId) return false;
+
+    const track = tracksRef.current.find((t) => t.id === trackId);
+    return !!track?.isGroup;
+  }, [getTrackElementAtPoint]);
+
   const getTrackIdFromMouseY = useCallback((mouseY: number, startTrackId: string): string => {
-    const trackElements = document.querySelectorAll('[data-track-id]');
+    const container = document.querySelector('.timeline-container');
+    const trackElements = (container ?? document).querySelectorAll('[data-track-id]');
     const tracks = tracksRef.current;
 
-    // Find track element under cursor
+    // Find track element under cursor (skip group tracks - they don't hold items)
     for (const el of Array.from(trackElements)) {
       const rect = el.getBoundingClientRect();
       if (mouseY >= rect.top && mouseY <= rect.bottom) {
         const trackId = el.getAttribute('data-track-id');
-        if (trackId) return trackId;
+        if (trackId) {
+          const track = tracks.find((t) => t.id === trackId);
+          if (track?.isGroup) break; // Skip group tracks, fall through to fallback
+          return trackId;
+        }
       }
     }
 
-    // Fallback to calculating by track height
+    // Fallback to calculating by track height (skipping group tracks)
     const startTrack = tracks.find((t) => t.id === startTrackId);
     if (!startTrack) return startTrackId;
 
@@ -135,7 +205,20 @@ export function useTimelineDrag(
     const trackOffset = Math.round(deltaY / trackHeight);
     const newTrackIndex = Math.max(0, Math.min(tracks.length - 1, startTrackIndex + trackOffset));
 
-    return tracks[newTrackIndex]?.id || startTrackId;
+    const candidateTrack = tracks[newTrackIndex];
+    if (candidateTrack?.isGroup) {
+      // If landed on a group track, find the nearest non-group track
+      // Search downward first, then upward
+      for (let i = newTrackIndex + 1; i < tracks.length; i++) {
+        if (!tracks[i]?.isGroup) return tracks[i]!.id;
+      }
+      for (let i = newTrackIndex - 1; i >= 0; i--) {
+        if (!tracks[i]?.isGroup) return tracks[i]!.id;
+      }
+      return startTrackId; // No non-group tracks found, stay on original
+    }
+
+    return candidateTrack?.id || startTrackId;
   }, []);
 
   /**
@@ -263,7 +346,7 @@ export function useTimelineDrag(
           // Start the drag - track Alt key state
           isAltDragRef.current = e.altKey;
           setIsDragging(true);
-          document.body.style.cursor = e.altKey ? 'copy' : 'grabbing';
+          setGlobalDragCursor(e.altKey ? 'copy' : 'grabbing');
           document.body.style.userSelect = 'none';
 
           // Broadcast drag state to all selected items
@@ -309,9 +392,11 @@ export function useTimelineDrag(
       // Dynamic Alt key toggle - update state and cursor
       const altKeyChanged = isAltDragRef.current !== e.altKey;
       isAltDragRef.current = e.altKey;
-      if (altKeyChanged) {
-        document.body.style.cursor = e.altKey ? 'copy' : 'grabbing';
-      }
+
+      // Show not-allowed cursor when over a group track, otherwise normal drag cursor
+      const overGroup = isMouseOverGroupTrack(e.clientX, e.clientY);
+      const desiredCursor = overGroup ? 'not-allowed' : e.altKey ? 'copy' : 'grabbing';
+      setGlobalDragCursor(desiredCursor);
 
       // Calculate clamped delta to prevent visual preview from going below frame 0
       const deltaFrames = pixelsToFrameRef.current(deltaX);
@@ -462,7 +547,7 @@ export function useTimelineDrag(
           // Apply frame delta, snap adjustment, AND group clamp offset to all items uniformly
           const newFrom = draggedItem.initialFrame + deltaFrames + snapDelta + groupClampOffset;
 
-          // Calculate new track (maintain relative offset)
+          // Calculate new track (maintain relative offset, skip group tracks)
           const anchorTrackIndex = tracksRef.current.findIndex(
             (t) => t.id === dragState.startTrackId
           );
@@ -471,10 +556,24 @@ export function useTimelineDrag(
           );
           const newAnchorTrackIndex = tracksRef.current.findIndex((t) => t.id === newTrackId);
           const trackOffset = itemTrackIndex - anchorTrackIndex;
-          const newItemTrackIndex = Math.max(
+          let newItemTrackIndex = Math.max(
             0,
             Math.min(tracksRef.current.length - 1, newAnchorTrackIndex + trackOffset)
           );
+
+          // If landed on a group track, find nearest non-group track
+          if (tracksRef.current[newItemTrackIndex]?.isGroup) {
+            let found = false;
+            for (let i = newItemTrackIndex + 1; i < tracksRef.current.length; i++) {
+              if (!tracksRef.current[i]?.isGroup) { newItemTrackIndex = i; found = true; break; }
+            }
+            if (!found) {
+              for (let i = newItemTrackIndex - 1; i >= 0; i--) {
+                if (!tracksRef.current[i]?.isGroup) { newItemTrackIndex = i; found = true; break; }
+              }
+            }
+          }
+
           const itemNewTrackId = tracksRef.current[newItemTrackIndex]?.id || draggedItem.initialTrackId;
 
           return {
@@ -515,7 +614,7 @@ export function useTimelineDrag(
             prevSnapTargetRef.current = null;
             dragStateRef.current = null;
             isAltDragRef.current = false;
-            document.body.style.cursor = '';
+            clearGlobalDragCursor();
             document.body.style.userSelect = '';
             setIsDragging(false);
             setDragOffset({ x: 0, y: 0 });
@@ -599,7 +698,7 @@ export function useTimelineDrag(
       prevSnapTargetRef.current = null; // Reset snap target tracking
       dragStateRef.current = null;
       isAltDragRef.current = false; // Reset alt drag state
-      document.body.style.cursor = '';
+      clearGlobalDragCursor();
       document.body.style.userSelect = '';
 
       // Batch React state updates (React 18 batches these automatically)
@@ -620,9 +719,11 @@ export function useTimelineDrag(
       return () => {
         window.removeEventListener('mousemove', handleMouseMove);
         window.removeEventListener('mouseup', handleMouseUp);
+        clearGlobalDragCursor();
+        document.body.style.userSelect = '';
       };
     }
-  }, [isDragging, item.id, item.durationInFrames, getTrackIdFromMouseY, calculateMagneticSnap]);
+  }, [isDragging, item.id, item.durationInFrames, getTrackIdFromMouseY, isMouseOverGroupTrack, calculateMagneticSnap]);
 
   return {
     isDragging,

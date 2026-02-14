@@ -14,6 +14,7 @@ import { PreviewArea } from './preview-area';
 import { ProjectDebugPanel } from './project-debug-panel';
 import { Timeline } from '@/features/timeline/components/timeline';
 import { ClearKeyframesDialog } from './clear-keyframes-dialog';
+import { BentoLayoutDialog } from '@/features/timeline/components/bento-layout-dialog';
 import { toast } from 'sonner';
 import { useEditorHotkeys } from '@/features/editor/hooks/use-editor-hotkeys';
 import { useAutoSave } from '../hooks/use-auto-save';
@@ -277,6 +278,9 @@ export const Editor = memo(function Editor({ projectId, project }: EditorProps) 
 
       {/* Clear Keyframes Confirmation Dialog */}
       <ClearKeyframesDialog />
+
+      {/* Bento Layout Preset Dialog */}
+      <BentoLayoutDialog />
 
       {/* Debug Panel (dev mode only) */}
       <ProjectDebugPanel projectId={projectId} />
