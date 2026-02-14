@@ -29,6 +29,9 @@ class SourceController {
   private assignments: Map<string, HTMLVideoElement> = new Map();
   private metadata: SourceMetadata | null = null;
   private loadPromise: Promise<void> | null = null;
+  // Element being loaded by ensureLoaded() but not yet promoted to primary.
+  // Allows acquire() to reuse it instead of creating a redundant overflow element.
+  private _pendingPrimary: HTMLVideoElement | null = null;
 
   // Callbacks
   private onElementReady?: (element: HTMLVideoElement) => void;
@@ -52,7 +55,11 @@ class SourceController {
   }
 
   /**
-   * Ensure the primary element is loaded and ready
+   * Ensure the primary element is loaded and ready.
+   *
+   * The element is created synchronously and stored as `_pendingPrimary` so
+   * that a concurrent `acquire()` call can reuse it instead of creating a
+   * redundant overflow element (the common race on first mount).
    */
   async ensureLoaded(): Promise<HTMLVideoElement> {
     if (this.primary) {
@@ -64,8 +71,40 @@ class SourceController {
       return this.primary!;
     }
 
-    this.loadPromise = this.createAndLoadElement().then((element) => {
+    // Create element synchronously so acquire() can grab it immediately.
+    const element = this.createElementSync();
+    this._pendingPrimary = element;
+
+    this.loadPromise = new Promise<void>((resolve, reject) => {
+      const onCanPlay = () => {
+        cleanup();
+        resolve();
+      };
+
+      const onError = () => {
+        cleanup();
+        reject(
+          new Error(
+            `Failed to load video: ${element.error?.message || 'Unknown error'}`
+          )
+        );
+      };
+
+      const cleanup = () => {
+        element.removeEventListener('canplay', onCanPlay);
+        element.removeEventListener('error', onError);
+      };
+
+      element.addEventListener('canplay', onCanPlay);
+      element.addEventListener('error', onError);
+
+      // Trigger load
+      element.load();
+    }).then(() => {
+      // acquire() may have already promoted _pendingPrimary to primary;
+      // this is a harmless no-op in that case.
       this.primary = element;
+      this._pendingPrimary = null;
     });
 
     await this.loadPromise;
@@ -85,6 +124,16 @@ class SourceController {
 
     // Try to use primary if available
     if (this.primary && !this.isElementInUse(this.primary)) {
+      this.assignments.set(clipId, this.primary);
+      return this.primary;
+    }
+
+    // Use the pending primary if preloadSource() started loading but hasn't
+    // resolved yet. This avoids creating a redundant overflow element when
+    // preload and acquire race (the common case on first mount).
+    if (this._pendingPrimary && !this.isElementInUse(this._pendingPrimary)) {
+      this.primary = this._pendingPrimary;
+      this._pendingPrimary = null;
       this.assignments.set(clipId, this.primary);
       return this.primary;
     }
@@ -190,6 +239,13 @@ class SourceController {
       this.primary.load();
     }
 
+    if (this._pendingPrimary) {
+      this._pendingPrimary.pause();
+      this._pendingPrimary.src = '';
+      this._pendingPrimary.load();
+      this._pendingPrimary = null;
+    }
+
     for (const element of this.overflow) {
       element.pause();
       element.src = '';
@@ -247,36 +303,6 @@ class SourceController {
     return element;
   }
 
-  private async createAndLoadElement(): Promise<HTMLVideoElement> {
-    const element = this.createElementSync();
-
-    return new Promise((resolve, reject) => {
-      const onCanPlay = () => {
-        cleanup();
-        resolve(element);
-      };
-
-      const onError = () => {
-        cleanup();
-        reject(
-          new Error(
-            `Failed to load video: ${element.error?.message || 'Unknown error'}`
-          )
-        );
-      };
-
-      const cleanup = () => {
-        element.removeEventListener('canplay', onCanPlay);
-        element.removeEventListener('error', onError);
-      };
-
-      element.addEventListener('canplay', onCanPlay);
-      element.addEventListener('error', onError);
-
-      // Trigger load
-      element.load();
-    });
-  }
 }
 
 /**

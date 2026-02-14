@@ -36,6 +36,7 @@ const NativePreviewVideo: React.FC<{
   const pool = useVideoSourcePool();
   const elementRef = useRef<HTMLVideoElement | null>(null);
   const forceRenderTimeoutRef = useRef<number | null>(null);
+  const preWarmTimerRef = useRef<number | null>(null);
   const audioVolumeRef = useRef(audioVolume);
   const lastSyncTimeRef = useRef<number>(Date.now());
   const needsInitialSyncRef = useRef<boolean>(true);
@@ -222,6 +223,10 @@ const NativePreviewVideo: React.FC<{
         clearTimeout(forceRenderTimeoutRef.current);
         forceRenderTimeoutRef.current = null;
       }
+      if (preWarmTimerRef.current !== null) {
+        clearTimeout(preWarmTimerRef.current);
+        preWarmTimerRef.current = null;
+      }
       if (element.parentElement) {
         element.parentElement.removeChild(element);
       }
@@ -291,7 +296,13 @@ const NativePreviewVideo: React.FC<{
       return;
     }
 
-    if (isPlaying && isReady) {
+    if (isPlaying) {
+      // Cancel any pending pre-warm since we're about to play
+      if (preWarmTimerRef.current !== null) {
+        clearTimeout(preWarmTimerRef.current);
+        preWarmTimerRef.current = null;
+      }
+
       const currentTime = video.currentTime;
       const now = Date.now();
 
@@ -317,8 +328,10 @@ const NativePreviewVideo: React.FC<{
         }
       }
 
-      // Play if paused and video is ready
-      if (video.paused && video.readyState >= 2) {
+      // Play if paused and video has buffered ahead (HAVE_FUTURE_DATA).
+      // >= 3 ensures the decoder has frames in its buffer, preventing
+      // stutter on play start after seeking to a new position.
+      if (video.paused && video.readyState >= 3) {
         video.play().catch(() => {
           // Autoplay might be blocked - this is fine
         });
@@ -335,6 +348,28 @@ const NativePreviewVideo: React.FC<{
         } catch {
           // Seek failed - video may not be ready yet
         }
+
+        // Pre-warm decoder at the new position (debounced). A brief muted
+        // play/pause fills the decode buffer so playback starts without
+        // stutter when the user presses play.
+        if (preWarmTimerRef.current !== null) {
+          clearTimeout(preWarmTimerRef.current);
+        }
+        preWarmTimerRef.current = window.setTimeout(() => {
+          preWarmTimerRef.current = null;
+          const v = elementRef.current;
+          if (v && v.paused && v.readyState >= 2 && !usePlaybackStore.getState().isPlaying) {
+            v.muted = true;
+            v.play().then(() => {
+              if (!usePlaybackStore.getState().isPlaying) {
+                v.pause();
+              }
+              v.muted = false;
+            }).catch(() => {
+              v.muted = false;
+            });
+          }
+        }, 200);
       }
     }
   }, [frame, fps, isPlaying, isReady, playbackRate, safeTrimBefore, targetTime]);

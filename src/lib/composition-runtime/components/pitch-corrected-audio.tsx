@@ -341,8 +341,10 @@ export const PitchCorrectedAudio: React.FC<PitchCorrectedAudioProps> = React.mem
         }
       }
 
-      // Play if paused and audio is ready
-      if (audio.paused && audio.readyState >= 2) {
+      // Play if paused and audio has buffered ahead (HAVE_FUTURE_DATA).
+      // >= 3 ensures the decoder has data beyond the current position,
+      // preventing audio stutter on play start after seeking.
+      if (audio.paused && audio.readyState >= 3) {
         // Resume shared context when this clip is using Web Audio gain.
         const sharedContext = gainNodeRef.current ? getSharedAudioContext() : null;
         if (sharedContext?.state === 'suspended') {
