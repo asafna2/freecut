@@ -2,6 +2,7 @@ import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { useSequenceContext } from '@/features/player/composition';
 import { usePlaybackStore } from '@/features/preview/stores/playback-store';
 import { useVideoConfig, useIsPlaying } from '../hooks/use-player-compat';
+import { useClock } from '@/features/player/clock/clock-hooks';
 import type { VideoItem } from '@/types/timeline';
 import { useVideoSourcePool } from '@/features/player/video/VideoSourcePoolContext';
 import { createLogger } from '@/lib/logger';
@@ -13,6 +14,11 @@ import {
 } from './video-audio-context';
 
 const videoLog = createLogger('NativePreviewVideo');
+
+// Feature detection for requestVideoFrameCallback (avoids per-frame React sync)
+const supportsRVFC = typeof HTMLVideoElement !== 'undefined' &&
+  'requestVideoFrameCallback' in HTMLVideoElement.prototype;
+
 
 /**
  * Native HTML5 video component for preview mode using VideoSourcePool.
@@ -43,6 +49,17 @@ const NativePreviewVideo: React.FC<{
   const lastFrameRef = useRef<number>(-1);
   const [isReady, setIsReady] = useState(false);
   audioVolumeRef.current = audioVolume;
+
+  // Clock instance for imperative access in rVFC callback
+  const clock = useClock();
+  const sequenceFromRef = useRef(0);
+  // Stable refs for rVFC callback (avoids stale closures)
+  const safeTrimBeforeRef = useRef(safeTrimBefore);
+  const playbackRateRef = useRef(playbackRate);
+  const fpsRef = useRef(fps);
+  safeTrimBeforeRef.current = safeTrimBefore;
+  playbackRateRef.current = playbackRate;
+  fpsRef.current = fps;
 
   // Get playing state from our clock
   const isPlaying = useIsPlaying();
@@ -250,6 +267,9 @@ const NativePreviewVideo: React.FC<{
     // Set playback rate
     video.playbackRate = playbackRate;
 
+    // Update sequenceFrom for rVFC callback (global frame minus local frame)
+    sequenceFromRef.current = clock.currentFrame - frame;
+
     // Detect if frame actually changed (for scrub detection)
     const frameChanged = frame !== lastFrameRef.current;
     lastFrameRef.current = frame;
@@ -303,28 +323,35 @@ const NativePreviewVideo: React.FC<{
         preWarmTimerRef.current = null;
       }
 
-      const currentTime = video.currentTime;
-      const now = Date.now();
-
-      // Calculate drift direction: positive = video ahead, negative = video behind
-      const drift = currentTime - clampedTargetTime;
-      const timeSinceLastSync = now - lastSyncTimeRef.current;
-
-      // Determine if we need to seek:
-      // 1. Initial sync when component first plays
-      // 2. Video is BEHIND by more than threshold (needs to catch up)
-      // 3. Video is far AHEAD (user seeked backwards, e.g., "Go to start")
-      const videoBehind = drift < -0.2;
-      const videoFarAhead = drift > 0.5;
-      const needsSync = needsInitialSyncRef.current || videoFarAhead || (videoBehind && timeSinceLastSync > 500);
-
-      if (needsSync && canSeek) {
+      // Initial sync is always needed (first play after mount/seek)
+      if (needsInitialSyncRef.current && canSeek) {
         try {
           video.currentTime = clampedTargetTime;
-          lastSyncTimeRef.current = now;
+          lastSyncTimeRef.current = Date.now();
           needsInitialSyncRef.current = false;
         } catch {
           // Seek failed - video may not be ready yet
+        }
+      }
+
+      // Drift correction: only run from React effect when rVFC is NOT available.
+      // When rVFC is supported, the callback below handles drift correction
+      // directly from the video's presentation callback, avoiding per-frame
+      // React scheduling overhead.
+      if (!supportsRVFC) {
+        const currentTime = video.currentTime;
+        const now = Date.now();
+        const drift = currentTime - clampedTargetTime;
+        const timeSinceLastSync = now - lastSyncTimeRef.current;
+        const videoBehind = drift < -0.2;
+        const videoFarAhead = drift > 0.5;
+        if ((videoFarAhead || (videoBehind && timeSinceLastSync > 500)) && canSeek) {
+          try {
+            video.currentTime = clampedTargetTime;
+            lastSyncTimeRef.current = now;
+          } catch {
+            // Seek failed - video may not be ready yet
+          }
         }
       }
 
@@ -351,7 +378,8 @@ const NativePreviewVideo: React.FC<{
 
         // Pre-warm decoder at the new position (debounced). A brief muted
         // play/pause fills the decode buffer so playback starts without
-        // stutter when the user presses play.
+        // stutter when the user presses play. Short debounce avoids
+        // thrashing during rapid scrubbing while keeping warm-up fast.
         if (preWarmTimerRef.current !== null) {
           clearTimeout(preWarmTimerRef.current);
         }
@@ -369,10 +397,64 @@ const NativePreviewVideo: React.FC<{
               v.muted = false;
             });
           }
-        }, 200);
+        }, 50);
       }
     }
   }, [frame, fps, isPlaying, isReady, playbackRate, safeTrimBefore, targetTime]);
+
+  // requestVideoFrameCallback-based drift correction.
+  // Runs outside React's render cycle — the browser calls us exactly when a
+  // video frame is presented, so we can nudge currentTime with zero scheduling
+  // overhead. Falls back to the per-frame React effect above when unsupported.
+  useEffect(() => {
+    const video = elementRef.current;
+    if (!video || !isPlaying || !supportsRVFC) return;
+
+    let handle: number;
+    const onVideoFrame = () => {
+      const v = elementRef.current;
+      if (!v) return;
+
+      // Read current clock frame imperatively (no React re-render needed)
+      const globalFrame = clock.currentFrame;
+      const localFrame = globalFrame - sequenceFromRef.current;
+
+      // During premount, just keep listening
+      if (localFrame < 0) {
+        handle = v.requestVideoFrameCallback(onVideoFrame);
+        return;
+      }
+
+      const rate = playbackRateRef.current;
+      const f = fpsRef.current;
+      const trim = safeTrimBeforeRef.current;
+      const target = (trim / f) + (localFrame * rate / f);
+      const dur = v.duration || Infinity;
+      const clamped = Math.min(Math.max(0, target), dur - 0.05);
+
+      const drift = v.currentTime - clamped;
+      const now = Date.now();
+      const timeSinceLastSync = now - lastSyncTimeRef.current;
+
+      if (drift > 0.5 || (drift < -0.2 && timeSinceLastSync > 500)) {
+        if (v.readyState >= 1) {
+          try {
+            v.currentTime = clamped;
+            lastSyncTimeRef.current = now;
+          } catch {
+            // Seek may fail if element isn't fully loaded
+          }
+        }
+      }
+
+      handle = v.requestVideoFrameCallback(onVideoFrame);
+    };
+
+    handle = video.requestVideoFrameCallback(onVideoFrame);
+    return () => {
+      video.cancelVideoFrameCallback(handle);
+    };
+  }, [isPlaying, itemId, clock]);
 
   // Keep volume/gain in sync for pooled element.
   useEffect(() => {

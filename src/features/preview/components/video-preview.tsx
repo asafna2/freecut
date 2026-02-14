@@ -5,6 +5,7 @@ import { useTimelineStore } from '@/features/timeline/stores/timeline-store';
 import { useSelectionStore } from '@/features/editor/stores/selection-store';
 import { MainComposition } from '@/lib/composition-runtime/compositions/main-composition';
 import { resolveMediaUrl } from '../utils/media-resolver';
+import { getGlobalVideoSourcePool } from '@/features/player/video/VideoSourcePool';
 import { resolveEffectiveTrackStates } from '@/features/timeline/utils/group-utils';
 import { GizmoOverlay } from './gizmo-overlay';
 import type { CompositionInputProps } from '@/types/export';
@@ -351,6 +352,35 @@ export const VideoPreview = memo(function VideoPreview({
       isCancelled = true;
     };
   }, [mediaFingerprint]);
+
+  // Eagerly preload all video sources into the VideoSourcePool.
+  // This creates and warms up <video> elements for every unique source
+  // so the decoder is ready before the user presses play or seeks.
+  // Also prunes elements for sources no longer on the timeline to free memory.
+  // Memory cost: ~one <video> element per unique source file on the timeline.
+  useEffect(() => {
+    if (resolvedUrls.size === 0) return;
+
+    const pool = getGlobalVideoSourcePool();
+    const activeVideoSrcs = new Set<string>();
+
+    for (const track of combinedTracks) {
+      for (const item of track.items) {
+        if (item.type === 'video' && item.mediaId) {
+          const src = resolvedUrls.get(item.mediaId);
+          if (src) activeVideoSrcs.add(src);
+        }
+      }
+    }
+
+    // Preload all active sources (no-op if already loaded)
+    for (const src of activeVideoSrcs) {
+      pool.preloadSource(src).catch(() => {});
+    }
+
+    // Release elements for sources removed from the timeline
+    pool.pruneUnused(activeVideoSrcs);
+  }, [resolvedUrls, combinedTracks]);
 
   // Create a stable fingerprint for tracks to detect meaningful changes
   const tracksFingerprint = useMemo(() => {

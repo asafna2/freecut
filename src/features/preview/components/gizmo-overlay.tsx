@@ -14,7 +14,7 @@ import { useMarqueeSelection, isMarqueeJustFinished, type Rect } from '@/hooks/u
 import { MarqueeOverlay } from '@/components/marquee-overlay';
 import { useAnimatedTransforms } from '@/features/keyframes/hooks/use-animated-transform';
 import { autoKeyframeProperty, GIZMO_ANIMATABLE_PROPS } from '@/features/keyframes/utils/auto-keyframe';
-import type { AnimatableProperty } from '@/types/keyframe';
+import type { TransformAnimatableProperty } from '@/types/keyframe';
 import type { CoordinateParams, Transform, Point } from '../types/gizmo';
 import type { TransformProperties } from '@/types/transform';
 import type { TimelineItem } from '@/types/timeline';
@@ -273,7 +273,7 @@ export function GizmoOverlay({
       const itemKeyframes = keyframes.find((k) => k.itemId === itemId);
 
       // Map of property to value for gizmo-animatable properties
-      const propValues: Record<AnimatableProperty, number> = {
+      const propValues: Record<TransformAnimatableProperty, number> = {
         x: transform.x,
         y: transform.y,
         width: transform.width,
@@ -284,7 +284,7 @@ export function GizmoOverlay({
       };
 
       // Track which properties were auto-keyframed
-      const autoKeyframedProps = new Set<AnimatableProperty>();
+      const autoKeyframedProps = new Set<TransformAnimatableProperty>();
 
       // Auto-keyframe properties that have existing keyframes
       for (const prop of GIZMO_ANIMATABLE_PROPS) {

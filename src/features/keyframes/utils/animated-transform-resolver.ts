@@ -4,13 +4,13 @@
  */
 
 import type { ResolvedTransform } from '@/types/transform';
-import type { ItemKeyframes, AnimatableProperty } from '@/types/keyframe';
+import type { ItemKeyframes, TransformAnimatableProperty } from '@/types/keyframe';
 import { getPropertyKeyframes, interpolatePropertyValue } from './interpolation';
 
 /**
- * All animatable transform properties.
+ * All animatable transform properties (excludes non-spatial props like volume).
  */
-const ANIMATABLE_TRANSFORM_PROPERTIES: AnimatableProperty[] = [
+const ANIMATABLE_TRANSFORM_PROPERTIES: TransformAnimatableProperty[] = [
   'x',
   'y',
   'width',

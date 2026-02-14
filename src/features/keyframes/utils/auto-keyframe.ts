@@ -1,4 +1,4 @@
-import type { AnimatableProperty, ItemKeyframes, EasingType } from '@/types/keyframe';
+import type { AnimatableProperty, TransformAnimatableProperty, ItemKeyframes, EasingType } from '@/types/keyframe';
 import type { TimelineItem } from '@/types/timeline';
 
 /**
@@ -80,7 +80,7 @@ export function autoKeyframeProperty(
 /**
  * Properties that can be animated via gizmo transforms
  */
-export const GIZMO_ANIMATABLE_PROPS: AnimatableProperty[] = ['x', 'y', 'width', 'height', 'rotation'];
+export const GIZMO_ANIMATABLE_PROPS: TransformAnimatableProperty[] = ['x', 'y', 'width', 'height', 'rotation'];
 
 /**
  * All animatable transform properties

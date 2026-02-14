@@ -24,6 +24,7 @@ import { AnchorDragGhost, FollowerDragGhost } from './drag-ghosts';
 import { DragBlockedTooltip } from './drag-blocked-tooltip';
 import { ItemContextMenu } from './item-context-menu';
 import { useClearKeyframesDialogStore } from '@/features/editor/components/clear-keyframes-dialog-store';
+import type { AnimatableProperty } from '@/types/keyframe';
 import { useBentoLayoutDialogStore } from '../bento-layout-dialog-store';
 import { getRazorSplitPosition } from '../../utils/razor-snap';
 
@@ -592,7 +593,7 @@ export const TimelineItem = memo(function TimelineItem({ item, timelineDuration 
     useClearKeyframesDialogStore.getState().openClearAll([item.id]);
   }, [item.id]);
 
-  const handleClearPropertyKeyframes = useCallback((property: 'x' | 'y' | 'width' | 'height' | 'rotation' | 'opacity' | 'cornerRadius') => {
+  const handleClearPropertyKeyframes = useCallback((property: AnimatableProperty) => {
     useClearKeyframesDialogStore.getState().openClearProperty([item.id], property);
   }, [item.id]);
 

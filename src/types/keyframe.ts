@@ -6,6 +6,9 @@
 /** Properties that can be animated via keyframes */
 export type AnimatableProperty = 'x' | 'y' | 'width' | 'height' | 'rotation' | 'opacity' | 'cornerRadius' | 'volume';
 
+/** Transform/visual properties animatable via gizmo (excludes non-spatial props like volume) */
+export type TransformAnimatableProperty = Exclude<AnimatableProperty, 'volume'>;
+
 /** Basic easing functions for interpolation between keyframes */
 export type BasicEasingType = 'linear' | 'ease-in' | 'ease-out' | 'ease-in-out';
 
