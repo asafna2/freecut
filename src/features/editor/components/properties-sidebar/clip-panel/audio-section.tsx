@@ -4,6 +4,10 @@ import { Button } from '@/components/ui/button';
 import type { TimelineItem, VideoItem, AudioItem } from '@/types/timeline';
 import { useTimelineStore } from '@/features/timeline/stores/timeline-store';
 import { useGizmoStore } from '@/features/preview/stores/gizmo-store';
+import { useThrottledFrame } from '@/features/preview/hooks/use-throttled-frame';
+import { autoKeyframeProperty } from '@/features/keyframes/utils/auto-keyframe';
+import { getPropertyKeyframes, interpolatePropertyValue } from '@/features/keyframes/utils/interpolation';
+import { KeyframeToggle } from '@/features/keyframes/components/keyframe-toggle';
 import {
   PropertySection,
   PropertyRow,
@@ -28,6 +32,16 @@ export function AudioSection({ items }: AudioSectionProps) {
   const setPropertiesPreviewNew = useGizmoStore((s) => s.setPropertiesPreviewNew);
   const clearPreview = useGizmoStore((s) => s.clearPreview);
 
+  // Get current playhead frame for keyframe animation (throttled to reduce re-renders)
+  const currentFrame = useThrottledFrame();
+
+  // Get keyframes for all selected items
+  const allKeyframes = useTimelineStore((s) => s.keyframes);
+
+  // Get keyframe actions for auto-keyframing
+  const addKeyframe = useTimelineStore((s) => s.addKeyframe);
+  const updateKeyframe = useTimelineStore((s) => s.updateKeyframe);
+
   const audioItems = useMemo(
     () =>
       items.filter(
@@ -39,10 +53,43 @@ export function AudioSection({ items }: AudioSectionProps) {
 
   const itemIds = useMemo(() => audioItems.map((item) => item.id), [audioItems]);
 
-  // Get current values (volume in dB, defaults to 0 dB = unity gain)
-  const volume = getMixedValue(audioItems, (item) => item.volume, 0);
+  // Get current values with keyframe animation applied
+  const volume = useMemo(() => {
+    if (audioItems.length === 0) return 0 as number | 'mixed';
+
+    const values = audioItems.map((item) => {
+      const staticVolume = item.volume ?? 0;
+      const itemKeyframes = allKeyframes.find((k) => k.itemId === item.id);
+      if (itemKeyframes) {
+        const volumeKfs = getPropertyKeyframes(itemKeyframes, 'volume');
+        if (volumeKfs.length > 0) {
+          const relativeFrame = currentFrame - item.from;
+          return interpolatePropertyValue(volumeKfs, relativeFrame, staticVolume);
+        }
+      }
+      return staticVolume;
+    });
+
+    const first = values[0]!;
+    return values.every((v) => Math.abs(v - first) < 0.01)
+      ? Math.round(first * 10) / 10
+      : ('mixed' as const);
+  }, [audioItems, allKeyframes, currentFrame]);
+
   const fadeIn = getMixedValue(audioItems, (item) => item.audioFadeIn, 0);
   const fadeOut = getMixedValue(audioItems, (item) => item.audioFadeOut, 0);
+
+  // Helper: auto-keyframe volume on value change
+  const autoKeyframeVolume = useCallback(
+    (itemId: string, value: number): boolean => {
+      const item = audioItems.find((i) => i.id === itemId);
+      if (!item) return false;
+
+      const itemKeyframes = allKeyframes.find((k) => k.itemId === itemId);
+      return autoKeyframeProperty(item, itemKeyframes, 'volume', value, currentFrame, addKeyframe, updateKeyframe);
+    },
+    [audioItems, allKeyframes, currentFrame, addKeyframe, updateKeyframe]
+  );
 
   // Live preview for volume (during drag)
   const handleVolumeLiveChange = useCallback(
@@ -56,15 +103,22 @@ export function AudioSection({ items }: AudioSectionProps) {
     [itemIds, setPropertiesPreviewNew]
   );
 
-  // Commit volume (on mouse up)
-  // Update store first, then clear preview to avoid flicker
+  // Commit volume (on mouse up, with auto-keyframe support)
   const handleVolumeChange = useCallback(
     (value: number) => {
-      itemIds.forEach((id) => updateItem(id, { volume: value }));
+      let allHandled = true;
+      for (const itemId of itemIds) {
+        if (!autoKeyframeVolume(itemId, value)) {
+          allHandled = false;
+        }
+      }
+      if (!allHandled) {
+        itemIds.forEach((id) => updateItem(id, { volume: value }));
+      }
       // Defer preview clear to next microtask so store update propagates first
       queueMicrotask(() => clearPreview());
     },
-    [itemIds, updateItem, clearPreview]
+    [itemIds, updateItem, clearPreview, autoKeyframeVolume]
   );
 
   // Live preview for audio fade in (during drag)
@@ -153,6 +207,11 @@ export function AudioSection({ items }: AudioSectionProps) {
       {/* Volume in dB (-60 to +20, 0 dB = unity gain) */}
       <PropertyRow label="Gain">
         <div className="flex items-center gap-1 w-full">
+          <KeyframeToggle
+            itemIds={itemIds}
+            property="volume"
+            currentValue={volume === 'mixed' ? 0 : volume}
+          />
           <NumberInput
             value={volume}
             onChange={handleVolumeChange}

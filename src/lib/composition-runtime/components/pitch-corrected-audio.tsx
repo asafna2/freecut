@@ -3,6 +3,9 @@ import { useVideoConfig, useIsPlaying } from '../hooks/use-player-compat';
 import { interpolate, useSequenceContext } from '@/features/player/composition';
 import { useGizmoStore } from '@/features/preview/stores/gizmo-store';
 import { usePlaybackStore } from '@/features/preview/stores/playback-store';
+import { useTimelineStore } from '@/features/timeline/stores/timeline-store';
+import { useItemKeyframesFromContext } from '../contexts/keyframes-context';
+import { getPropertyKeyframes, interpolatePropertyValue } from '@/features/keyframes/utils/interpolation';
 
 let sharedAudioContext: AudioContext | null = null;
 
@@ -91,9 +94,24 @@ export const PitchCorrectedAudio: React.FC<PitchCorrectedAudioProps> = React.mem
   const previewMasterVolume = usePlaybackStore((s) => s.volume);
   const previewMasterMuted = usePlaybackStore((s) => s.muted);
 
+  // Get keyframes for this item (context-first for render mode, store-fallback for preview)
+  const contextKeyframes = useItemKeyframesFromContext(itemId);
+  const storeKeyframes = useTimelineStore(
+    useCallback(
+      (s) => s.keyframes.find((k) => k.itemId === itemId),
+      [itemId]
+    )
+  );
+  const itemKeyframes = contextKeyframes ?? storeKeyframes;
+
+  // Interpolate volume from keyframes if they exist, otherwise use static value
+  const volumeKeyframes = getPropertyKeyframes(itemKeyframes, 'volume');
+  const staticVolumeDb = preview?.volume ?? volume;
+  const effectiveVolumeDb = volumeKeyframes.length > 0
+    ? interpolatePropertyValue(volumeKeyframes, frame, staticVolumeDb)
+    : staticVolumeDb;
+
   // Use preview values if available
-  // Volume is stored in dB (0 = unity gain)
-  const effectiveVolumeDb = preview?.volume ?? volume;
   const effectiveFadeIn = preview?.audioFadeIn ?? audioFadeIn;
   const effectiveFadeOut = preview?.audioFadeOut ?? audioFadeOut;
 

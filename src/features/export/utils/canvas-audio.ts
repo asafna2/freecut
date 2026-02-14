@@ -7,8 +7,10 @@
 
 import type { CompositionInputProps } from '@/types/export';
 import type { VideoItem, AudioItem } from '@/types/timeline';
+import type { Keyframe as VolumeKeyframe } from '@/types/keyframe';
 import { createLogger } from '@/lib/logger';
 import { resolveTransitionWindows } from '@/lib/transitions/transition-planner';
+import { getPropertyKeyframes, interpolatePropertyValue } from '@/features/keyframes/utils/interpolation';
 
 const log = createLogger('CanvasAudio');
 
@@ -47,6 +49,8 @@ interface AudioSegment {
   speed: number;             // Playback rate
   muted: boolean;
   type: 'video' | 'audio';
+  volumeKeyframes?: VolumeKeyframe[];  // Animated volume keyframes
+  itemFrom: number;                     // Item's timeline start frame (for keyframe offset)
 }
 
 /**
@@ -146,6 +150,8 @@ function extractAudioSegments(composition: CompositionInputProps, fps: number): 
 
         // Use sourceStart as primary for consistency with video items
         // This ensures split audio clips and IO markers work correctly
+        const audioItemKeyframes = composition.keyframes?.find((k) => k.itemId === item.id);
+        const audioVolumeKfs = getPropertyKeyframes(audioItemKeyframes, 'volume');
         audioOnlySegments.push({
           itemId: item.id,
           trackId: track.id,
@@ -160,6 +166,8 @@ function extractAudioSegments(composition: CompositionInputProps, fps: number): 
           speed: audioItem.speed ?? 1, // Playback speed from BaseTimelineItem
           muted: track.muted ?? false,
           type: 'audio',
+          volumeKeyframes: audioVolumeKfs.length > 0 ? audioVolumeKfs : undefined,
+          itemFrom: item.from,
         });
       }
     }
@@ -252,6 +260,9 @@ function extractAudioSegments(composition: CompositionInputProps, fps: number): 
     const before = Math.max(0, Math.min(extension.before, maxBeforeBySource));
     const after = Math.max(0, extension.after);
 
+    const videoItemKeyframes = composition.keyframes?.find((k) => k.itemId === videoItem.id);
+    const videoVolumeKfs = getPropertyKeyframes(videoItemKeyframes, 'volume');
+
     expandedVideoSegments.push({
       itemId: videoItem.id,
       trackId: entry.trackId,
@@ -269,6 +280,8 @@ function extractAudioSegments(composition: CompositionInputProps, fps: number): 
       type: 'video',
       beforeFrames: before,
       afterFrames: after,
+      volumeKeyframes: videoVolumeKfs.length > 0 ? videoVolumeKfs : undefined,
+      itemFrom: videoItem.from,
     });
   }
 
@@ -287,6 +300,7 @@ function extractAudioSegments(composition: CompositionInputProps, fps: number): 
     if (Math.abs(left.volume - right.volume) > 0.0001) return false;
     if (left.muted !== right.muted) return false;
     if (left.afterFrames !== 0 || right.beforeFrames !== 0) return false;
+    if (left.volumeKeyframes || right.volumeKeyframes) return false;
     return true;
   };
 
@@ -307,6 +321,8 @@ function extractAudioSegments(composition: CompositionInputProps, fps: number): 
     speed: segment.speed,
     muted: segment.muted,
     type: segment.type,
+    volumeKeyframes: segment.volumeKeyframes,
+    itemFrom: segment.itemFrom,
   });
 
   for (const segment of sortedVideoSegments) {
@@ -535,6 +551,42 @@ function applyVolume(
   const output = new Float32Array(samples.length);
 
   for (let i = 0; i < samples.length; i++) {
+    output[i] = samples[i]! * gain;
+  }
+
+  return output;
+}
+
+/**
+ * Apply animated volume envelope from keyframes to audio samples.
+ * Interpolates dB value per-frame and applies per-sample gain.
+ *
+ * @param samples - Audio samples for one channel
+ * @param volumeKeyframes - Volume keyframes (frame-relative to item start)
+ * @param staticVolumeDb - Static volume dB fallback
+ * @param segmentStartFrame - Timeline frame where this segment starts
+ * @param itemFrom - Timeline frame where the original item starts
+ * @param fps - Frames per second
+ * @param sampleRate - Audio sample rate
+ */
+function applyAnimatedVolume(
+  samples: Float32Array,
+  volumeKeyframes: VolumeKeyframe[],
+  staticVolumeDb: number,
+  segmentStartFrame: number,
+  itemFrom: number,
+  fps: number,
+  sampleRate: number
+): Float32Array {
+  const output = new Float32Array(samples.length);
+
+  for (let i = 0; i < samples.length; i++) {
+    // Convert sample index to timeline frame
+    const timelineFrame = segmentStartFrame + (i / sampleRate) * fps;
+    // Convert to item-relative frame for keyframe interpolation
+    const relativeFrame = timelineFrame - itemFrom;
+    const db = interpolatePropertyValue(volumeKeyframes, relativeFrame, staticVolumeDb);
+    const gain = dbToGain(db);
     output[i] = samples[i]! * gain;
   }
 
@@ -904,8 +956,18 @@ export async function processAudio(
       for (let c = 0; c < processedChannels.length; c++) {
         let channelSamples = processedChannels[c]!;
 
-        // Apply volume
-        if (segment.volume !== 0) {
+        // Apply volume (animated if keyframes exist, static otherwise)
+        if (segment.volumeKeyframes && segment.volumeKeyframes.length > 0) {
+          channelSamples = applyAnimatedVolume(
+            channelSamples,
+            segment.volumeKeyframes,
+            segment.volume,
+            segment.startFrame,
+            segment.itemFrom,
+            fps,
+            decoded.sampleRate
+          );
+        } else if (segment.volume !== 0) {
           channelSamples = applyVolume(channelSamples, segment.volume);
         }
 

@@ -4,7 +4,7 @@
  */
 
 /** Properties that can be animated via keyframes */
-export type AnimatableProperty = 'x' | 'y' | 'width' | 'height' | 'rotation' | 'opacity' | 'cornerRadius';
+export type AnimatableProperty = 'x' | 'y' | 'width' | 'height' | 'rotation' | 'opacity' | 'cornerRadius' | 'volume';
 
 /** Basic easing functions for interpolation between keyframes */
 export type BasicEasingType = 'linear' | 'ease-in' | 'ease-out' | 'ease-in-out';
@@ -138,6 +138,7 @@ export const PROPERTY_LABELS: Record<AnimatableProperty, string> = {
   rotation: 'Rotation',
   opacity: 'Opacity',
   cornerRadius: 'Corner Radius',
+  volume: 'Volume (dB)',
 };
 
 /**

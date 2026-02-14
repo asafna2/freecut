@@ -3,6 +3,9 @@ import { interpolate, useSequenceContext } from '@/features/player/composition';
 import { useGizmoStore } from '@/features/preview/stores/gizmo-store';
 import { usePlaybackStore } from '@/features/preview/stores/playback-store';
 import { useVideoConfig } from '../hooks/use-player-compat';
+import { useTimelineStore } from '@/features/timeline/stores/timeline-store';
+import { useItemKeyframesFromContext } from '../contexts/keyframes-context';
+import { getPropertyKeyframes, interpolatePropertyValue } from '@/features/keyframes/utils/interpolation';
 import type { VideoItem } from '@/types/timeline';
 
 // Track video elements that have been connected to Web Audio API
@@ -108,9 +111,24 @@ export function useVideoAudioVolume(item: VideoItem & { _sequenceFrameOffset?: n
   const previewMasterVolume = usePlaybackStore((s) => s.volume);
   const previewMasterMuted = usePlaybackStore((s) => s.muted);
 
+  // Get keyframes for this item (context-first for render mode, store-fallback for preview)
+  const contextKeyframes = useItemKeyframesFromContext(item.id);
+  const storeKeyframes = useTimelineStore(
+    useCallback(
+      (s) => s.keyframes.find((k) => k.itemId === item.id),
+      [item.id]
+    )
+  );
+  const itemKeyframes = contextKeyframes ?? storeKeyframes;
+
+  // Interpolate volume from keyframes if they exist, otherwise use static value
+  const volumeKeyframes = getPropertyKeyframes(itemKeyframes, 'volume');
+  const staticVolumeDb = preview?.volume ?? item.volume ?? 0;
+  const volumeDb = volumeKeyframes.length > 0
+    ? interpolatePropertyValue(volumeKeyframes, frame, staticVolumeDb)
+    : staticVolumeDb;
+
   // Use preview values if available, otherwise use item's stored values
-  // Volume is stored in dB (0 = unity gain)
-  const volumeDb = preview?.volume ?? item.volume ?? 0;
   const audioFadeIn = preview?.audioFadeIn ?? item.audioFadeIn ?? 0;
   const audioFadeOut = preview?.audioFadeOut ?? item.audioFadeOut ?? 0;
 
