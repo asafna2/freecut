@@ -46,6 +46,7 @@ export function CompositionsSection() {
   const [deleteTarget, setDeleteTarget] = useState<SubComposition | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
+  const renameCancelledRef = useRef(false);
 
   if (compositions.length === 0) return null;
 
@@ -76,6 +77,11 @@ export function CompositionsSection() {
   };
 
   const handleCommitRename = (id: string) => {
+    if (renameCancelledRef.current) {
+      renameCancelledRef.current = false;
+      setEditingId(null);
+      return;
+    }
     const trimmed = editValue.trim();
     if (trimmed && trimmed !== useCompositionsStore.getState().getComposition(id)?.name) {
       updateComposition(id, { name: trimmed });
@@ -124,7 +130,10 @@ export function CompositionsSection() {
               onDelete={handleDeleteRequest}
               onStartRename={handleStartRename}
               onCommitRename={handleCommitRename}
-              onCancelRename={() => setEditingId(null)}
+              onCancelRename={() => {
+                renameCancelledRef.current = true;
+                setEditingId(null);
+              }}
             />
           ))}
         </CollapsibleContent>
