@@ -7,6 +7,7 @@ import { usePlaybackStore } from '@/features/preview/stores/playback-store';
 import { useTimelineStore } from '../../stores/timeline-store';
 import { useSelectionStore } from '@/features/editor/stores/selection-store';
 import { useClipboardStore } from '@/features/editor/stores/clipboard-store';
+import { useCompositionNavigationStore } from '../../stores/composition-navigation-store';
 import { HOTKEYS, HOTKEY_OPTIONS } from '@/config/hotkeys';
 import type { Transition } from '@/types/transition';
 
@@ -95,6 +96,13 @@ export function useClipboardShortcuts() {
         const storeItems = useTimelineStore.getState().items;
         const newItemIds: string[] = [];
 
+        // Filter out composition items when pasting inside a sub-composition (1-level nesting limit)
+        const isInsideSubComp = useCompositionNavigationStore.getState().activeCompositionId !== null;
+        const pasteItems = isInsideSubComp
+          ? itemsClipboard.items.filter((item) => item.type !== 'composition')
+          : itemsClipboard.items;
+        if (pasteItems.length === 0) return;
+
         const findNextAvailableSpace = (
           trackId: string,
           startFrame: number,
@@ -131,7 +139,7 @@ export function useClipboardShortcuts() {
           return true;
         };
 
-        for (const itemData of itemsClipboard.items) {
+        for (const itemData of pasteItems) {
           const newId = crypto.randomUUID();
           newItemIds.push(newId);
 

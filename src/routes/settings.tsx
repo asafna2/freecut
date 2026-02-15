@@ -55,6 +55,7 @@ function Settings() {
     'SAVE',
     'ZOOM_TO_FIT',
     'TOGGLE_SNAP',
+    'TOGGLE_MAGNETIC_MODE',
   ];
 
   return (

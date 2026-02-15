@@ -3,7 +3,7 @@ import type {
   SourceDimensions,
   CanvasSettings,
 } from '@/types/transform';
-import type { TimelineItem, VideoItem, ImageItem } from '@/types/timeline';
+import type { TimelineItem, VideoItem, ImageItem, CompositionItem } from '@/types/timeline';
 
 /**
  * Resolve transform properties to concrete values for rendering.
@@ -68,6 +68,10 @@ export function getSourceDimensions(
     if (imageItem.sourceWidth && imageItem.sourceHeight) {
       return { width: imageItem.sourceWidth, height: imageItem.sourceHeight };
     }
+  }
+  if (item.type === 'composition') {
+    const compItem = item as CompositionItem;
+    return { width: compItem.compositionWidth, height: compItem.compositionHeight };
   }
   return undefined;
 }

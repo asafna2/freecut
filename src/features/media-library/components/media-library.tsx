@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useMemo, memo, useCallback } from 'react';
-import { Search, Filter, SortAsc, Video, FileAudio, Image as ImageIcon, Trash2, Grid3x3, List, AlertTriangle, Info, X, FolderOpen, Link2Off } from 'lucide-react';
+import { Search, Filter, SortAsc, Video, FileAudio, Image as ImageIcon, Trash2, Grid3x3, List, AlertTriangle, Info, X, FolderOpen, Link2Off, ChevronRight, Film, ArrowLeft } from 'lucide-react';
 import { createLogger } from '@/lib/logger';
 
 const logger = createLogger('MediaLibrary');
@@ -22,13 +22,21 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible';
+import { cn } from '@/lib/utils';
 import { MediaGrid } from './media-grid';
 import { MediaInfoPanel } from './media-info-panel';
+import { CompositionsSection } from './compositions-section';
 import { MissingMediaDialog } from './missing-media-dialog';
 import { OrphanedClipsDialog } from './orphaned-clips-dialog';
 import { UnsupportedAudioCodecDialog } from './unsupported-audio-codec-dialog';
 import { useMediaLibraryStore } from '../stores/media-library-store';
 import { useTimelineStore } from '@/features/timeline/stores/timeline-store';
+import { useCompositionNavigationStore } from '@/features/timeline/stores/composition-navigation-store';
 
 interface MediaLibraryProps {
   onMediaSelect?: (mediaId: string) => void;
@@ -40,6 +48,7 @@ export const MediaLibrary = memo(function MediaLibrary({ onMediaSelect }: MediaL
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [idsToDelete, setIdsToDelete] = useState<string[]>([]);
   const [infoPanelDismissed, setInfoPanelDismissed] = useState(false);
+  const [mediaOpen, setMediaOpen] = useState(true);
 
   // Timeline store selectors - don't subscribe to items to avoid re-renders
   // Read items from store directly when needed (in delete handler)
@@ -69,6 +78,12 @@ export const MediaLibrary = memo(function MediaLibrary({ onMediaSelect }: MediaL
   const clearNotification = useMediaLibraryStore((s) => s.clearNotification);
   const brokenMediaIds = useMediaLibraryStore((s) => s.brokenMediaIds);
   const openMissingMediaDialog = useMediaLibraryStore((s) => s.openMissingMediaDialog);
+
+  // Composition navigation — show banner when inside a sub-comp
+  const activeCompositionId = useCompositionNavigationStore((s) => s.activeCompositionId);
+  const breadcrumbs = useCompositionNavigationStore((s) => s.breadcrumbs);
+  const exitComposition = useCompositionNavigationStore((s) => s.exitComposition);
+  const activeCompLabel = breadcrumbs.length > 1 ? breadcrumbs[breadcrumbs.length - 1]?.label : null;
 
   // Unsupported codec dialog state
   const unsupportedCodecFiles = useMediaLibraryStore((s) => s.unsupportedCodecFiles);
@@ -481,14 +496,52 @@ export const MediaLibrary = memo(function MediaLibrary({ onMediaSelect }: MediaL
         </div>
       </div>
 
-      {/* Media grid (scrollable) - now also acts as dropzone */}
+      {/* Composition navigation banner — shown when inside a sub-composition */}
+      {activeCompositionId !== null && activeCompLabel && (
+        <div className="px-3 py-1.5 border-b border-violet-500/30 bg-violet-500/10 flex items-center gap-2 flex-shrink-0">
+          <button
+            onClick={exitComposition}
+            className="flex items-center gap-1.5 text-xs text-violet-300 hover:text-violet-100 transition-colors"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" />
+            <span>Back</span>
+          </button>
+          <span className="text-xs text-violet-400/60">/</span>
+          <span className="text-xs text-violet-300 font-medium truncate">{activeCompLabel}</span>
+        </div>
+      )}
+
+      {/* Scrollable content: collapsible sections for compositions and media */}
       <div className="flex-1 overflow-y-auto px-4 pb-4">
-        <MediaGrid
-          onMediaSelect={onMediaSelect}
-          onImportHandles={handleImportHandles}
-          onShowNotification={showNotification}
-          viewMode={viewMode}
-        />
+        {/* Compositions section — collapsible, auto-hidden when empty */}
+        <CompositionsSection />
+
+        {/* Media section — collapsible, matches compositions header style */}
+        <Collapsible open={mediaOpen} onOpenChange={setMediaOpen}>
+          <CollapsibleTrigger className="flex items-center gap-2 w-full py-2 hover:bg-secondary/50 rounded-md px-2 -mx-2 transition-colors">
+            <ChevronRight
+              className={cn(
+                'w-3 h-3 text-muted-foreground transition-transform',
+                mediaOpen && 'rotate-90'
+              )}
+            />
+            <Film className="w-3 h-3 text-muted-foreground" />
+            <span className="text-xs font-semibold tracking-wide uppercase text-muted-foreground">
+              Media
+            </span>
+            <span className="text-[10px] tabular-nums text-muted-foreground/60">
+              {mediaItems.length}
+            </span>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="pt-1 pb-2">
+            <MediaGrid
+              onMediaSelect={onMediaSelect}
+              onImportHandles={handleImportHandles}
+              onShowNotification={showNotification}
+              viewMode={viewMode}
+            />
+          </CollapsibleContent>
+        </Collapsible>
       </div>
 
       {/* Media info panel - slides up from bottom when single item selected */}

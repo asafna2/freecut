@@ -4,6 +4,7 @@ import { useTransitionsStore } from '../transitions-store';
 import { useKeyframesStore } from '../keyframes-store';
 import { useMarkersStore } from '../markers-store';
 import { useTimelineSettingsStore } from '../timeline-settings-store';
+import { useCompositionsStore } from '../compositions-store';
 import { usePlaybackStore } from '@/features/preview/stores/playback-store';
 
 /**
@@ -16,6 +17,7 @@ export function captureSnapshot(): TimelineSnapshot {
   const keyframesState = useKeyframesStore.getState();
   const markersState = useMarkersStore.getState();
   const settingsState = useTimelineSettingsStore.getState();
+  const compositionsState = useCompositionsStore.getState();
   const playbackState = usePlaybackStore.getState();
 
   return {
@@ -24,6 +26,7 @@ export function captureSnapshot(): TimelineSnapshot {
     transitions: transitionsState.transitions,
     keyframes: keyframesState.keyframes,
     markers: markersState.markers,
+    compositions: compositionsState.compositions,
     inPoint: markersState.inPoint,
     outPoint: markersState.outPoint,
     fps: settingsState.fps,
@@ -54,6 +57,9 @@ export function restoreSnapshot(snapshot: TimelineSnapshot): void {
   useMarkersStore.getState().setInPoint(snapshot.inPoint);
   useMarkersStore.getState().setOutPoint(snapshot.outPoint);
 
+  // Restore compositions
+  useCompositionsStore.getState().setCompositions(snapshot.compositions);
+
   // Restore settings
   useTimelineSettingsStore.getState().setFps(snapshot.fps);
   useTimelineSettingsStore.getState().setScrollPosition(snapshot.scrollPosition);
@@ -74,6 +80,7 @@ export function snapshotsEqual(a: TimelineSnapshot, b: TimelineSnapshot): boolea
     a.transitions === b.transitions &&
     a.keyframes === b.keyframes &&
     a.markers === b.markers &&
+    a.compositions === b.compositions &&
     a.inPoint === b.inPoint &&
     a.outPoint === b.outPoint &&
     a.fps === b.fps &&

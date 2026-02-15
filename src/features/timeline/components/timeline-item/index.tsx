@@ -27,6 +27,7 @@ import { useClearKeyframesDialogStore } from '@/features/editor/components/clear
 import type { AnimatableProperty } from '@/types/keyframe';
 import { useBentoLayoutDialogStore } from '../bento-layout-dialog-store';
 import { getRazorSplitPosition } from '../../utils/razor-snap';
+import { useCompositionNavigationStore } from '../../stores/composition-navigation-store';
 
 // Width in pixels for edge hover detection (trim/rate-stretch handles)
 const EDGE_HOVER_ZONE = 8;
@@ -398,6 +399,8 @@ export const TimelineItem = memo(function TimelineItem({ item, timelineDuration 
         return 'bg-timeline-shape/30 border-timeline-shape';
       case 'adjustment':
         return 'bg-purple-500/30 border-purple-400';
+      case 'composition':
+        return 'bg-violet-600/40 border-violet-400';
       default:
         return 'bg-timeline-video border-timeline-video';
     }
@@ -445,10 +448,19 @@ export const TimelineItem = memo(function TimelineItem({ item, timelineDuration 
   }, [trackLocked, frameToPixels, pixelsToFrame, item.from, item.id]);
 
   // Double-click: open media in source monitor with clip's source range as I/O
+  // For composition items: enter the sub-composition for editing
   const handleDoubleClick = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
-    if (trackLocked || !item.mediaId) return;
+    if (trackLocked) return;
     if (activeToolRef.current === 'razor') return;
+
+    // Composition items: enter the sub-composition
+    if (item.type === 'composition') {
+      useCompositionNavigationStore.getState().enterComposition(item.compositionId, item.label);
+      return;
+    }
+
+    if (!item.mediaId) return;
 
     // Pre-set currentMediaId so SourceMonitor's useEffect is a no-op
     const sourceStore = useSourcePlayerStore.getState();
@@ -468,7 +480,7 @@ export const TimelineItem = memo(function TimelineItem({ item, timelineDuration 
 
     // Open the source monitor (triggers SourceMonitor render)
     useEditorStore.getState().setSourcePreviewMediaId(item.mediaId);
-  }, [trackLocked, item.mediaId, item.sourceStart, item.sourceEnd]);
+  }, [trackLocked, item]);
 
   // Handle mouse move for edge hover detection
   const hoveredEdgeRef = useRef(hoveredEdge);
@@ -604,6 +616,41 @@ export const TimelineItem = memo(function TimelineItem({ item, timelineDuration 
     useBentoLayoutDialogStore.getState().open(selectedItemIds);
   }, []);
 
+  // Freeze frame
+  const handleFreezeFrame = useCallback(() => {
+    if (item.type !== 'video') return;
+    const { currentFrame } = usePlaybackStore.getState();
+    void import('../../stores/actions/item-actions').then(({ insertFreezeFrame }) => {
+      void insertFreezeFrame(item.id, currentFrame);
+    });
+  }, [item.id, item.type]);
+
+  // Composition operations
+  const isCompositionItem = item.type === 'composition';
+  const selectedItemIds = useSelectionStore((s) => s.selectedItemIds);
+  const isInsideSubComp = useCompositionNavigationStore((s) => s.activeCompositionId !== null);
+  const canCreatePreComp = selectedItemIds.length >= 1 && isSelected && !isInsideSubComp;
+
+  const handleCreatePreComp = useCallback(() => {
+    // Capture selection synchronously — context menu close may clear it before the dynamic import resolves
+    const ids = useSelectionStore.getState().selectedItemIds;
+    void import('../../stores/actions/composition-actions').then(({ createPreComp }) => {
+      createPreComp(undefined, ids);
+    });
+  }, []);
+
+  const handleEnterComposition = useCallback(() => {
+    if (item.type !== 'composition') return;
+    useCompositionNavigationStore.getState().enterComposition(item.compositionId, item.label);
+  }, [item]);
+
+  const handleDissolveComposition = useCallback(() => {
+    if (item.type !== 'composition') return;
+    void import('../../stores/actions/composition-actions').then(({ dissolvePreComp }) => {
+      dissolvePreComp(item.id);
+    });
+  }, [item]);
+
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     // Show blocked tooltip when trying to drag in rate-stretch mode
     if (activeTool === 'rate-stretch' && !trackLocked && !isStretching) {
@@ -645,6 +692,17 @@ export const TimelineItem = memo(function TimelineItem({ item, timelineDuration 
         onClearAllKeyframes={handleClearAllKeyframes}
         onClearPropertyKeyframes={handleClearPropertyKeyframes}
         onBentoLayout={handleBentoLayout}
+        isVideoItem={item.type === 'video'}
+        playheadInBounds={(() => {
+          const frame = usePlaybackStore.getState().currentFrame;
+          return frame > item.from && frame < item.from + item.durationInFrames;
+        })()}
+        onFreezeFrame={handleFreezeFrame}
+        isCompositionItem={isCompositionItem}
+        onEnterComposition={handleEnterComposition}
+        onDissolveComposition={handleDissolveComposition}
+        canCreatePreComp={canCreatePreComp}
+        onCreatePreComp={handleCreatePreComp}
       >
         <div
           ref={transformRef}

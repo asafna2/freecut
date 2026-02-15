@@ -136,6 +136,18 @@ export const ClipContent = memo(function ClipContent({
     );
   }
 
+  // Composition item - show pre-comp label with icon
+  if (item.type === 'composition') {
+    return (
+      <div className="absolute inset-0 flex flex-col px-2 py-1 overflow-hidden">
+        <div className="text-[10px] text-muted-foreground truncate">Pre-Comp</div>
+        <div className="text-xs font-medium truncate flex-1">
+          {item.label || 'Composition'}
+        </div>
+      </div>
+    );
+  }
+
   // Adjustment layer - show effects summary
   if (item.type === 'adjustment') {
     const enabledEffectsCount = item.effects?.filter(e => e.enabled).length ?? 0;

@@ -3,7 +3,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { createLogger } from '@/lib/logger';
 
 const logger = createLogger('TimelineTrack');
-import type { TimelineTrack as TimelineTrackType, TimelineItem as TimelineItemType, VideoItem, AudioItem, ImageItem } from '@/types/timeline';
+import type { TimelineTrack as TimelineTrackType, TimelineItem as TimelineItemType, VideoItem, AudioItem, ImageItem, CompositionItem } from '@/types/timeline';
 import { TimelineItem } from './timeline-item';
 import { TransitionItem } from './transition-item';
 import { useTimelineStore } from '../stores/timeline-store';
@@ -13,7 +13,8 @@ import { useMediaLibraryStore } from '@/features/media-library/stores/media-libr
 import { useProjectStore } from '@/features/projects/stores/project-store';
 import { mediaLibraryService } from '@/features/media-library/services/media-library-service';
 import { findNearestAvailableSpace } from '../utils/collision-utils';
-import { getMediaDragData } from '@/features/media-library/utils/drag-data-cache';
+import { getMediaDragData, type CompositionDragData } from '@/features/media-library/utils/drag-data-cache';
+import { useCompositionNavigationStore } from '../stores/composition-navigation-store';
 import { DEFAULT_TRACK_HEIGHT } from '@/features/timeline/constants';
 import { computeInitialTransform } from '../utils/transform-init';
 import {
@@ -190,6 +191,32 @@ export const TimelineTrack = memo(function TimelineTrack({ track }: TimelineTrac
 
       const previews: GhostPreviewItem[] = [];
       try {
+        // Composition drop preview
+        if (data.type === 'composition') {
+          const isInsideSubComp = useCompositionNavigationStore.getState().activeCompositionId !== null;
+          if (isInsideSubComp) {
+            // Block composition drops inside sub-compositions
+            e.dataTransfer.dropEffect = 'none';
+            setGhostPreviews([]);
+            return;
+          }
+          const compData = data as CompositionDragData;
+          const itemDuration = compData.durationInFrames;
+          const proposedPosition = Math.max(0, dropFrame);
+          const storeItems = useTimelineStore.getState().items;
+          const finalPosition = findNearestAvailableSpace(proposedPosition, itemDuration, track.id, storeItems);
+
+          if (finalPosition !== null) {
+            previews.push({
+              left: frameToPixels(finalPosition),
+              width: frameToPixels(itemDuration),
+              label: compData.name,
+              type: 'composition',
+            });
+          }
+          setGhostPreviews(previews);
+          return;
+        }
 
         if (data.type === 'media-items' && data.items) {
           // Multi-item drop
@@ -278,6 +305,48 @@ export const TimelineTrack = memo(function TimelineTrack({ track }: TimelineTrac
       // Calculate position in timeline space: mouse position relative to container + scroll offset
       const offsetX = (e.clientX - containerRect.left) + scrollLeft;
       const dropFrame = pixelsToFrame(offsetX);
+
+      // Handle composition drop
+      if (data.type === 'composition') {
+        const isInsideSubComp = useCompositionNavigationStore.getState().activeCompositionId !== null;
+        if (isInsideSubComp) return; // Block inside sub-compositions
+
+        const { compositionId, name, durationInFrames, width, height } = data;
+        const proposedPosition = Math.max(0, dropFrame);
+        const storeItems = useTimelineStore.getState().items;
+        const finalPosition = findNearestAvailableSpace(
+          proposedPosition,
+          durationInFrames,
+          track.id,
+          storeItems
+        );
+
+        if (finalPosition === null) {
+          logger.warn('Cannot drop composition: no available space on track');
+          return;
+        }
+
+        const compositionItem: CompositionItem = {
+          id: crypto.randomUUID(),
+          type: 'composition',
+          trackId: track.id,
+          from: finalPosition,
+          durationInFrames,
+          label: name,
+          compositionId,
+          compositionWidth: width,
+          compositionHeight: height,
+          transform: {
+            x: 0,
+            y: 0,
+            rotation: 0,
+            opacity: 1,
+          },
+        };
+
+        addItem(compositionItem);
+        return;
+      }
 
       // Handle multi-item drop (media-items)
       if (data.type === 'media-items') {
@@ -554,7 +623,9 @@ export const TimelineTrack = memo(function TimelineTrack({ track }: TimelineTrac
             <div
               key={index}
               className={`absolute inset-y-0 rounded border-2 border-dashed pointer-events-none z-20 flex items-center px-2 ${
-                ghost.type === 'video'
+                ghost.type === 'composition'
+                  ? 'border-violet-400 bg-violet-600/20'
+                  : ghost.type === 'video'
                   ? 'border-timeline-video bg-timeline-video/20'
                   : ghost.type === 'audio'
                   ? 'border-timeline-audio bg-timeline-audio/20'

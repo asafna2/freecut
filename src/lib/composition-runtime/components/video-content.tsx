@@ -274,7 +274,7 @@ const NativePreviewVideo: React.FC<{
     // During premount, seek to the start of the clip (frame 0 position), not negative time
     // This ensures the video is ready at the correct starting frame when playback reaches this clip
     const effectiveTargetTime = isPremounted
-      ? (safeTrimBefore / fps) // Start position of this clip in source video
+      ? (safeTrimBefore / fps)
       : targetTime;
 
     // Clamp target time to video duration to prevent seeking past the end
@@ -315,6 +315,7 @@ const NativePreviewVideo: React.FC<{
       // Invalidate any in-flight pre-warm promise so its .then()/.catch() no-ops
       preWarmGenRef.current += 1;
 
+      // Normal forward playback
       // Initial sync is always needed (first play after mount/seek)
       if (needsInitialSyncRef.current && canSeek) {
         try {

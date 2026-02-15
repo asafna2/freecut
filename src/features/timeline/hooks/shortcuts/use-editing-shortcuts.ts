@@ -166,6 +166,27 @@ export function useEditingShortcuts(callbacks: TimelineShortcutCallbacks) {
     [items, splitItem, selectItems]
   );
 
+  // Editing: Shift+F - Insert freeze frame at playhead
+  useHotkeys(
+    HOTKEYS.FREEZE_FRAME,
+    (event) => {
+      if (selectedItemIds.length !== 1) return;
+      const currentFrame = usePlaybackStore.getState().currentFrame;
+      const selectedItem = items.find((i) => i.id === selectedItemIds[0]);
+      if (!selectedItem || selectedItem.type !== 'video') return;
+
+      // Check playhead is within item bounds
+      if (currentFrame <= selectedItem.from || currentFrame >= selectedItem.from + selectedItem.durationInFrames) return;
+
+      event.preventDefault();
+      void import('../../stores/actions/item-actions').then(({ insertFreezeFrame }) => {
+        void insertFreezeFrame(selectedItem.id, currentFrame);
+      });
+    },
+    HOTKEY_OPTIONS,
+    [selectedItemIds, items]
+  );
+
   // Keyframes: K - Add keyframe at playhead for selected items
   useHotkeys(
     HOTKEYS.ADD_KEYFRAME,

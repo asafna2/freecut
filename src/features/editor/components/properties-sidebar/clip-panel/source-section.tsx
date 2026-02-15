@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { FileVideo, FileAudio, FileImage, Type, Square, Layers } from 'lucide-react';
+import { FileVideo, FileAudio, FileImage, Type, Square, Layers, Group } from 'lucide-react';
 import type { TimelineItem } from '@/types/timeline';
 import { PropertySection, PropertyRow } from '../components';
 
@@ -15,6 +15,7 @@ const typeIcons = {
   text: Type,
   shape: Square,
   adjustment: Layers,
+  composition: Group,
 };
 
 /**

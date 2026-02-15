@@ -2,13 +2,68 @@
  * Item Actions - Cross-domain operations that affect items, transitions, and keyframes.
  */
 
-import type { TimelineItem } from '@/types/timeline';
+import type { TimelineItem, ImageItem } from '@/types/timeline';
+import type { MediaMetadata, ThumbnailData } from '@/types/storage';
 import { useItemsStore } from '../items-store';
 import { useTransitionsStore } from '../transitions-store';
 import { useKeyframesStore } from '../keyframes-store';
 import { useTimelineSettingsStore } from '../timeline-settings-store';
 import { useSelectionStore } from '@/features/editor/stores/selection-store';
-import { execute, applyTransitionRepairs } from './shared';
+import { execute, applyTransitionRepairs, logger } from './shared';
+
+/**
+ * Close all gaps on a track by shifting items left to remove empty space.
+ * Used by magnetic mode to auto-compact items after operations.
+ */
+function closeAllGapsOnTrack(trackId: string): void {
+  const items = useItemsStore.getState().items;
+  const trackItems = items
+    .filter((i) => i.trackId === trackId)
+    .sort((a, b) => a.from - b.from);
+
+  if (trackItems.length === 0) return;
+
+  // Build shift map: walk items left-to-right, accumulating gap sizes
+  const updates: Array<{ id: string; from: number }> = [];
+  let expectedStart = 0;
+
+  for (const item of trackItems) {
+    if (item.from > expectedStart) {
+      // There's a gap — shift this item left
+      updates.push({ id: item.id, from: expectedStart });
+      expectedStart = expectedStart + item.durationInFrames;
+    } else {
+      // No gap (or overlap) — keep position, advance cursor
+      expectedStart = item.from + item.durationInFrames;
+    }
+  }
+
+  if (updates.length > 0) {
+    useItemsStore.getState()._moveItems(updates);
+  }
+}
+
+/**
+ * Apply magnetic gap-closing on specified tracks if magnetic mode is enabled.
+ * Repairs transitions on affected tracks afterwards.
+ */
+function applyMagneticRipple(trackIds: string[]): void {
+  if (!useTimelineSettingsStore.getState().magneticMode) return;
+
+  const uniqueTrackIds = [...new Set(trackIds)];
+  for (const trackId of uniqueTrackIds) {
+    closeAllGapsOnTrack(trackId);
+  }
+
+  // Repair transitions on all affected tracks
+  const items = useItemsStore.getState().items;
+  const affectedItemIds = items
+    .filter((i) => uniqueTrackIds.includes(i.trackId))
+    .map((i) => i.id);
+  if (affectedItemIds.length > 0) {
+    applyTransitionRepairs(affectedItemIds);
+  }
+}
 
 export function addItem(item: TimelineItem): void {
   execute('ADD_ITEM', () => {
@@ -33,6 +88,12 @@ export function updateItem(id: string, updates: Partial<TimelineItem>): void {
 
 export function removeItems(ids: string[]): void {
   execute('REMOVE_ITEMS', () => {
+    // Capture affected track IDs before removal (for magnetic mode)
+    const items = useItemsStore.getState().items;
+    const affectedTrackIds = [...new Set(
+      items.filter((i) => ids.includes(i.id)).map((i) => i.trackId)
+    )];
+
     // Remove items
     useItemsStore.getState()._removeItems(ids);
 
@@ -41,6 +102,9 @@ export function removeItems(ids: string[]): void {
 
     // Cascade: Remove keyframes for deleted items
     useKeyframesStore.getState()._removeKeyframesForItems(ids);
+
+    // Magnetic mode: close gaps on affected tracks
+    applyMagneticRipple(affectedTrackIds);
 
     useTimelineSettingsStore.getState().markDirty();
   }, { ids });
@@ -73,10 +137,20 @@ export function closeGapAtPosition(trackId: string, frame: number): void {
 
 export function moveItem(id: string, newFrom: number, newTrackId?: string): void {
   execute('MOVE_ITEM', () => {
+    // Capture source track before move (for magnetic gap-close on source track)
+    const item = useItemsStore.getState().items.find((i) => i.id === id);
+    const sourceTrackId = item?.trackId;
+
     useItemsStore.getState()._moveItem(id, newFrom, newTrackId);
 
     // Repair transitions
     applyTransitionRepairs([id]);
+
+    // Magnetic mode: close gaps on source track (and destination if cross-track)
+    const affectedTracks: string[] = [];
+    if (sourceTrackId) affectedTracks.push(sourceTrackId);
+    if (newTrackId && newTrackId !== sourceTrackId) affectedTracks.push(newTrackId);
+    applyMagneticRipple(affectedTracks);
 
     useTimelineSettingsStore.getState().markDirty();
   }, { id, newFrom, newTrackId });
@@ -84,6 +158,14 @@ export function moveItem(id: string, newFrom: number, newTrackId?: string): void
 
 export function moveItems(updates: Array<{ id: string; from: number; trackId?: string }>): void {
   execute('MOVE_ITEMS', () => {
+    // Capture source tracks before move (for magnetic gap-close)
+    const itemsBefore = useItemsStore.getState().items;
+    const sourceTrackIds = new Set<string>();
+    for (const u of updates) {
+      const item = itemsBefore.find((i) => i.id === u.id);
+      if (item) sourceTrackIds.add(item.trackId);
+    }
+
     useItemsStore.getState()._moveItems(updates);
 
     const movedItemIds = new Set(updates.map((u) => u.id));
@@ -111,6 +193,14 @@ export function moveItems(updates: Array<{ id: string; from: number; trackId?: s
     useTransitionsStore.getState().setTransitions(updatedTransitions);
     applyTransitionRepairs(updates.map((u) => u.id));
 
+    // Magnetic mode: close gaps on source and destination tracks
+    const destTrackIds = new Set<string>();
+    for (const u of updates) {
+      if (u.trackId) destTrackIds.add(u.trackId);
+    }
+    const affectedTracks = [...sourceTrackIds, ...destTrackIds];
+    applyMagneticRipple(affectedTracks);
+
     useTimelineSettingsStore.getState().markDirty();
   }, { count: updates.length });
 }
@@ -128,10 +218,19 @@ export function duplicateItems(
 
 export function trimItemStart(id: string, trimAmount: number): void {
   execute('TRIM_ITEM_START', () => {
+    const item = useItemsStore.getState().items.find((i) => i.id === id);
+    const trackId = item?.trackId;
+
     useItemsStore.getState()._trimItemStart(id, trimAmount);
 
     // Repair transitions (auto-adjusts duration if clip got shorter)
     applyTransitionRepairs([id]);
+
+    // Magnetic mode: when trimming start inward (positive trimAmount),
+    // a gap opens before the item — close it on the track
+    if (trackId && trimAmount > 0) {
+      applyMagneticRipple([trackId]);
+    }
 
     useTimelineSettingsStore.getState().markDirty();
   }, { id, trimAmount });
@@ -139,10 +238,19 @@ export function trimItemStart(id: string, trimAmount: number): void {
 
 export function trimItemEnd(id: string, trimAmount: number): void {
   execute('TRIM_ITEM_END', () => {
+    const item = useItemsStore.getState().items.find((i) => i.id === id);
+    const trackId = item?.trackId;
+
     useItemsStore.getState()._trimItemEnd(id, trimAmount);
 
     // Repair transitions (auto-adjusts duration if clip got shorter)
     applyTransitionRepairs([id]);
+
+    // Magnetic mode: when trimming end inward (negative trimAmount),
+    // a gap opens after the item — close it on the track
+    if (trackId && trimAmount < 0) {
+      applyMagneticRipple([trackId]);
+    }
 
     useTimelineSettingsStore.getState().markDirty();
   }, { id, trimAmount });
@@ -219,4 +327,235 @@ export function rateStretchItem(
 
     useTimelineSettingsStore.getState().markDirty();
   }, { id, newFrom, newDuration, newSpeed });
+}
+
+/**
+ * Insert a freeze frame at the playhead position.
+ *
+ * Extracts the video frame at the current playhead, stores it as a media entry,
+ * splits the video clip at the playhead, and inserts a still image between the halves.
+ *
+ * This is async because frame extraction requires mediabunny. The timeline
+ * mutations are batched in a single command for undo/redo atomicity.
+ */
+export async function insertFreezeFrame(
+  itemId: string,
+  playheadFrame: number
+): Promise<boolean> {
+  const items = useItemsStore.getState().items;
+  const item = items.find((i) => i.id === itemId);
+  if (!item || item.type !== 'video') return false;
+
+  // Validate playhead is within item bounds (exclusive of edges — need room to split)
+  const itemStart = item.from;
+  const itemEnd = item.from + item.durationInFrames;
+  if (playheadFrame <= itemStart || playheadFrame >= itemEnd) return false;
+
+  const fps = useTimelineSettingsStore.getState().fps;
+  const speed = item.speed ?? 1;
+  const sourceStart = item.sourceStart ?? 0;
+
+  // Calculate source frame at playhead in source-native FPS
+  const timelineOffset = playheadFrame - itemStart;
+  const sourceFrame = sourceStart + Math.round(timelineOffset * speed);
+
+  // Get media metadata for resolution and fps info
+  const { useMediaLibraryStore } = await import('@/features/media-library/stores/media-library-store');
+  const mediaItems = useMediaLibraryStore.getState().mediaItems;
+  const media = mediaItems.find((m) => m.id === item.mediaId);
+  if (!media) {
+    logger.error('[insertFreezeFrame] Media not found for item:', item.mediaId);
+    return false;
+  }
+
+  // Calculate timestamp in seconds for frame extraction
+  const mediaFps = media.fps || 30;
+  const timestampSeconds = sourceFrame / mediaFps;
+
+  try {
+    // Step 1: Get the media file blob
+    const { mediaLibraryService } = await import('@/features/media-library/services/media-library-service');
+    const blob = await mediaLibraryService.getMediaFile(media.id);
+    if (!blob) {
+      logger.error('[insertFreezeFrame] Could not access media file');
+      return false;
+    }
+
+    // Step 2: Extract frame using mediabunny at native resolution
+    const { Input, BlobSource, CanvasSink, ALL_FORMATS } = await import('mediabunny');
+    const input = new Input({
+      source: new BlobSource(blob as File),
+      formats: ALL_FORMATS,
+    });
+
+    const videoTrack = await input.getPrimaryVideoTrack();
+    if (!videoTrack) {
+      input.dispose();
+      logger.error('[insertFreezeFrame] No video track found');
+      return false;
+    }
+
+    const frameWidth = videoTrack.displayWidth;
+    const frameHeight = videoTrack.displayHeight;
+
+    const sink = new CanvasSink(videoTrack, {
+      width: frameWidth,
+      height: frameHeight,
+      fit: 'fill',
+    });
+
+    const wrapped = await sink.getCanvas(timestampSeconds);
+    if (!wrapped) {
+      (sink as unknown as { dispose?: () => void }).dispose?.();
+      input.dispose();
+      logger.error('[insertFreezeFrame] Failed to extract frame');
+      return false;
+    }
+
+    const canvas = wrapped.canvas as OffscreenCanvas | HTMLCanvasElement;
+    let frameBlob: Blob;
+    if ('convertToBlob' in canvas) {
+      frameBlob = await canvas.convertToBlob({ type: 'image/png' });
+    } else {
+      frameBlob = await new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob(
+          (b) => (b ? resolve(b) : reject(new Error('Failed to create blob'))),
+          'image/png'
+        );
+      });
+    }
+
+    // Clean up mediabunny resources
+    (sink as unknown as { dispose?: () => void }).dispose?.();
+    input.dispose();
+
+    // Step 3: Store frame as media in IndexedDB
+    const { createMedia, saveThumbnail, associateMediaWithProject } = await import('@/lib/storage/indexeddb');
+    const currentProjectId = useMediaLibraryStore.getState().currentProjectId;
+    if (!currentProjectId) {
+      logger.error('[insertFreezeFrame] No project context');
+      return false;
+    }
+
+    const frameMediaId = crypto.randomUUID();
+    const frameBlobUrl = URL.createObjectURL(frameBlob);
+    const fileName = `freeze-frame-${item.label || 'video'}-${Math.round(timestampSeconds * 100) / 100}s.png`;
+
+    const mediaMetadata: MediaMetadata = {
+      id: frameMediaId,
+      storageType: 'opfs',
+      fileName,
+      fileSize: frameBlob.size,
+      mimeType: 'image/png',
+      duration: 0,
+      width: frameWidth,
+      height: frameHeight,
+      fps: 0,
+      codec: 'png',
+      bitrate: 0,
+      tags: ['freeze-frame'],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+
+    // Store the frame blob in OPFS
+    const { opfsService } = await import('@/features/media-library/services/opfs-service');
+    const opfsPath = `content/${frameMediaId.slice(0, 2)}/${frameMediaId.slice(2, 4)}/${frameMediaId}/data`;
+    await opfsService.saveFile(opfsPath, await frameBlob.arrayBuffer());
+    mediaMetadata.opfsPath = opfsPath;
+
+    await createMedia(mediaMetadata);
+    await associateMediaWithProject(currentProjectId, frameMediaId);
+
+    // Save thumbnail (reuse the frame blob)
+    const thumbnailId = crypto.randomUUID();
+    const thumbnailData: ThumbnailData = {
+      id: thumbnailId,
+      mediaId: frameMediaId,
+      blob: frameBlob,
+      timestamp: 0,
+      width: frameWidth,
+      height: frameHeight,
+    };
+    await saveThumbnail(thumbnailData);
+    mediaMetadata.thumbnailId = thumbnailId;
+
+    // Add to media library store
+    useMediaLibraryStore.setState((state) => ({
+      mediaItems: [mediaMetadata, ...state.mediaItems],
+    }));
+
+    // Step 4: Perform timeline mutations atomically (split + insert + shift)
+    const freezeDurationFrames = Math.round(fps * 2); // 2 seconds
+
+    execute('INSERT_FREEZE_FRAME', () => {
+      // Split the video at playhead
+      const splitResult = useItemsStore.getState()._splitItem(itemId, playheadFrame);
+      if (!splitResult) {
+        logger.error('[insertFreezeFrame] Split failed');
+        return;
+      }
+
+      const { leftItem, rightItem } = splitResult;
+
+      // Update transitions pointing to split item
+      const transitions = useTransitionsStore.getState().transitions;
+      const updatedTransitions = transitions.map((t) => {
+        if (t.leftClipId === itemId) {
+          return { ...t, leftClipId: rightItem.id };
+        }
+        return t;
+      });
+      useTransitionsStore.getState().setTransitions(updatedTransitions);
+
+      // Create ImageItem for the freeze frame
+      const freezeFrameItem: ImageItem = {
+        id: crypto.randomUUID(),
+        type: 'image',
+        trackId: item.trackId,
+        from: playheadFrame,
+        durationInFrames: freezeDurationFrames,
+        label: fileName,
+        mediaId: frameMediaId,
+        src: frameBlobUrl,
+        sourceWidth: frameWidth,
+        sourceHeight: frameHeight,
+        transform: item.transform ? { ...item.transform } : undefined,
+      };
+
+      useItemsStore.getState()._addItem(freezeFrameItem);
+
+      // Shift the right half forward by freeze frame duration
+      const newRightFrom = rightItem.from + freezeDurationFrames;
+      useItemsStore.getState()._moveItem(rightItem.id, newRightFrom);
+
+      // Also shift all items on same track that come after the right half
+      const allItems = useItemsStore.getState().items;
+      const itemsToShift = allItems.filter(
+        (i) =>
+          i.trackId === item.trackId &&
+          i.id !== rightItem.id &&
+          i.id !== leftItem.id &&
+          i.id !== freezeFrameItem.id &&
+          i.from > playheadFrame
+      );
+
+      for (const shiftItem of itemsToShift) {
+        useItemsStore.getState()._moveItem(shiftItem.id, shiftItem.from + freezeDurationFrames);
+      }
+
+      // Repair transitions
+      applyTransitionRepairs([leftItem.id, rightItem.id]);
+
+      // Select the freeze frame item
+      useSelectionStore.getState().selectItems([freezeFrameItem.id]);
+
+      useTimelineSettingsStore.getState().markDirty();
+    }, { itemId, playheadFrame, freezeDurationFrames });
+
+    return true;
+  } catch (error) {
+    logger.error('[insertFreezeFrame] Failed:', error);
+    return false;
+  }
 }

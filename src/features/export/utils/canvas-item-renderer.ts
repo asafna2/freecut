@@ -15,6 +15,7 @@ import type {
   ImageItem,
   TextItem,
   ShapeItem,
+  CompositionItem,
 } from '@/types/timeline';
 import type { ItemKeyframes } from '@/types/keyframe';
 import { createLogger } from '@/lib/logger';
@@ -35,6 +36,7 @@ import {
 import { renderShape } from './canvas-shapes';
 import { gifFrameCache, type CachedGifFrames } from '../../timeline/services/gif-frame-cache';
 import type { CanvasPool, TextMeasurementCache } from './canvas-pool';
+import { useCompositionsStore } from '../../timeline/stores/compositions-store';
 import type { VideoFrameExtractor } from './canvas-video-extractor';
 
 const log = createLogger('CanvasItemRenderer');
@@ -172,6 +174,9 @@ export async function renderItem(
         height: rctx.canvasSettings.height,
       });
       break;
+    case 'composition':
+      await renderCompositionItem(ctx, item as CompositionItem, transform, frame, rctx);
+      break;
   }
 
   ctx.restore();
@@ -199,6 +204,8 @@ async function renderVideoItem(
   const localTime = localFrame / fps;
   const sourceStart = item.sourceStart ?? item.trimStart ?? 0;
   const speed = item.speed ?? 1;
+
+  // Normal: play from sourceStart forwards
   const adjustedSourceStart = sourceStart + sourceFrameOffset;
   const sourceTime = adjustedSourceStart / fps + localTime * speed;
 
@@ -638,6 +645,89 @@ function drawTextWithLetterSpacing(
   }
 
   ctx.textAlign = currentAlign;
+}
+
+// ---------------------------------------------------------------------------
+// Composition item (sub-composition / pre-comp)
+// ---------------------------------------------------------------------------
+
+/**
+ * Render a CompositionItem by rendering all its sub-composition items to an
+ * offscreen canvas and then drawing the result at the item's transform position.
+ */
+async function renderCompositionItem(
+  ctx: OffscreenCanvasRenderingContext2D,
+  item: CompositionItem,
+  transform: ItemTransform,
+  frame: number,
+  rctx: ItemRenderContext,
+): Promise<void> {
+  const subComp = useCompositionsStore.getState().getComposition(item.compositionId);
+  if (!subComp) return;
+
+  // Calculate the local frame within the sub-composition
+  const localFrame = frame - item.from;
+  if (localFrame < 0 || localFrame >= subComp.durationInFrames) return;
+
+  // Create an offscreen canvas at the sub-comp dimensions
+  const { canvas: subCanvas, ctx: subCtx } = rctx.canvasPool.acquire();
+
+  // Clear the sub canvas
+  subCtx.clearRect(0, 0, subCanvas.width, subCanvas.height);
+
+  // Build sub-comp canvas settings using the sub-comp's own dimensions
+  // (note: pooled canvases are at the main canvas size — we render at that
+  // size and rely on the parent transform to scale)
+  const subCanvasSettings: CanvasSettings = {
+    width: subCanvas.width,
+    height: subCanvas.height,
+    fps: subComp.fps,
+  };
+
+  // Sort sub-comp tracks bottom-to-top (highest order renders first → lowest z)
+  const sortedTracks = [...subComp.tracks].sort(
+    (a, b) => (b.order ?? 0) - (a.order ?? 0)
+  );
+
+  // Render each visible item at the local frame
+  for (const track of sortedTracks) {
+    if (!track.visible) continue;
+
+    const trackItems = subComp.items.filter((i) => i.trackId === track.id);
+
+    for (const subItem of trackItems) {
+      // Check if item is visible at this local frame
+      if (localFrame < subItem.from || localFrame >= subItem.from + subItem.durationInFrames) {
+        continue;
+      }
+
+      // Skip audio and adjustment items
+      if (subItem.type === 'audio' || subItem.type === 'adjustment') continue;
+
+      // Get transform for the sub-item
+      const subItemTransform = getAnimatedTransform(subItem, undefined, localFrame, subCanvasSettings);
+
+      await renderItem(subCtx, subItem, subItemTransform, localFrame, rctx);
+    }
+  }
+
+  // Draw the sub-composition result onto the main canvas at the CompositionItem's position
+  const drawDimensions = calculateMediaDrawDimensions(
+    subCanvas.width,
+    subCanvas.height,
+    transform,
+    rctx.canvasSettings,
+  );
+
+  ctx.drawImage(
+    subCanvas,
+    drawDimensions.x,
+    drawDimensions.y,
+    drawDimensions.width,
+    drawDimensions.height,
+  );
+
+  rctx.canvasPool.release(subCanvas);
 }
 
 // ---------------------------------------------------------------------------

@@ -22,13 +22,24 @@ interface MediaDragData {
   duration?: number;
 }
 
-let cachedDragData: MediaDragData | null = null;
+export interface CompositionDragData {
+  type: 'composition';
+  compositionId: string;
+  name: string;
+  durationInFrames: number;
+  width: number;
+  height: number;
+}
 
-export function setMediaDragData(data: MediaDragData): void {
+export type DragData = MediaDragData | CompositionDragData;
+
+let cachedDragData: DragData | null = null;
+
+export function setMediaDragData(data: DragData): void {
   cachedDragData = data;
 }
 
-export function getMediaDragData(): MediaDragData | null {
+export function getMediaDragData(): DragData | null {
   return cachedDragData;
 }
 

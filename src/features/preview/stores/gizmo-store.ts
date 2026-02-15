@@ -103,7 +103,7 @@ interface GizmoStoreActions {
     handle: GizmoHandle,
     startPoint: Point,
     transform: Transform,
-    itemType?: 'video' | 'audio' | 'image' | 'text' | 'shape' | 'adjustment',
+    itemType?: 'video' | 'audio' | 'image' | 'text' | 'shape' | 'adjustment' | 'composition',
     aspectRatioLocked?: boolean,
     strokeWidth?: number
   ) => void;

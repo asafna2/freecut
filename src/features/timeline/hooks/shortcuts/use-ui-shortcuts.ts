@@ -10,6 +10,7 @@ import type { TimelineShortcutCallbacks } from '../use-timeline-shortcuts';
 
 export function useUIShortcuts(callbacks: TimelineShortcutCallbacks) {
   const toggleSnap = useTimelineStore((s) => s.toggleSnap);
+  const toggleMagneticMode = useTimelineStore((s) => s.toggleMagneticMode);
 
   // History: Cmd/Ctrl+Z - Undo
   useHotkeys(
@@ -54,6 +55,17 @@ export function useUIShortcuts(callbacks: TimelineShortcutCallbacks) {
     },
     HOTKEY_OPTIONS,
     [toggleSnap]
+  );
+
+  // UI: N - Toggle Magnetic Mode
+  useHotkeys(
+    HOTKEYS.TOGGLE_MAGNETIC_MODE,
+    (event) => {
+      event.preventDefault();
+      toggleMagneticMode();
+    },
+    HOTKEY_OPTIONS,
+    [toggleMagneticMode]
   );
 
   // Zoom: Z - Zoom to Fit

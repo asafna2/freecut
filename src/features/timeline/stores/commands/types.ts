@@ -1,6 +1,7 @@
 import type { TimelineItem, TimelineTrack, ProjectMarker } from '@/types/timeline';
 import type { Transition } from '@/types/transition';
 import type { ItemKeyframes } from '@/types/keyframe';
+import type { SubComposition } from '../compositions-store';
 
 /**
  * Snapshot of all timeline state for undo/redo.
@@ -13,6 +14,7 @@ export interface TimelineSnapshot {
   transitions: Transition[];
   keyframes: ItemKeyframes[];
   markers: ProjectMarker[];
+  compositions: SubComposition[];
   inPoint: number | null;
   outPoint: number | null;
   fps: number;

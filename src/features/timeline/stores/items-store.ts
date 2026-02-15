@@ -5,6 +5,7 @@ import type { TransformProperties } from '@/types/transform';
 import type { VisualEffect, ItemEffect } from '@/types/effects';
 import { clampTrimAmount, calculateTrimSourceUpdate } from '../utils/trim-utils';
 import { getSourceProperties, isMediaItem, calculateSplitSourceBoundaries } from '../utils/source-calculations';
+import { useCompositionNavigationStore } from './composition-navigation-store';
 
 const log = createLogger('ItemsStore');
 
@@ -219,11 +220,14 @@ export const useItemsStore = create<ItemsState & ItemsActions>()(
       const state = get();
       const itemsMap = new Map(state.items.map((i) => [i.id, i]));
       const newItems: TimelineItem[] = [];
+      const isInsideSubComp = useCompositionNavigationStore.getState().activeCompositionId !== null;
 
       for (let i = 0; i < itemIds.length; i++) {
         const original = itemsMap.get(itemIds[i]!);
         const position = positions[i]!;
         if (!original || !position) continue;
+        // Skip composition items when inside a sub-composition (1-level nesting limit)
+        if (isInsideSubComp && original.type === 'composition') continue;
 
         const duplicate = {
           ...original,

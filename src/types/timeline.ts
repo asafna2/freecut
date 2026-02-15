@@ -118,8 +118,17 @@ export type AdjustmentItem = BaseTimelineItem & {
   effectOpacity?: number; // 0-1, defaults to 1
 };
 
+// Composition item - references a sub-composition (pre-comp)
+export type CompositionItem = BaseTimelineItem & {
+  type: 'composition';
+  compositionId: string; // References a SubComposition in compositions-store
+  // Dimensions of the sub-composition canvas
+  compositionWidth: number;
+  compositionHeight: number;
+};
+
 // Union type for all timeline items
-export type TimelineItem = VideoItem | AudioItem | TextItem | ImageItem | ShapeItem | AdjustmentItem;
+export type TimelineItem = VideoItem | AudioItem | TextItem | ImageItem | ShapeItem | AdjustmentItem | CompositionItem;
 
 export interface TimelineTrack {
   id: string;

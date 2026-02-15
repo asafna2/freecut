@@ -10,6 +10,7 @@ import { ItemVisualWrapper } from './item-visual-wrapper';
 import { TextContent } from './text-content';
 import { ShapeContent } from './shape-content';
 import { VideoContent } from './video-content';
+import { CompositionContent } from './composition-content';
 import {
   timelineToSourceFrames,
   isValidSeekPosition,
@@ -273,6 +274,21 @@ export const Item = React.memo<ItemProps>(({ item, muted = false, masks = [] }) 
         <ShapeContent item={item} />
       </ItemVisualWrapper>
     );
+  }
+
+  if (item.type === 'composition') {
+    // Render sub-composition contents inline
+    // Pass parent muted so muting the track silences all sub-comp audio
+    return (
+      <ItemVisualWrapper item={item} masks={masks}>
+        <CompositionContent item={item} parentMuted={muted} />
+      </ItemVisualWrapper>
+    );
+  }
+
+  // adjustment items render nothing visually (they apply effects to other items)
+  if (item.type === 'adjustment') {
+    return null;
   }
 
   throw new Error(`Unknown item type: ${JSON.stringify(item)}`);
