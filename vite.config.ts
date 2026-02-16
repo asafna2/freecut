@@ -21,6 +21,14 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks: (id) => {
+          // Logger must be in its own chunk to avoid circular chunk TDZ errors.
+          // Without this, Rollup places it in composition-runtime which has a
+          // circular import with media-library, causing "Cannot access before
+          // initialization" in production builds.
+          if (id.endsWith('src/lib/logger.ts')) {
+            return 'core-logger';
+          }
+
           // Application feature chunks
           if (id.includes('/src/features/timeline/')) {
             return 'feature-timeline';
