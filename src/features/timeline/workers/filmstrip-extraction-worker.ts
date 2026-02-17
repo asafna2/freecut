@@ -43,6 +43,8 @@ export interface ProgressResponse {
   frameIndex: number;
   frameCount: number;
   progress: number;
+  frameIndices?: number[]; // Newly saved frame indices since last progress report
+  frames?: Array<{ index: number; blob: Blob }>; // Newly saved frame payloads
 }
 
 export interface CompleteResponse {
@@ -90,19 +92,6 @@ async function saveFrame(
 }
 
 /**
- * Save metadata to OPFS
- */
-async function saveMetadata(
-  dir: FileSystemDirectoryHandle,
-  metadata: { width: number; height: number; isComplete: boolean; frameCount: number }
-): Promise<void> {
-  const fileHandle = await dir.getFileHandle('meta.json', { create: true });
-  const writable = await fileHandle.createWritable();
-  await writable.write(JSON.stringify(metadata));
-  await writable.close();
-}
-
-/**
  * Extract frames and save directly to OPFS
  */
 async function extractAndSave(
@@ -142,9 +131,6 @@ async function extractAndSave(
   // Get OPFS directory
   const dir = await getFilmstripDir(mediaId);
 
-  // Save initial metadata
-  await saveMetadata(dir, { width, height, isComplete: false, frameCount: skipSet.size });
-
   // Load mediabunny
   const { Input, UrlSource, CanvasSink, ALL_FORMATS } = await loadMediabunny();
 
@@ -176,6 +162,8 @@ async function extractAndSave(
     // Track extracted frames
     let extractedCount = skipSet.size;
     let frameListIndex = 0;
+    const newlySavedFrameIndices: number[] = [];
+    const newlySavedFrames: Array<{ index: number; blob: Blob }> = [];
 
     // Generator for timestamps
     async function* timestampGenerator(): AsyncGenerator<number> {
@@ -211,6 +199,8 @@ async function extractAndSave(
       // Save to OPFS in parallel (don't await)
       const frameIndex = frame.index;
       const savePromise = saveFrame(dir, frameIndex, blob).then(() => {
+        newlySavedFrameIndices.push(frameIndex);
+        newlySavedFrames.push({ index: frameIndex, blob });
         // Remove from pending when done
         const idx = pendingSaves.indexOf(savePromise);
         if (idx > -1) pendingSaves.splice(idx, 1);
@@ -229,6 +219,8 @@ async function extractAndSave(
       const shouldReport = extractedCount <= 3 || extractedCount % 10 === 0;
       if (shouldReport) {
         const progress = Math.round((extractedCount / totalFrames) * 100);
+        const frameIndices = newlySavedFrameIndices.splice(0, newlySavedFrameIndices.length);
+        const frames = newlySavedFrames.splice(0, newlySavedFrames.length);
 
         self.postMessage({
           type: 'progress',
@@ -236,6 +228,8 @@ async function extractAndSave(
           frameIndex,
           frameCount: extractedCount,
           progress: Math.min(progress, 99),
+          frameIndices,
+          frames,
         } as ProgressResponse);
       }
     }
@@ -245,16 +239,20 @@ async function extractAndSave(
       await Promise.all(pendingSaves);
     }
 
-    // Save final metadata - only mark complete if we actually have frames
     if (!state.aborted) {
-      const actuallyComplete = extractedCount > 0;
-
-      await saveMetadata(dir, {
-        width,
-        height,
-        isComplete: actuallyComplete,
-        frameCount: extractedCount,
-      });
+      // Flush any newly saved frame indices that have not been reported yet.
+      if (newlySavedFrameIndices.length > 0) {
+        const progress = Math.round((extractedCount / totalFrames) * 100);
+        self.postMessage({
+          type: 'progress',
+          requestId,
+          frameIndex: Math.max(0, rangeStart),
+          frameCount: extractedCount,
+          progress: Math.min(progress, 99),
+          frameIndices: newlySavedFrameIndices.splice(0, newlySavedFrameIndices.length),
+          frames: newlySavedFrames.splice(0, newlySavedFrames.length),
+        } as ProgressResponse);
+      }
 
       self.postMessage({
         type: 'complete',
