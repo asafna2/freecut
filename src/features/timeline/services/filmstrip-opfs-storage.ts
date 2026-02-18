@@ -12,6 +12,7 @@
 
 import { createLogger } from '@/lib/logger';
 import { getCacheMigration } from '@/lib/storage/cache-version';
+import { safeWrite } from '../utils/opfs-safe-write';
 
 const logger = createLogger('FilmstripOPFS');
 
@@ -113,8 +114,7 @@ class FilmstripOPFSStorage {
     const mediaDir = await this.getOrCreateMediaDir(mediaId);
     const fileHandle = await mediaDir.getFileHandle('meta.json', { create: true });
     const writable = await fileHandle.createWritable();
-    await writable.write(JSON.stringify(metadata));
-    await writable.close();
+    await safeWrite(writable, JSON.stringify(metadata));
   }
 
   /**
@@ -124,8 +124,7 @@ class FilmstripOPFSStorage {
     const mediaDir = await this.getOrCreateMediaDir(mediaId);
     const fileHandle = await mediaDir.getFileHandle(`${index}.webp`, { create: true });
     const writable = await fileHandle.createWritable();
-    await writable.write(blob);
-    await writable.close();
+    await safeWrite(writable, blob);
   }
 
   /**
@@ -153,7 +152,7 @@ class FilmstripOPFSStorage {
           const index = parseInt(entry.name.replace('.webp', ''), 10);
           if (!isNaN(index)) {
             try {
-              const fileHandle = await mediaDir.getFileHandle(entry.name);
+              const fileHandle = entry as FileSystemFileHandle;
               const file = await fileHandle.getFile();
               if (file.size > 0) {
                 frameFiles.push({ index, file });
@@ -183,8 +182,16 @@ class FilmstripOPFSStorage {
         };
       });
 
-      // Store URLs for cleanup
+      const previousUrls = this.objectUrls.get(mediaId) || [];
       this.objectUrls.set(mediaId, urls);
+      if (previousUrls.length > 0) {
+        // Delay revocation slightly so in-flight renders can swap to new URLs.
+        setTimeout(() => {
+          for (const url of previousUrls) {
+            URL.revokeObjectURL(url);
+          }
+        }, 250);
+      }
 
       const existingIndices = frameFiles.map(f => f.index);
 
@@ -207,7 +214,11 @@ class FilmstripOPFSStorage {
   /**
    * Get existing frame indices (for resume)
    */
-  async getExistingIndices(mediaId: string): Promise<number[]> {
+  async getExistingIndices(
+    mediaId: string,
+    startIndex?: number,
+    endIndex?: number
+  ): Promise<number[]> {
     try {
       const mediaDir = await this.getMediaDir(mediaId);
       if (!mediaDir) return [];
@@ -217,8 +228,14 @@ class FilmstripOPFSStorage {
         if (entry.kind === 'file' && entry.name.endsWith('.webp')) {
           const index = parseInt(entry.name.replace('.webp', ''), 10);
           if (!isNaN(index)) {
+            if (typeof startIndex === 'number' && index < startIndex) {
+              continue;
+            }
+            if (typeof endIndex === 'number' && index >= endIndex) {
+              continue;
+            }
             try {
-              const fileHandle = await mediaDir.getFileHandle(entry.name);
+              const fileHandle = entry as FileSystemFileHandle;
               const file = await fileHandle.getFile();
               if (file.size > 0) {
                 indices.push(index);

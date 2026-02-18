@@ -10,6 +10,8 @@
  *     0.webp, 1.webp, 2.webp, ...
  */
 
+import { safeWrite } from '../utils/opfs-safe-write';
+
 const FILMSTRIP_DIR = 'filmstrips';
 const IMAGE_FORMAT = 'image/webp';
 const IMAGE_QUALITY = 0.6; // Slightly lower for faster encoding
@@ -85,8 +87,7 @@ async function saveFrame(
 ): Promise<void> {
   const fileHandle = await dir.getFileHandle(`${index}.webp`, { create: true });
   const writable = await fileHandle.createWritable();
-  await writable.write(blob);
-  await writable.close();
+  await safeWrite(writable, blob);
 }
 
 /**
@@ -98,8 +99,7 @@ async function saveMetadata(
 ): Promise<void> {
   const fileHandle = await dir.getFileHandle('meta.json', { create: true });
   const writable = await fileHandle.createWritable();
-  await writable.write(JSON.stringify(metadata));
-  await writable.close();
+  await safeWrite(writable, JSON.stringify(metadata));
 }
 
 /**
@@ -245,9 +245,12 @@ async function extractAndSave(
       await Promise.all(pendingSaves);
     }
 
-    // Save final metadata - only mark complete if we actually have frames
+    // Save final metadata - only mark complete when this worker range is fully covered.
     if (!state.aborted) {
-      const actuallyComplete = extractedCount > 0;
+      const newExtracted = extractedCount - skipSet.size;
+      const expectedTotalFrames = rangeEnd - rangeStart;
+      const actuallyComplete = extractedCount === expectedTotalFrames;
+      void newExtracted;
 
       await saveMetadata(dir, {
         width,

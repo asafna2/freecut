@@ -49,6 +49,8 @@ interface WorkerState {
   completed: boolean;
   frameCount: number;
   lastLoadedCount: number;
+  isLoading: boolean;
+  hasPendingLoad: boolean;
 }
 
 interface PendingExtraction {
@@ -340,7 +342,9 @@ class FilmstripCacheService {
         endIndex,
         completed: false,
         frameCount: rangeSkipIndices.length,
-        lastLoadedCount: rangeSkipIndices.length,
+        lastLoadedCount: this.countKnownFramesInRange(pending, startIndex, endIndex),
+        isLoading: false,
+        hasPendingLoad: false,
       };
       pending.workers.push(workerState);
 
@@ -359,12 +363,7 @@ class FilmstripCacheService {
           // Load only newly reported frames from this worker's range
           const newFrameCount = Math.max(0, response.frameCount - workerState.lastLoadedCount);
           if (newFrameCount > 0) {
-            await this.loadNewFrames(
-              mediaId,
-              workerState.startIndex + workerState.lastLoadedCount,
-              newFrameCount
-            );
-            workerState.lastLoadedCount = response.frameCount;
+            await this.flushWorkerRangeLoads(mediaId, workerState);
           }
 
           if (this.shouldNotifyProgress(pending, totalExtracted, overallProgress)) {
@@ -461,24 +460,57 @@ class FilmstripCacheService {
     return false;
   }
 
-  private async loadNewFrames(
+  private countKnownFramesInRange(
+    pending: PendingExtraction,
+    startIndex: number,
+    endIndex: number
+  ): number {
+    let count = 0;
+    for (const index of pending.extractedFrames.keys()) {
+      if (index >= startIndex && index < endIndex) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  private async loadNewFramesInRange(
     mediaId: string,
     startIndex: number,
-    frameCount: number
+    endIndex: number
+  ): Promise<number> {
+    const pending = this.pendingExtractions.get(mediaId);
+    if (!pending) return 0;
+
+    // Discover what is actually saved on disk for this worker's range.
+    const inRangeExistingIndices = await filmstripOPFSStorage.getExistingIndices(
+      mediaId,
+      startIndex,
+      endIndex
+    );
+    const newIndices = inRangeExistingIndices.filter(index => !pending.extractedFrames.has(index));
+
+    if (newIndices.length > 0) {
+      await this.loadNewFrames(mediaId, newIndices);
+    }
+
+    // Track discovered file state, not a synthetic contiguous offset.
+    return inRangeExistingIndices.length;
+  }
+
+  private async loadNewFrames(
+    mediaId: string,
+    indices: number[]
   ): Promise<void> {
     const pending = this.pendingExtractions.get(mediaId);
     if (!pending) return;
 
-    // Load frames from this worker's range that we don't have yet
-    const framesToLoad: number[] = [];
-    for (let i = startIndex; i < startIndex + frameCount; i++) {
-      if (!pending.extractedFrames.has(i)) {
-        framesToLoad.push(i);
-      }
-    }
+    const framesToLoad = indices;
 
     if (framesToLoad.length > 0) {
       // Load a small batch in parallel to avoid UI thread I/O spikes.
+      // Frames beyond this slice are intentionally deferred and retried on
+      // later progress callbacks, then fully reconciled by the final reload.
       const loadPromises = framesToLoad.slice(0, MAX_INCREMENTAL_FRAME_LOAD).map(async (index) => {
         const frame = await filmstripOPFSStorage.loadSingleFrame(mediaId, index);
         if (frame) {
@@ -486,6 +518,31 @@ class FilmstripCacheService {
         }
       });
       await Promise.all(loadPromises);
+    }
+  }
+
+  private async flushWorkerRangeLoads(
+    mediaId: string,
+    workerState: WorkerState
+  ): Promise<void> {
+    if (workerState.isLoading) {
+      workerState.hasPendingLoad = true;
+      return;
+    }
+
+    workerState.isLoading = true;
+    try {
+      do {
+        workerState.hasPendingLoad = false;
+        const discoveredCount = await this.loadNewFramesInRange(
+          mediaId,
+          workerState.startIndex,
+          workerState.endIndex
+        );
+        workerState.lastLoadedCount = discoveredCount;
+      } while (workerState.hasPendingLoad);
+    } finally {
+      workerState.isLoading = false;
     }
   }
 
