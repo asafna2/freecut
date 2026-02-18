@@ -77,7 +77,7 @@ export function useFilmstrip({
 
   // Subscribe to progressive updates
   useEffect(() => {
-    if (!enabled || !duration || duration <= 0) {
+    if (!enabled || !blobUrl || !duration || duration <= 0) {
       return;
     }
 
@@ -88,11 +88,11 @@ export function useFilmstrip({
     });
 
     return unsubscribe;
-  }, [mediaId, enabled, duration]);
+  }, [mediaId, enabled, blobUrl, duration]);
 
   // Load filmstrip when visible
   useEffect(() => {
-    if (!enabled || !duration || duration <= 0) {
+    if (!enabled || !blobUrl || !duration || duration <= 0) {
       return;
     }
 
