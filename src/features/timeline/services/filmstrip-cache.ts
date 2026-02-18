@@ -48,6 +48,7 @@ interface WorkerState {
   endIndex: number;
   completed: boolean;
   frameCount: number;
+  lastLoadedCount: number;
 }
 
 interface PendingExtraction {
@@ -64,7 +65,6 @@ interface PendingExtraction {
   onProgress?: (progress: number) => void;
   // Track frames incrementally during extraction
   extractedFrames: Map<number, FilmstripFrame>;
-  pendingFrameIndices: Set<number>;
   lastNotifyAt: number;
   lastNotifiedFrameCount: number;
 }
@@ -118,7 +118,7 @@ class FilmstripCacheService {
    */
   async getFilmstrip(
     mediaId: string,
-    blobUrl: string | null,
+    blobUrl: string,
     duration: number,
     onProgress?: (progress: number) => void
   ): Promise<Filmstrip> {
@@ -146,7 +146,7 @@ class FilmstripCacheService {
 
   private async loadAndExtract(
     mediaId: string,
-    blobUrl: string | null,
+    blobUrl: string,
     duration: number,
     onProgress?: (progress: number) => void
   ): Promise<Filmstrip> {
@@ -162,10 +162,6 @@ class FilmstripCacheService {
         progress: 100,
       };
       this.notifyUpdate(mediaId, filmstrip);
-      // Opportunistically compact legacy complete filmstrips in background.
-      void filmstripOPFSStorage.compactToBins(mediaId).catch((error) => {
-        logger.debug(`Filmstrip compaction skipped/failed for ${mediaId}`, error);
-      });
       return filmstrip;
     }
 
@@ -173,19 +169,16 @@ class FilmstripCacheService {
     const existingFrames = stored?.frames || [];
     const existingIndices = stored?.existingIndices || [];
 
-    const canExtract = !!blobUrl && duration > 0;
     const initialFilmstrip: Filmstrip = {
       frames: existingFrames,
       isComplete: false,
-      isExtracting: canExtract,
+      isExtracting: true,
       progress: existingFrames.length > 0 ? Math.round((existingFrames.length / Math.ceil(duration * FRAME_RATE)) * 100) : 0,
     };
     this.notifyUpdate(mediaId, initialFilmstrip);
 
-    // Start extraction when source media is available.
-    if (canExtract) {
-      this.startExtraction(mediaId, blobUrl!, duration, existingIndices, existingFrames, onProgress);
-    }
+    // Start extraction (pass existing frames to avoid reloading)
+    this.startExtraction(mediaId, blobUrl, duration, existingIndices, existingFrames, onProgress);
 
     return initialFilmstrip;
   }
@@ -229,7 +222,6 @@ class FilmstripCacheService {
       completedWorkers: 0,
       onProgress,
       extractedFrames,
-      pendingFrameIndices: new Set<number>(),
       lastNotifyAt: 0,
       lastNotifiedFrameCount: existingFrames.length,
     };
@@ -303,10 +295,10 @@ class FilmstripCacheService {
       return;
     }
 
-    void this.startWorkerExtraction(pending);
+    this.startWorkerExtraction(pending);
   }
 
-  private async startWorkerExtraction(pending: PendingExtraction): Promise<void> {
+  private startWorkerExtraction(pending: PendingExtraction): void {
     const { mediaId, blobUrl, duration, skipIndices, forceSingleWorker, totalFrames } = pending;
     const skipSet = new Set(skipIndices);
     const framesToExtract = Math.max(0, totalFrames - skipSet.size);
@@ -328,21 +320,6 @@ class FilmstripCacheService {
 
     logger.info(`Starting ${workerCount} workers for ${mediaId} (${totalFrames} frames)`);
 
-    // Write extraction-in-progress metadata once per coordinated extraction.
-    await filmstripOPFSStorage.saveMetadata(mediaId, {
-      width: THUMBNAIL_WIDTH,
-      height: THUMBNAIL_HEIGHT,
-      isComplete: false,
-      frameCount: pending.extractedFrames.size,
-    }).catch((error) => {
-      logger.warn(`Failed to write initial filmstrip metadata for ${mediaId}`, error);
-    });
-
-    // Extraction may have been cancelled while awaiting metadata write.
-    if (this.pendingExtractions.get(mediaId) !== pending) {
-      return;
-    }
-
     for (let i = 0; i < workerCount; i++) {
       const startIndex = i * framesPerWorker;
       const endIndex = Math.min((i + 1) * framesPerWorker, totalFrames);
@@ -363,6 +340,7 @@ class FilmstripCacheService {
         endIndex,
         completed: false,
         frameCount: rangeSkipIndices.length,
+        lastLoadedCount: rangeSkipIndices.length,
       };
       pending.workers.push(workerState);
 
@@ -378,33 +356,15 @@ class FilmstripCacheService {
           const overallProgress = Math.round((totalExtracted / totalFrames) * 100);
           pending.onProgress?.(overallProgress);
 
-          // Load frames explicitly reported by the worker as saved.
-          if (response.frames && response.frames.length > 0) {
-            for (const framePayload of response.frames) {
-              const { index, blob } = framePayload;
-              if (pending.extractedFrames.has(index)) {
-                continue;
-              }
-              const url = filmstripOPFSStorage.createFrameUrl(mediaId, blob);
-              pending.extractedFrames.set(index, {
-                index,
-                timestamp: index / FRAME_RATE,
-                url,
-              });
-            }
-          }
-
-          // Backfill any reported indices that did not arrive as frame payloads.
-          if (response.frameIndices && response.frameIndices.length > 0) {
-            for (const index of response.frameIndices) {
-              if (!pending.extractedFrames.has(index)) {
-                pending.pendingFrameIndices.add(index);
-              }
-            }
-          }
-
-          if (pending.pendingFrameIndices.size > 0) {
-            await this.loadPendingFrames(mediaId, pending);
+          // Load only newly reported frames from this worker's range
+          const newFrameCount = Math.max(0, response.frameCount - workerState.lastLoadedCount);
+          if (newFrameCount > 0) {
+            await this.loadNewFrames(
+              mediaId,
+              workerState.startIndex + workerState.lastLoadedCount,
+              newFrameCount
+            );
+            workerState.lastLoadedCount = response.frameCount;
           }
 
           if (this.shouldNotifyProgress(pending, totalExtracted, overallProgress)) {
@@ -429,16 +389,6 @@ class FilmstripCacheService {
 
           // Check if all workers are done
           if (pending.completedWorkers === pending.workers.length) {
-            const totalExtractedFinal = pending.workers.reduce((sum, w) => sum + w.frameCount, 0);
-            await filmstripOPFSStorage.saveMetadata(mediaId, {
-              width: THUMBNAIL_WIDTH,
-              height: THUMBNAIL_HEIGHT,
-              isComplete: totalExtractedFinal > 0,
-              frameCount: totalExtractedFinal,
-            }).catch((error) => {
-              logger.warn(`Failed to write final filmstrip metadata for ${mediaId}`, error);
-            });
-
             // All workers done - reload final state
             const final = await filmstripOPFSStorage.load(mediaId);
             this.notifyUpdate(mediaId, {
@@ -449,9 +399,6 @@ class FilmstripCacheService {
             });
             pending.onProgress?.(100);
             this.cleanupExtraction(mediaId);
-            void filmstripOPFSStorage.compactToBins(mediaId).catch((error) => {
-              logger.warn(`Filmstrip compaction failed for ${mediaId}`, error);
-            });
             logger.info(`Filmstrip ${mediaId} complete: ${final?.frames.length || 0} frames`);
           }
 
@@ -514,24 +461,32 @@ class FilmstripCacheService {
     return false;
   }
 
-  private async loadPendingFrames(
+  private async loadNewFrames(
     mediaId: string,
-    pending: PendingExtraction
+    startIndex: number,
+    frameCount: number
   ): Promise<void> {
-    if (pending.pendingFrameIndices.size === 0) return;
+    const pending = this.pendingExtractions.get(mediaId);
+    if (!pending) return;
 
-    const framesToLoad = Array.from(pending.pendingFrameIndices)
-      .sort((a, b) => a - b)
-      .slice(0, MAX_INCREMENTAL_FRAME_LOAD);
-
-    const loadPromises = framesToLoad.map(async (index) => {
-      const frame = await filmstripOPFSStorage.loadSingleFrame(mediaId, index);
-      if (frame) {
-        pending.extractedFrames.set(index, frame);
-        pending.pendingFrameIndices.delete(index);
+    // Load frames from this worker's range that we don't have yet
+    const framesToLoad: number[] = [];
+    for (let i = startIndex; i < startIndex + frameCount; i++) {
+      if (!pending.extractedFrames.has(i)) {
+        framesToLoad.push(i);
       }
-    });
-    await Promise.all(loadPromises);
+    }
+
+    if (framesToLoad.length > 0) {
+      // Load a small batch in parallel to avoid UI thread I/O spikes.
+      const loadPromises = framesToLoad.slice(0, MAX_INCREMENTAL_FRAME_LOAD).map(async (index) => {
+        const frame = await filmstripOPFSStorage.loadSingleFrame(mediaId, index);
+        if (frame) {
+          pending.extractedFrames.set(index, frame);
+        }
+      });
+      await Promise.all(loadPromises);
+    }
   }
 
   private shouldRetryWithSingleWorker(error: string): boolean {
@@ -571,7 +526,6 @@ class FilmstripCacheService {
       completedWorkers: 0,
       onProgress,
       extractedFrames,
-      pendingFrameIndices: new Set<number>(),
       lastNotifyAt: 0,
       lastNotifiedFrameCount: existingFrames.length,
     };
@@ -692,9 +646,6 @@ class FilmstripCacheService {
       });
       finishedPending.onProgress?.(100);
       this.cleanupExtraction(mediaId);
-      void filmstripOPFSStorage.compactToBins(mediaId).catch((error) => {
-        logger.warn(`Filmstrip compaction failed for ${mediaId}`, error);
-      });
       logger.info(`Filmstrip ${mediaId} complete via video fallback: ${final?.frames.length || 0} frames`);
     } catch (error) {
       logger.error(`Video fallback extraction failed for ${mediaId}:`, error);

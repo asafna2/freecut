@@ -23,16 +23,16 @@ export const FilmstripSkeleton = memo(function FilmstripSkeleton({
 }: FilmstripSkeletonProps) {
   return (
     <div
-      className={`absolute left-0 right-0 overflow-hidden bg-zinc-900 pointer-events-none ${className}`}
+      className={`absolute left-0 right-0 overflow-hidden bg-zinc-900/30 ${className}`}
       style={{
         height,
         width: clipWidth,
         // Subtle shimmer effect using CSS animation
         backgroundImage: `linear-gradient(
           90deg,
-          rgba(255,255,255,0.02) 0%,
-          rgba(255,255,255,0.06) 50%,
-          rgba(255,255,255,0.02) 100%
+          transparent 0%,
+          rgba(255,255,255,0.03) 50%,
+          transparent 100%
         )`,
         backgroundSize: `${THUMBNAIL_WIDTH * 2}px 100%`,
         animation: 'filmstrip-shimmer 1.5s ease-in-out infinite',
