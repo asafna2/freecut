@@ -1,13 +1,15 @@
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { TiledCanvas } from '../clip-filmstrip/tiled-canvas';
 import { WaveformSkeleton } from './waveform-skeleton';
 import { useWaveform } from '../../hooks/use-waveform';
 import { mediaLibraryService } from '@/features/media-library/services/media-library-service';
+import { needsCustomAudioDecoder } from '@/lib/composition-runtime/utils/audio-codec-detection';
 import { WAVEFORM_FILL_COLOR, WAVEFORM_STROKE_COLOR } from '../../constants';
 
-// Waveform dimensions
-const BAR_WIDTH = 2;
-const BAR_GAP = 1;
+// Thin bar waveform styling
+const WAVEFORM_BAR_WIDTH_PX = 1;
+const WAVEFORM_BAR_GAP_PX = 2;
+const WAVEFORM_VERTICAL_PADDING_PX = 7;
 
 interface ClipWaveformProps {
   /** Media ID from the timeline item */
@@ -33,7 +35,7 @@ interface ClipWaveformProps {
 /**
  * Clip Waveform Component
  *
- * Renders audio waveform as a mirrored bar visualization for timeline clips.
+ * Renders audio waveform as a mirrored thin-bar visualization for timeline clips.
  * Uses tiled canvas for large clips and shows skeleton while loading.
  */
 export const ClipWaveform = memo(function ClipWaveform({
@@ -110,8 +112,11 @@ export const ClipWaveform = memo(function ClipWaveform({
         const media = await mediaLibraryService.getMedia(mediaId);
         if (!mounted) return;
 
-        // Check audioCodecSupported - default to true if not set (for existing media)
-        const codecSupported = media?.audioCodecSupported !== false;
+        // AC-3/E-AC-3 can still generate waveform via mediabunny even if old metadata
+        // marked codec unsupported before custom decode was added.
+        const codecSupported = media
+          ? (media.audioCodecSupported !== false || needsCustomAudioDecoder(media.audioCodec))
+          : true;
         setAudioCodecSupported(codecSupported);
 
         if (!codecSupported) {
@@ -136,12 +141,25 @@ export const ClipWaveform = memo(function ClipWaveform({
   }, [mediaId, isVisible]);
 
   // Use waveform hook - enabled once we have blobUrl (independent of visibility after that)
-  const { peaks, duration, sampleRate, isLoading } = useWaveform({
+  const { peaks, duration, sampleRate, isLoading, progress, error } = useWaveform({
     mediaId,
     blobUrl,
     isVisible: true, // Always consider visible once we start - prevents re-triggers
     enabled: !!blobUrl,
   });
+
+  // Normalize visual scale per clip so low-amplitude sources are still readable.
+  const normalizationPeak = useMemo(() => {
+    if (!peaks || peaks.length === 0) return 1;
+    let maxPeak = 0;
+    for (let i = 0; i < peaks.length; i++) {
+      const value = peaks[i] ?? 0;
+      if (value > maxPeak) {
+        maxPeak = value;
+      }
+    }
+    return maxPeak > 0 ? maxPeak : 1;
+  }, [peaks]);
 
   // Render function for tiled canvas
   const renderTile = useCallback(
@@ -157,19 +175,17 @@ export const ClipWaveform = memo(function ClipWaveform({
 
       ctx.fillStyle = WAVEFORM_FILL_COLOR;
       ctx.strokeStyle = WAVEFORM_STROKE_COLOR;
-      ctx.lineWidth = 0.5;
+      ctx.lineWidth = 0.75;
 
       // Calculate the time range visible in this tile
       const effectiveStart = sourceStart + trimStart;
 
-      // Calculate bar positions
-      const barSpacing = BAR_WIDTH + BAR_GAP;
       const centerY = height / 2;
-      const maxBarHeight = height / 2; // Fill container height
+      const maxWaveHeight = Math.max(1, centerY - WAVEFORM_VERTICAL_PADDING_PX);
+      const barSpacing = WAVEFORM_BAR_WIDTH_PX + WAVEFORM_BAR_GAP_PX;
 
-      // Iterate through bars that should be in this tile
-      for (let x = 0; x < tileWidth; x += barSpacing) {
-        // Calculate timeline position for this bar
+      for (let x = 0; x <= tileWidth; x += barSpacing) {
+        // Calculate timeline position for this point
         const timelinePosition = (tileOffset + x) / pixelsPerSecond;
 
         // Convert to source time
@@ -181,35 +197,68 @@ export const ClipWaveform = memo(function ClipWaveform({
           continue;
         }
 
-        // Find the corresponding peak value
-        // peaks index = sourceTime * sampleRate
+        // Read a small peak window for each point to avoid aliasing artifacts.
         const peakIndex = Math.floor(sourceTime * sampleRate);
-        if (peakIndex < 0 || peakIndex >= peaks.length) {
+        if (peakIndex < 0 || peakIndex >= peaks.length || sampleRate <= 0) {
           continue;
         }
 
-        const peakValue = peaks[peakIndex] ?? 0;
+        const pointWindowSeconds = Math.max(
+          1 / sampleRate,
+          (barSpacing / pixelsPerSecond) * speed * 0.5
+        );
+        const samplesPerPoint = Math.max(1, Math.ceil(pointWindowSeconds * sampleRate));
+        const halfWindow = Math.floor(samplesPerPoint / 2);
+        const windowStart = Math.max(0, peakIndex - halfWindow);
+        const windowEnd = Math.min(peaks.length, peakIndex + halfWindow + 1);
 
-        // Calculate bar height (mirrored from center)
-        const barHeight = Math.max(2, peakValue * maxBarHeight);
+        let max1 = 0;
+        let max2 = 0;
+        let windowSum = 0;
+        let sampleCount = 0;
+        for (let i = windowStart; i < windowEnd; i++) {
+          const value = peaks[i] ?? 0;
+          if (value >= max1) {
+            max2 = max1;
+            max1 = value;
+          } else if (value > max2) {
+            max2 = value;
+          }
+          windowSum += value;
+          sampleCount++;
+        }
 
-        // Draw mirrored bar (extends both up and down from center)
+        if (sampleCount === 0) {
+          continue;
+        }
+
+        const normalizedMax1 = Math.min(1, max1 / normalizationPeak);
+        const normalizedMax2 = Math.min(1, max2 / normalizationPeak);
+        const normalizedMean = Math.min(1, (windowSum / sampleCount) / normalizationPeak);
+        const needle = Math.max(0, normalizedMax1 - normalizedMax2);
+        const peakValue = Math.min(
+          1,
+          normalizedMean * 0.38 + normalizedMax2 * 0.34 + needle * 2.35
+        );
+        const amp = peakValue <= 0.001 ? 0 : Math.pow(peakValue, 1.05);
+        if (amp <= 0.002) {
+          continue;
+        }
+
+        const barHeight = Math.max(1, amp * maxWaveHeight);
         const barX = Math.round(x);
         const barY = Math.round(centerY - barHeight);
         const fullBarHeight = Math.round(barHeight * 2);
 
-        // Fill
-        ctx.fillRect(barX, barY, BAR_WIDTH, fullBarHeight);
-
-        // Optional: stroke for sharper edges
-        // ctx.strokeRect(barX, barY, BAR_WIDTH, fullBarHeight);
+        ctx.fillRect(barX, barY, WAVEFORM_BAR_WIDTH_PX, fullBarHeight);
+        ctx.strokeRect(barX, barY, WAVEFORM_BAR_WIDTH_PX, fullBarHeight);
       }
     },
-    [peaks, duration, sampleRate, pixelsPerSecond, sourceStart, trimStart, speed, sourceDuration, height]
+    [peaks, duration, sampleRate, pixelsPerSecond, sourceStart, trimStart, speed, sourceDuration, height, normalizationPeak]
   );
 
-  // Show empty state for unsupported codecs (no skeleton, just flat line)
-  if (!audioCodecSupported) {
+  // Show empty state for unsupported/failed waveforms (no infinite skeleton).
+  if (!audioCodecSupported || !!error) {
     return (
       <div ref={containerRef} className="absolute inset-0 flex items-center">
         {/* Flat line to indicate no waveform available */}
@@ -221,8 +270,15 @@ export const ClipWaveform = memo(function ClipWaveform({
     );
   }
 
-  // Show skeleton while loading or height not yet measured
+  // Show skeleton only while actively loading.
   if (!peaks || peaks.length === 0 || height === 0) {
+    if (!isLoading && height > 0) {
+      return (
+        <div ref={containerRef} className="absolute inset-0 flex items-center">
+          <div className="w-full h-[1px] bg-foreground/20" style={{ marginTop: 0 }} />
+        </div>
+      );
+    }
     return (
       <div ref={containerRef} className="absolute inset-0">
         <WaveformSkeleton clipWidth={clipWidth} height={height || 24} />
@@ -233,7 +289,9 @@ export const ClipWaveform = memo(function ClipWaveform({
   // Include quantized pixelsPerSecond in version to force re-render on zoom changes
   // Quantize to steps of 5 to reduce canvas redraws on small zoom changes
   const quantizedPPS = Math.round(pixelsPerSecond / 5) * 5;
-  const renderVersion = peaks.length * 10000 + quantizedPPS + height;
+  const progressBucket = Math.floor(progress);
+  // Include decode progress so tiles repaint as streaming chunks arrive.
+  const renderVersion = progressBucket * 10000000 + peaks.length * 10000 + quantizedPPS + height;
 
   return (
     <div ref={containerRef} className="absolute inset-0">

@@ -4,6 +4,7 @@ import {
   getMaxTimelineDuration as calcMaxDuration,
   getMaxStartExtension,
   isMediaItem,
+  timelineToSourceFrames,
 } from './source-calculations';
 
 export type TrimHandle = 'start' | 'end';
@@ -33,18 +34,20 @@ interface TrimClampResult {
 export function clampTrimAmount(
   item: TimelineItem,
   handle: TrimHandle,
-  trimAmount: number
+  trimAmount: number,
+  timelineFps: number = 30
 ): TrimClampResult {
   let clampedAmount = trimAmount;
   let maxExtend: number | null = null;
 
   if (isMediaItem(item)) {
-    const { sourceStart, sourceDuration, speed } = getSourceProperties(item);
+    const { sourceStart, sourceDuration, sourceFps, speed } = getSourceProperties(item);
+    const effectiveSourceFps = sourceFps ?? timelineFps;
 
     if (handle === 'start') {
       // Start handle: negative trimAmount = extending left
       if (trimAmount < 0) {
-        maxExtend = getMaxStartExtension(sourceStart, speed);
+        maxExtend = getMaxStartExtension(sourceStart, speed, effectiveSourceFps, timelineFps);
         if (-trimAmount > maxExtend) {
           clampedAmount = -maxExtend;
         }
@@ -54,7 +57,7 @@ export function clampTrimAmount(
       // Always use sourceDuration - trimming should always be reversible
       // (user can extend back to full source regardless of rate stretch state)
       if (sourceDuration !== undefined) {
-        const maxDuration = calcMaxDuration(sourceDuration, sourceStart, speed);
+        const maxDuration = calcMaxDuration(sourceDuration, sourceStart, speed, effectiveSourceFps, timelineFps);
         maxExtend = maxDuration - item.durationInFrames;
 
         if (item.durationInFrames + trimAmount > maxDuration) {
@@ -106,25 +109,37 @@ export function calculateTrimSourceUpdate(
   item: TimelineItem,
   handle: TrimHandle,
   clampedAmount: number,
-  newDuration: number
+  newDuration: number,
+  timelineFps: number = 30
 ): TrimSourceUpdate | null {
   if (!isMediaItem(item)) return null;
 
-  const { sourceStart, sourceDuration, speed } = getSourceProperties(item);
+  const { sourceStart, sourceDuration, sourceFps, speed } = getSourceProperties(item);
+  const effectiveSourceFps = sourceFps ?? timelineFps;
 
   if (handle === 'start') {
     // Trimming start: update sourceStart
-    const sourceFramesDelta = Math.round(clampedAmount * speed);
+    const sourceFramesDelta = timelineToSourceFrames(clampedAmount, speed, timelineFps, effectiveSourceFps);
     return {
       sourceStart: sourceStart + sourceFramesDelta,
     };
   } else {
-    // Trimming end: update sourceEnd
-    const newSourceEnd = sourceStart + Math.round(newDuration * speed);
-    // Ensure we don't exceed source bounds (can happen with floating-point speed)
+    // Trimming end: update sourceEnd.
+    // For clips with explicit sourceEnd, update by delta to avoid
+    // cumulative one-frame loss from duration-based recomputation.
+    const sourceFramesDelta = timelineToSourceFrames(clampedAmount, speed, timelineFps, effectiveSourceFps);
+    const explicitSourceEnd = item.sourceEnd;
+    const recomputedSourceEnd = sourceStart + timelineToSourceFrames(newDuration, speed, timelineFps, effectiveSourceFps);
+    const newSourceEnd = explicitSourceEnd !== undefined
+      ? explicitSourceEnd + sourceFramesDelta
+      : recomputedSourceEnd;
+
+    // Keep at least 1 source frame and clamp to media bounds.
+    const minSourceEnd = sourceStart + 1;
+    const boundedByMin = Math.max(minSourceEnd, newSourceEnd);
     const clampedSourceEnd = sourceDuration !== undefined
-      ? Math.min(newSourceEnd, sourceDuration)
-      : newSourceEnd;
+      ? Math.min(boundedByMin, sourceDuration)
+      : boundedByMin;
     return {
       sourceEnd: clampedSourceEnd,
     };

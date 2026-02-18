@@ -4,8 +4,9 @@ import type { TimelineItem, TimelineTrack } from '@/types/timeline';
 import type { TransformProperties } from '@/types/transform';
 import type { VisualEffect, ItemEffect } from '@/types/effects';
 import { clampTrimAmount, calculateTrimSourceUpdate } from '../utils/trim-utils';
-import { getSourceProperties, isMediaItem, calculateSplitSourceBoundaries } from '../utils/source-calculations';
+import { getSourceProperties, isMediaItem, calculateSplitSourceBoundaries, timelineToSourceFrames, calculateSpeed, clampSpeed } from '../utils/source-calculations';
 import { useCompositionNavigationStore } from './composition-navigation-store';
+import { useTimelineSettingsStore } from './timeline-settings-store';
 
 const log = createLogger('ItemsStore');
 
@@ -24,8 +25,13 @@ function roundOptionalFrame(value: number | undefined): number | undefined {
   return roundFrame(value);
 }
 
+function normalizeOptionalFps(value: number | undefined): number | undefined {
+  if (value === undefined || !Number.isFinite(value) || value <= 0) return undefined;
+  return Math.round(value * 1000) / 1000;
+}
+
 function normalizeFrameFields<T extends TimelineItem>(item: T): T {
-  return {
+  const normalized = {
     ...item,
     from: roundFrame(item.from),
     durationInFrames: roundDuration(item.durationInFrames),
@@ -34,7 +40,19 @@ function normalizeFrameFields<T extends TimelineItem>(item: T): T {
     sourceStart: roundOptionalFrame(item.sourceStart),
     sourceEnd: roundOptionalFrame(item.sourceEnd),
     sourceDuration: roundOptionalFrame(item.sourceDuration),
+    sourceFps: normalizeOptionalFps(item.sourceFps),
   };
+
+  // Legacy split clips can have sourceEnd without sourceStart.
+  // Treat them as explicitly bounded from 0 to sourceEnd so rate stretch
+  // operates on the split segment rather than the full media duration.
+  if ((normalized.type === 'video' || normalized.type === 'audio') &&
+      normalized.sourceEnd !== undefined &&
+      normalized.sourceStart === undefined) {
+    normalized.sourceStart = 0;
+  }
+
+  return normalized as T;
 }
 
 function normalizeItemUpdates(updates: Partial<TimelineItem>): Partial<TimelineItem> {
@@ -47,6 +65,13 @@ function normalizeItemUpdates(updates: Partial<TimelineItem>): Partial<TimelineI
   if (normalized.sourceStart !== undefined) normalized.sourceStart = roundFrame(normalized.sourceStart);
   if (normalized.sourceEnd !== undefined) normalized.sourceEnd = roundFrame(normalized.sourceEnd);
   if (normalized.sourceDuration !== undefined) normalized.sourceDuration = roundFrame(normalized.sourceDuration);
+  if (normalized.sourceFps !== undefined) normalized.sourceFps = normalizeOptionalFps(normalized.sourceFps);
+
+  // Keep legacy end-only bounds explicit and stable.
+  if (normalized.sourceEnd !== undefined &&
+      normalized.sourceStart === undefined) {
+    normalized.sourceStart = 0;
+  }
 
   return normalized;
 }
@@ -253,7 +278,8 @@ export const useItemsStore = create<ItemsState & ItemsActions>()(
         if (item.id !== id) return item;
 
         // Clamp trim amount to source boundaries and minimum duration
-        const { clampedAmount } = clampTrimAmount(item, 'start', trimAmount);
+        const timelineFps = useTimelineSettingsStore.getState().fps;
+        const { clampedAmount } = clampTrimAmount(item, 'start', trimAmount, timelineFps);
 
         const newFrom = item.from + clampedAmount;
         const newDuration = item.durationInFrames - clampedAmount;
@@ -261,7 +287,7 @@ export const useItemsStore = create<ItemsState & ItemsActions>()(
         if (newDuration <= 0) return item;
 
         // Calculate source boundary updates for media items
-        const sourceUpdate = calculateTrimSourceUpdate(item, 'start', clampedAmount, newDuration);
+        const sourceUpdate = calculateTrimSourceUpdate(item, 'start', clampedAmount, newDuration, timelineFps);
 
         return {
           ...item,
@@ -278,13 +304,14 @@ export const useItemsStore = create<ItemsState & ItemsActions>()(
         if (item.id !== id) return item;
 
         // Clamp trim amount to source boundaries and minimum duration
-        const { clampedAmount } = clampTrimAmount(item, 'end', trimAmount);
+        const timelineFps = useTimelineSettingsStore.getState().fps;
+        const { clampedAmount } = clampTrimAmount(item, 'end', trimAmount, timelineFps);
 
         const newDuration = item.durationInFrames + clampedAmount;
         if (newDuration <= 0) return item;
 
         // Calculate source boundary updates for media items
-        const sourceUpdate = calculateTrimSourceUpdate(item, 'end', clampedAmount, newDuration);
+        const sourceUpdate = calculateTrimSourceUpdate(item, 'end', clampedAmount, newDuration, timelineFps);
 
         return {
           ...item,
@@ -333,9 +360,23 @@ export const useItemsStore = create<ItemsState & ItemsActions>()(
 
       // Handle sourceStart/sourceEnd for media items (accounting for speed)
       if (isMediaItem(item)) {
-        const { sourceStart, speed } = getSourceProperties(item);
-        const boundaries = calculateSplitSourceBoundaries(sourceStart, leftDuration, rightDuration, speed);
+        const timelineFps = useTimelineSettingsStore.getState().fps;
+        const { sourceStart, speed, sourceFps } = getSourceProperties(item);
+        const effectiveSourceFps = sourceFps ?? timelineFps;
+        const boundaries = calculateSplitSourceBoundaries(
+          sourceStart,
+          leftDuration,
+          rightDuration,
+          speed,
+          timelineFps,
+          effectiveSourceFps
+        );
 
+        // Explicitly set sourceStart on left item so it has full explicit bounds.
+        // Without this, the left item inherits undefined sourceStart from the original,
+        // breaking hasExplicitSourceBounds detection in _rateStretchItem and causing
+        // rate stretch to use the wrong source duration (full media instead of clip portion).
+        (leftItem as typeof item).sourceStart = sourceStart;
         (leftItem as typeof item).sourceEnd = boundaries.left.sourceEnd;
         (rightItem as typeof item).sourceStart = boundaries.right.sourceStart;
         (rightItem as typeof item).sourceEnd = boundaries.right.sourceEnd;
@@ -402,21 +443,45 @@ export const useItemsStore = create<ItemsState & ItemsActions>()(
         const isGif = item.type === 'image' && item.label?.toLowerCase().endsWith('.gif');
         if (item.type !== 'video' && item.type !== 'audio' && !isGif) return item;
 
-        // Recalculate sourceEnd based on new duration and speed
-        // This keeps sourceEnd in sync with the current playback state
+        // For clips with explicit source bounds (split clips and trimmed segments),
+        // preserve sourceStart/sourceEnd exactly and only retime via speed+duration.
+        // Recomputing sourceEnd here causes destructive source-span drift over repeated
+        // rate-stretch operations.
+        const hasExplicitSourceBounds =
+          (item.type === 'video' || item.type === 'audio') &&
+          item.sourceEnd !== undefined;
+
         const sourceStart = item.sourceStart ?? 0;
-        const newSourceEnd = sourceStart + Math.round(newDuration * newSpeed);
+        const timelineFps = useTimelineSettingsStore.getState().fps;
+        const sourceFps = item.sourceFps ?? timelineFps;
+        const finalDuration = roundDuration(newDuration);
+        let finalSpeed = newSpeed;
+
+        if (hasExplicitSourceBounds) {
+          // Explicit bounds mean the source span is fixed; derive speed from that span.
+          const fixedSourceSpan = Math.max(1, (item.sourceEnd ?? sourceStart) - sourceStart);
+          finalSpeed = clampSpeed(calculateSpeed(fixedSourceSpan, finalDuration, sourceFps, timelineFps));
+        }
+
+        // Recalculate sourceEnd only when bounds are not explicitly defined.
+        const sourceFramesNeeded = timelineToSourceFrames(finalDuration, finalSpeed, timelineFps, sourceFps);
+        const newSourceEnd = sourceStart + sourceFramesNeeded;
         const clampedSourceEnd = item.sourceDuration
           ? Math.min(newSourceEnd, item.sourceDuration)
           : newSourceEnd;
 
-        return {
+        const updatedItem = {
           ...item,
           from: roundFrame(newFrom),
-          durationInFrames: roundDuration(newDuration),
-          speed: newSpeed,
-          sourceEnd: roundFrame(clampedSourceEnd),
+          durationInFrames: finalDuration,
+          speed: finalSpeed,
         } as typeof item;
+
+        if (!hasExplicitSourceBounds) {
+          updatedItem.sourceEnd = roundFrame(clampedSourceEnd);
+        }
+
+        return updatedItem;
       }),
     })),
 

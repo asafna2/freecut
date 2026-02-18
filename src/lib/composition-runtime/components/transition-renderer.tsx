@@ -73,6 +73,7 @@ interface NativeTransitionVideoProps {
   poolItemId: string;
   src: string;
   sourceStart: number;
+  sourceFps: number;
   playbackRate: number;
   fps: number;
   containerRef: React.RefObject<HTMLDivElement | null>;
@@ -82,6 +83,7 @@ const NativeTransitionVideo: React.FC<NativeTransitionVideoProps> = ({
   poolItemId,
   src,
   sourceStart,
+  sourceFps,
   playbackRate,
   fps,
   containerRef,
@@ -97,7 +99,7 @@ const NativeTransitionVideo: React.FC<NativeTransitionVideoProps> = ({
 
   // Transition clips should advance continuously across the overlap window.
   const advancingFrame = Math.max(0, frame);
-  const targetTime = (sourceStart / fps) + (advancingFrame * playbackRate / fps);
+  const targetTime = (sourceStart / sourceFps) + (advancingFrame * playbackRate / fps);
 
   // Acquire element from pool on mount
   useEffect(() => {
@@ -131,7 +133,7 @@ const NativeTransitionVideo: React.FC<NativeTransitionVideoProps> = ({
     }
 
     // Initial seek
-    const initialTime = sourceStart / fps;
+    const initialTime = sourceStart / sourceFps;
     const clampedTime = Math.min(initialTime, (element.duration || Infinity) - 0.05);
     element.currentTime = Math.max(0, clampedTime);
 
@@ -224,7 +226,7 @@ const NativeTransitionVideo: React.FC<NativeTransitionVideoProps> = ({
         }
       }
     }
-  }, [frame, playbackRate, targetTime, sourceStart, fps, isPlaying]);
+  }, [frame, playbackRate, targetTime, sourceStart, sourceFps, fps, isPlaying]);
 
   // Render nothing — the pool element is mounted directly into the container
   return null;
@@ -352,10 +354,11 @@ const ClipContent: React.FC<ClipContentProps> = React.memo(function ClipContent(
     if (!clip.src) return null;
 
     const baseSourceStart = clip.sourceStart ?? clip.trimStart ?? clip.offset ?? 0;
+    const sourceFps = clip.sourceFps ?? fps;
     const playbackRate = transitionPlaybackRate ?? (clip.speed ?? 1);
     // Use unrounded offset to match the regular clip's continuous
     // targetTime = trimBefore/fps + localFrame * speed / fps formula.
-    const sourceFrameOffset = sourceStartOffset * playbackRate;
+    const sourceFrameOffset = sourceStartOffset * playbackRate * (sourceFps / fps);
     const sourceStart = baseSourceStart + sourceFrameOffset;
 
     mediaContent = (
@@ -364,6 +367,7 @@ const ClipContent: React.FC<ClipContentProps> = React.memo(function ClipContent(
           poolItemId={poolItemId}
           src={clip.src}
           sourceStart={sourceStart}
+          sourceFps={sourceFps}
           playbackRate={playbackRate}
           fps={fps}
           containerRef={videoContainerRef}
@@ -738,4 +742,3 @@ export const OptimizedEffectsBasedTransitionsLayer = React.memo<{
     </>
   );
 });
-

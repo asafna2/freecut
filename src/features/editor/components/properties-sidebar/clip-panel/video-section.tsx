@@ -1,10 +1,11 @@
 import { useCallback, useMemo } from 'react';
 import { Video, RotateCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import type { TimelineItem, VideoItem } from '@/types/timeline';
+import type { TimelineItem, VideoItem, AudioItem } from '@/types/timeline';
 import { useTimelineStore } from '@/features/timeline/stores/timeline-store';
 import { useGizmoStore } from '@/features/preview/stores/gizmo-store';
 import type { TimelineState, TimelineActions } from '@/features/timeline/types';
+import { timelineToSourceFrames, sourceToTimelineFrames } from '@/features/timeline/utils/source-calculations';
 import {
   PropertySection,
   PropertyRow,
@@ -41,8 +42,17 @@ export function VideoSection({ items }: VideoSectionProps) {
     [items]
   );
 
-  // Memoize item IDs for stable callback dependencies
+  // Memoize video item IDs for fade controls (video-only)
   const itemIds = useMemo(() => videoItems.map((item) => item.id), [videoItems]);
+
+  // Memoize IDs for rate-stretch: includes audio items too so detached audio tracks
+  // stay in sync when speed is changed via the properties panel.
+  const rateStretchableIds = useMemo(
+    () => items
+      .filter((item): item is VideoItem | AudioItem => item.type === 'video' || item.type === 'audio')
+      .map((item) => item.id),
+    [items]
+  );
 
   // Get current values (speed defaults to 1, fades default to 0)
   const speed = getMixedValue(videoItems, (item) => item.speed, 1);
@@ -58,23 +68,28 @@ export function VideoSection({ items }: VideoSectionProps) {
       // Clamp speed to valid range
       const clampedSpeed = Math.max(MIN_SPEED, Math.min(MAX_SPEED, roundedSpeed));
 
-      const currentItems = useTimelineStore.getState().items;
+      const { items: currentItems, fps } = useTimelineStore.getState();
       currentItems
-        .filter((item: TimelineItem): item is VideoItem => item.type === 'video' && itemIds.includes(item.id))
-        .forEach((item: VideoItem) => {
+        .filter((item: TimelineItem): item is VideoItem | AudioItem =>
+          (item.type === 'video' || item.type === 'audio') && rateStretchableIds.includes(item.id))
+        .forEach((item: VideoItem | AudioItem) => {
           const currentSpeed = item.speed || 1;
-          // Use stored sourceDuration if available, otherwise calculate from current state
-          // This prevents accumulated rounding errors from multiple speed changes
-          const sourceDuration = item.sourceDuration
-            ? Math.round(item.durationInFrames * currentSpeed) // Current visible frames
-            : Math.round(item.durationInFrames * currentSpeed);
-          // Calculate new duration based on new speed
-          const newDuration = Math.max(1, Math.round(sourceDuration / clampedSpeed));
+          const sourceFps = item.sourceFps ?? fps;
+          // For split clips with explicit source bounds, use the actual source span.
+          // This is more accurate than durationInFrames * currentSpeed, which can
+          // drift with rounding across multiple speed changes or mismatched FPS.
+          const effectiveSourceFrames =
+            item.sourceEnd !== undefined && item.sourceStart !== undefined
+              ? item.sourceEnd - item.sourceStart
+              : timelineToSourceFrames(item.durationInFrames, currentSpeed, fps, sourceFps);
+          // Calculate new duration based on new speed — FPS-aware conversion so
+          // 23.981fps source clips get the correct timeline duration.
+          const newDuration = Math.max(1, sourceToTimelineFrames(effectiveSourceFrames, clampedSpeed, sourceFps, fps));
           // Keep start position the same (stretch from end)
           rateStretchItem(item.id, item.from, newDuration, clampedSpeed);
         });
     },
-    [itemIds, rateStretchItem]
+    [rateStretchableIds, rateStretchItem]
   );
 
   // Live preview for fade in (during drag)
@@ -123,20 +138,24 @@ export function VideoSection({ items }: VideoSectionProps) {
   // Read current values from store to avoid depending on videoItems (prevents callback recreation)
   const handleResetSpeed = useCallback(() => {
     const tolerance = 0.01;
-    const currentItems = useTimelineStore.getState().items;
+    const { items: currentItems, fps } = useTimelineStore.getState();
     currentItems
-      .filter((item: TimelineItem): item is VideoItem => item.type === 'video' && itemIds.includes(item.id))
-      .forEach((item: VideoItem) => {
+      .filter((item: TimelineItem): item is VideoItem | AudioItem =>
+        (item.type === 'video' || item.type === 'audio') && rateStretchableIds.includes(item.id))
+      .forEach((item: VideoItem | AudioItem) => {
         const currentSpeed = item.speed || 1;
         if (Math.abs(currentSpeed - 1) <= tolerance) return;
 
-        const sourceDuration = item.sourceDuration
-          ? Math.round(item.durationInFrames * currentSpeed)
-          : Math.round(item.durationInFrames * currentSpeed);
-        const newDuration = Math.max(1, sourceDuration);
+        const sourceFps = item.sourceFps ?? fps;
+        const effectiveSourceFrames =
+          item.sourceEnd !== undefined && item.sourceStart !== undefined
+            ? item.sourceEnd - item.sourceStart
+            : timelineToSourceFrames(item.durationInFrames, currentSpeed, fps, sourceFps);
+        // At 1x speed, timeline frames = source frames converted to timeline FPS
+        const newDuration = Math.max(1, sourceToTimelineFrames(effectiveSourceFrames, 1, sourceFps, fps));
         rateStretchItem(item.id, item.from, newDuration, 1);
       });
-  }, [itemIds, rateStretchItem]);
+  }, [rateStretchableIds, rateStretchItem]);
 
   // Reset fade in to 0
   const handleResetFadeIn = useCallback(() => {

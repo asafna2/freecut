@@ -77,24 +77,22 @@ export function useFilmstrip({
 
   // Subscribe to progressive updates
   useEffect(() => {
-    if (!enabled || !blobUrl || !duration || duration <= 0) {
+    if (!enabled || !duration || duration <= 0) {
       return;
     }
 
     const unsubscribe = filmstripCache.subscribe(mediaId, (updated) => {
       setFilmstrip(updated);
       setProgress(updated.progress);
-      if (updated.isComplete) {
-        setIsLoading(false);
-      }
+      setIsLoading(updated.isExtracting);
     });
 
     return unsubscribe;
-  }, [mediaId, enabled, blobUrl, duration]);
+  }, [mediaId, enabled, duration]);
 
   // Load filmstrip when visible
   useEffect(() => {
-    if (!enabled || !blobUrl || !duration || duration <= 0) {
+    if (!enabled || !duration || duration <= 0) {
       return;
     }
 
@@ -115,9 +113,7 @@ export function useFilmstrip({
       .then((result) => {
         setFilmstrip(result);
         setProgress(result.progress);
-        if (result.isComplete) {
-          setIsLoading(false);
-        }
+        setIsLoading(result.isExtracting);
       })
       .catch((err) => {
         if (err.message !== 'Aborted') {

@@ -95,8 +95,10 @@ export async function renderComposition(options: RenderEngineOptions): Promise<C
     throw new DOMException('Render cancelled', 'AbortError');
   }
 
-  // Dynamically import mediabunny
+  // Dynamically import mediabunny + register AC-3 decoder for source audio
   const mediabunny: MediabunnyModule = await import('mediabunny');
+  const { registerAc3Decoder } = await import('@mediabunny/ac3');
+  registerAc3Decoder();
   const { Output, BufferTarget, VideoSampleSource, VideoSample, AudioBufferSource } = mediabunny;
 
   onProgress({
@@ -471,8 +473,10 @@ export async function renderAudioOnly(options: AudioRenderOptions): Promise<Clie
     throw new DOMException('Render cancelled', 'AbortError');
   }
 
-  // Dynamically import mediabunny
+  // Dynamically import mediabunny + register AC-3 decoder for source audio
   const mediabunny = await import('mediabunny');
+  const { registerAc3Decoder } = await import('@mediabunny/ac3');
+  registerAc3Decoder();
   const { Output, BufferTarget, AudioBufferSource } = mediabunny;
 
   // Register MP3 encoder if exporting to MP3

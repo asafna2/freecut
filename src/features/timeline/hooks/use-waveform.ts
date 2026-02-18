@@ -1,5 +1,8 @@
 import { useState, useEffect, useRef, useEffectEvent } from 'react';
 import { waveformCache, type CachedWaveform } from '../services/waveform-cache';
+import { createLogger } from '@/lib/logger';
+
+const logger = createLogger('useWaveform');
 
 interface UseWaveformOptions {
   /** Media ID from the timeline item */
@@ -130,6 +133,7 @@ export function useWaveform({
       .catch((err) => {
         // Don't set error for aborted requests
         if (err.message !== 'Aborted') {
+          logger.warn(`Waveform generation failed for ${mediaId}`, err);
           setError(err.message || 'Failed to generate waveform');
         }
         setIsLoading(false);

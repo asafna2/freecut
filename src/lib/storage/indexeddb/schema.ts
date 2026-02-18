@@ -6,8 +6,9 @@ import type {
   ContentRecord,
   ProjectMediaAssociation,
   FilmstripData,
-  WaveformData,
+  WaveformRecord,
   GifFrameData,
+  DecodedPreviewAudio,
 } from '@/types/storage';
 
 /**
@@ -70,7 +71,7 @@ export interface VideoEditorDB extends DBSchema {
   };
   waveforms: {
     key: string;
-    value: WaveformData;
+    value: WaveformRecord;
     indexes: {
       mediaId: string;
       createdAt: number;
@@ -84,9 +85,17 @@ export interface VideoEditorDB extends DBSchema {
       createdAt: number;
     };
   };
+  decodedPreviewAudio: {
+    key: string;
+    value: DecodedPreviewAudio;
+    indexes: {
+      mediaId: string;
+      createdAt: number;
+    };
+  };
 }
 
 export const DB_NAME = 'video-editor-db';
-export const DB_VERSION = 7;
+export const DB_VERSION = 9;
 
 export type VideoEditorDBInstance = IDBPDatabase<VideoEditorDB>;

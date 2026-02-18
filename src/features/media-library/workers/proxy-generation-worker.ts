@@ -54,8 +54,17 @@ export type ProxyWorkerResponse = ProxyProgressResponse | ProxyCompleteResponse 
 // Track active conversions for cancel support
 const activeConversions = new Map<string, { cancel: () => Promise<void> }>();
 
-// Dynamically import mediabunny
-const loadMediabunny = () => import('mediabunny');
+// Dynamically import mediabunny + register AC-3 decoder
+let ac3Registered = false;
+const loadMediabunny = async () => {
+  const mb = await import('mediabunny');
+  if (!ac3Registered) {
+    const { registerAc3Decoder } = await import('@mediabunny/ac3');
+    registerAc3Decoder();
+    ac3Registered = true;
+  }
+  return mb;
+};
 
 /**
  * Get or create OPFS directory for proxy storage

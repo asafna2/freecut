@@ -63,6 +63,7 @@ export interface ProjectTimeline {
     sourceStart?: number; // Start position in source media (frames)
     sourceEnd?: number; // End position in source media (frames)
     sourceDuration?: number; // Total duration of source media (frames)
+    sourceFps?: number; // Source media frame rate for source* frame fields
     text?: string;
     fontSize?: number;
     fontFamily?: string;

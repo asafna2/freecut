@@ -35,7 +35,8 @@ export const ClipContent = memo(function ClipContent({
   const showWaveforms = useSettingsStore((s) => s.showWaveforms);
   const showFilmstrips = useSettingsStore((s) => s.showFilmstrips);
 
-  // sourceStart/sourceDuration are in source-native FPS frames, not project FPS
+  // sourceStart/sourceDuration are stored in source-frame units. Prefer duration-ratio
+  // mapping so rendering remains stable even if media FPS metadata changes after drop.
   const sourceFps = useMediaLibraryStore(
     useCallback((s) => {
       if (!item.mediaId) return fps;
@@ -43,9 +44,24 @@ export const ClipContent = memo(function ClipContent({
       return media?.fps || fps;
     }, [item.mediaId, fps])
   );
+  const mediaDuration = useMediaLibraryStore(
+    useCallback((s) => {
+      if (!item.mediaId) return 0;
+      const media = s.mediaItems.find((m) => m.id === item.mediaId);
+      return media?.duration || 0;
+    }, [item.mediaId])
+  );
 
-  const sourceStart = (item.sourceStart ?? 0) / sourceFps;
-  const sourceDuration = (item.sourceDuration ?? item.durationInFrames) / sourceFps;
+  const sourceDurationFrames = Math.max(1, item.sourceDuration ?? item.durationInFrames);
+  const sourceStartFrames = Math.max(0, item.sourceStart ?? 0);
+
+  const sourceDuration = mediaDuration > 0
+    ? mediaDuration
+    : (sourceDurationFrames / sourceFps);
+  const sourceStart = mediaDuration > 0
+    ? (sourceStartFrames / sourceDurationFrames) * mediaDuration
+    : (sourceStartFrames / sourceFps);
+
   const trimStart = (item.trimStart ?? 0) / fps;
   const speed = item.speed ?? 1;
 

@@ -249,11 +249,12 @@ const TimelineMarkerLabels = memo(function TimelineMarkerLabels({
           className="absolute text-[13px] text-white/60 select-none whitespace-nowrap"
           style={{
             left: `${x + 6}px`,
-            top: '6px',
+            top: '2px',
             fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
             fontFeatureSettings: '"tnum"',
             textShadow: '1px 1px 0 rgba(0, 0, 0, 0.5)',
             transform: 'translateZ(0)', // Force GPU layer for smoother scrolling
+            zIndex: 24,
           }}
         >
           {label}
@@ -274,6 +275,7 @@ export const TimelineMarkers = memo(function TimelineMarkers({ duration, width }
   const fps = useTimelineStore((s) => s.fps);
   const inPoint = useTimelineStore((s) => s.inPoint);
   const outPoint = useTimelineStore((s) => s.outPoint);
+  const markDirty = useTimelineStore((s) => s.markDirty);
   const setCurrentFrame = usePlaybackStore((s) => s.setCurrentFrame);
   const pause = usePlaybackStore((s) => s.pause);
   const selectMarker = useSelectionStore((s) => s.selectMarker);
@@ -287,21 +289,33 @@ export const TimelineMarkers = memo(function TimelineMarkers({ duration, width }
   const [viewportWidth, setViewportWidth] = useState(0);
   const [scrollLeft, setScrollLeft] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
+  const [isRangeDragging, setIsRangeDragging] = useState(false);
 
   // Refs for drag handlers
   const pixelsToFrameRef = useRef(pixelsToFrame);
   const setCurrentFrameRef = useRef(setCurrentFrame);
+  const markDirtyRef = useRef(markDirty);
   const pauseRef = useRef(pause);
   const fpsRef = useRef(fps);
   const durationRef = useRef(duration);
+  const inPointRef = useRef(inPoint);
+  const outPointRef = useRef(outPoint);
+  const rangeDragStartTimelineXRef = useRef(0);
+  const rangeDragStartInRef = useRef(0);
+  const rangeDragStartOutRef = useRef(0);
+  const rangeDragLastInRef = useRef(0);
+  const rangeDragLastOutRef = useRef(0);
 
   useEffect(() => {
     pixelsToFrameRef.current = pixelsToFrame;
     setCurrentFrameRef.current = setCurrentFrame;
+    markDirtyRef.current = markDirty;
     pauseRef.current = pause;
     fpsRef.current = fps;
     durationRef.current = duration;
-  }, [pixelsToFrame, setCurrentFrame, pause, fps, duration]);
+    inPointRef.current = inPoint;
+    outPointRef.current = outPoint;
+  }, [pixelsToFrame, setCurrentFrame, markDirty, pause, fps, duration, inPoint, outPoint]);
 
   // Track viewport and scroll
   const scrollLeftRef = useRef(0);
@@ -631,6 +645,34 @@ export const TimelineMarkers = memo(function TimelineMarkers({ duration, width }
     scrubRAFIdRef.current = requestAnimationFrame(runUnifiedScrubLoop);
   }, []);
 
+  const getTimelineXFromClientX = useCallback((clientX: number): number => {
+    if (!containerRef.current) return 0;
+
+    const scrollContainer = containerRef.current.closest('.timeline-container') as HTMLDivElement | null;
+    if (scrollContainer) {
+      const scrollContainerRect = scrollContainer.getBoundingClientRect();
+      return (clientX - scrollContainerRect.left) + scrollContainer.scrollLeft;
+    }
+
+    const containerRect = containerRef.current.getBoundingClientRect();
+    return clientX - containerRect.left;
+  }, []);
+
+  const handleRangeMouseDown = useCallback((e: React.MouseEvent) => {
+    if (inPointRef.current === null || outPointRef.current === null) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    rangeDragStartTimelineXRef.current = getTimelineXFromClientX(e.clientX);
+    rangeDragStartInRef.current = inPointRef.current;
+    rangeDragStartOutRef.current = outPointRef.current;
+    rangeDragLastInRef.current = inPointRef.current;
+    rangeDragLastOutRef.current = outPointRef.current;
+
+    setIsRangeDragging(true);
+  }, [getTimelineXFromClientX]);
+
   // Scrubbing handlers
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -711,6 +753,52 @@ export const TimelineMarkers = memo(function TimelineMarkers({ duration, width }
     };
   }, [isDragging]);
 
+  // Drag entire in/out range together (preserves selected span length)
+  useEffect(() => {
+    if (!isRangeDragging) return;
+
+    const originalCursor = document.body.style.cursor;
+    document.body.style.cursor = 'grabbing';
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const currentTimelineX = getTimelineXFromClientX(e.clientX);
+      const deltaFrames = Math.round(
+        pixelsToFrameRef.current(currentTimelineX) - pixelsToFrameRef.current(rangeDragStartTimelineXRef.current)
+      );
+
+      const startIn = rangeDragStartInRef.current;
+      const startOut = rangeDragStartOutRef.current;
+      const span = Math.max(1, startOut - startIn);
+      const maxFrame = Math.floor(durationRef.current * fpsRef.current);
+      const maxIn = Math.max(0, maxFrame - span);
+      const nextIn = Math.max(0, Math.min(startIn + deltaFrames, maxIn));
+      const nextOut = nextIn + span;
+
+      // Skip redundant writes while dragging
+      if (nextIn === rangeDragLastInRef.current && nextOut === rangeDragLastOutRef.current) {
+        return;
+      }
+
+      useTimelineStore.setState({ inPoint: nextIn, outPoint: nextOut });
+      rangeDragLastInRef.current = nextIn;
+      rangeDragLastOutRef.current = nextOut;
+    };
+
+    const handleMouseUp = () => {
+      setIsRangeDragging(false);
+      markDirtyRef.current();
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+      document.body.style.cursor = originalCursor;
+    };
+  }, [isRangeDragging, getTimelineXFromClientX]);
+
   return (
     <div
       ref={containerRef}
@@ -748,17 +836,39 @@ export const TimelineMarkers = memo(function TimelineMarkers({ duration, width }
         style={{ background: 'linear-gradient(to left, oklch(0.15 0 0 / 0.15), transparent)' }}
       />
 
-      {/* Shaded region between in/out points */}
+      {/* Full ruler highlight between in/out points */}
       {inPoint !== null && outPoint !== null && (
         <div
           className="absolute top-0 bottom-0 pointer-events-none"
           style={{
             left: `${timeToPixels(inPoint / fps)}px`,
-            width: `${timeToPixels((outPoint - inPoint) / fps)}px`,
-            backgroundColor: 'oklch(0.5 0.1 220 / 0.15)',
-            borderLeft: '1px solid color-mix(in oklch, var(--color-timeline-in) 50%, transparent)',
-            borderRight: '1px solid color-mix(in oklch, var(--color-timeline-out) 50%, transparent)',
-            zIndex: 10,
+            width: `${Math.max(2, timeToPixels((outPoint - inPoint) / fps))}px`,
+            backgroundColor: 'oklch(0.50 0.10 220 / 0.16)',
+            borderLeft: '1px solid color-mix(in oklch, var(--color-timeline-io-range-border) 45%, transparent)',
+            borderRight: '1px solid color-mix(in oklch, var(--color-timeline-io-range-border) 45%, transparent)',
+            zIndex: 9,
+          }}
+        />
+      )}
+
+      {/* Draggable in/out strip */}
+      {inPoint !== null && outPoint !== null && (
+        <div
+          className="absolute top-0 bottom-0 cursor-grab"
+          onMouseDown={handleRangeMouseDown}
+          style={{
+            left: `${timeToPixels(inPoint / fps)}px`,
+            top: '23px',
+            height: '20px',
+            width: `${Math.max(2, timeToPixels((outPoint - inPoint) / fps))}px`,
+            background:
+              'linear-gradient(to bottom, var(--color-timeline-io-range-fill), color-mix(in oklch, var(--color-timeline-io-range-fill) 82%, black))',
+            border: '1px solid var(--color-timeline-io-range-border)',
+            borderRadius: '2px',
+            boxShadow:
+              'inset 0 1px 0 color-mix(in oklch, white 22%, transparent), 0 0 8px var(--color-timeline-io-range-glow)',
+            zIndex: 11,
+            pointerEvents: 'auto',
           }}
         />
       )}

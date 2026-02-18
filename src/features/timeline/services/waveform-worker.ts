@@ -11,6 +11,7 @@ export interface WaveformRequest {
   requestId: string;
   blobUrl: string;
   samplesPerSecond: number;
+  binDurationSec?: number;
 }
 
 export interface WaveformProgressResponse {
@@ -19,12 +20,26 @@ export interface WaveformProgressResponse {
   progress: number;
 }
 
+export interface WaveformInitResponse {
+  type: 'init';
+  requestId: string;
+  duration: number;
+  channels: number;
+  sampleRate: number;
+  totalSamples: number;
+}
+
+export interface WaveformChunkResponse {
+  type: 'chunk';
+  requestId: string;
+  startIndex: number;
+  peaks: Float32Array;
+}
+
 export interface WaveformCompleteResponse {
   type: 'complete';
   requestId: string;
-  peaks: Float32Array;
-  duration: number;
-  channels: number;
+  maxPeak: number;
 }
 
 export interface WaveformErrorResponse {
@@ -34,10 +49,34 @@ export interface WaveformErrorResponse {
 }
 
 export type WaveformWorkerMessage = WaveformRequest | { type: 'abort'; requestId: string };
-export type WaveformWorkerResponse = WaveformProgressResponse | WaveformCompleteResponse | WaveformErrorResponse;
+export type WaveformWorkerResponse =
+  | WaveformProgressResponse
+  | WaveformInitResponse
+  | WaveformChunkResponse
+  | WaveformCompleteResponse
+  | WaveformErrorResponse;
 
 // Track active requests for abort support
 const activeRequests = new Map<string, { aborted: boolean }>();
+let ac3Registered = false;
+
+async function getMediabunnyWithAc3() {
+  const mediabunny = await import('mediabunny');
+  if (!ac3Registered) {
+    try {
+      const { registerAc3Decoder } = await import('@mediabunny/ac3');
+      registerAc3Decoder();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (!/already registered/i.test(message)) {
+        throw err;
+      }
+      // Decoder is already available in this worker context.
+    }
+    ac3Registered = true;
+  }
+  return mediabunny;
+}
 
 self.onmessage = async (event: MessageEvent<WaveformWorkerMessage>) => {
   const { type } = event.data;
@@ -52,7 +91,7 @@ self.onmessage = async (event: MessageEvent<WaveformWorkerMessage>) => {
 
   if (type !== 'generate') return;
 
-  const { requestId, blobUrl, samplesPerSecond } = event.data;
+  const { requestId, blobUrl, samplesPerSecond, binDurationSec = 30 } = event.data;
   const state = { aborted: false };
   activeRequests.set(requestId, state);
 
@@ -60,16 +99,16 @@ self.onmessage = async (event: MessageEvent<WaveformWorkerMessage>) => {
     // Send initial progress
     self.postMessage({ type: 'progress', requestId, progress: 5 } as WaveformProgressResponse);
 
-    // Load mediabunny
-    const mediabunny = await import('mediabunny');
-    const { Input, UrlSource, AudioSampleSink, MP4, WEBM, MATROSKA, MP3, WAVE, FLAC, OGG } = mediabunny;
+    // Load mediabunny + register AC-3 decoder
+    const mediabunny = await getMediabunnyWithAc3();
+    const { Input, UrlSource, AudioSampleSink, ALL_FORMATS } = mediabunny;
 
     if (state.aborted) throw new Error('Aborted');
 
     // Create input from blob URL
     const input = new Input({
       source: new UrlSource(blobUrl),
-      formats: [MP4, WEBM, MATROSKA, MP3, WAVE, FLAC, OGG],
+      formats: ALL_FORMATS,
     });
 
     // Get primary audio track
@@ -81,8 +120,9 @@ self.onmessage = async (event: MessageEvent<WaveformWorkerMessage>) => {
     self.postMessage({ type: 'progress', requestId, progress: 10 } as WaveformProgressResponse);
 
     // Get audio metadata
-    const sampleRate = audioTrack.sampleRate;
-    const channels = audioTrack.numberOfChannels;
+    const trackSampleRate = audioTrack.sampleRate || 0;
+    const fallbackSampleRate = trackSampleRate > 0 ? trackSampleRate : 48000;
+    const channels = audioTrack.numberOfChannels || 1;
     const duration = await audioTrack.computeDuration();
 
     if (state.aborted) throw new Error('Aborted');
@@ -90,11 +130,36 @@ self.onmessage = async (event: MessageEvent<WaveformWorkerMessage>) => {
     // Create audio sample sink
     const sink = new AudioSampleSink(audioTrack);
 
-    // Collect all audio samples
-    const allSamples: Float32Array[] = [];
-    let totalSamples = 0;
+    const numOutputSamples = Math.max(1, Math.ceil(duration * samplesPerSecond));
+    const peaks = new Float32Array(numOutputSamples);
+    const binSampleCount = Math.max(1, Math.round(samplesPerSecond * binDurationSec));
+    let processedEndTimeSec = 0;
+    let nextChunkStart = 0;
+    let maxPeak = 0;
 
     self.postMessage({ type: 'progress', requestId, progress: 20 } as WaveformProgressResponse);
+    self.postMessage({
+      type: 'init',
+      requestId,
+      duration,
+      channels,
+      sampleRate: samplesPerSecond,
+      totalSamples: numOutputSamples,
+    } as WaveformInitResponse);
+
+    const emitChunk = (start: number, end: number) => {
+      if (end <= start) return;
+      const chunk = peaks.slice(start, end);
+      self.postMessage(
+        {
+          type: 'chunk',
+          requestId,
+          startIndex: start,
+          peaks: chunk,
+        } as WaveformChunkResponse,
+        { transfer: [chunk.buffer] }
+      );
+    };
 
     // Process samples
     for await (const sample of sink.samples()) {
@@ -103,30 +168,73 @@ self.onmessage = async (event: MessageEvent<WaveformWorkerMessage>) => {
           throw new Error('Aborted');
         }
 
-        // Convert to AudioBuffer and immediately close sample
-        const buffer = sample.toAudioBuffer();
-
-        // Get samples from all channels and mix to mono
+        // Avoid toAudioBuffer() in workers (AudioBuffer is not available in worker globals).
+        const frameCount = sample.numberOfFrames;
+        const channelCount = Math.max(1, sample.numberOfChannels);
+        const sampleData = sample as {
+          sampleRate?: number;
+          timestamp?: number;
+          duration?: number;
+        };
+        const sampleRate = (sampleData.sampleRate && sampleData.sampleRate > 0)
+          ? sampleData.sampleRate
+          : fallbackSampleRate;
+        const sampleDurationSec = (sampleData.duration && sampleData.duration > 0)
+          ? sampleData.duration
+          : frameCount / sampleRate;
+        const sampleTimestampSec = Number.isFinite(sampleData.timestamp)
+          ? Math.max(0, sampleData.timestamp as number)
+          : processedEndTimeSec;
+        const sampleStartOutputIndex = Math.max(0, Math.floor(sampleTimestampSec * samplesPerSecond));
         const channelData: Float32Array[] = [];
-        for (let c = 0; c < buffer.numberOfChannels; c++) {
-          channelData.push(buffer.getChannelData(c));
+        for (let c = 0; c < channelCount; c++) {
+          const ch = new Float32Array(frameCount);
+          sample.copyTo(ch, { planeIndex: c, format: 'f32-planar' });
+          channelData.push(ch);
         }
 
-        // Mix to mono by averaging channels
-        const monoSamples = new Float32Array(buffer.length);
-        for (let i = 0; i < buffer.length; i++) {
+        for (let i = 0; i < frameCount; i++) {
           let sum = 0;
-          for (let c = 0; c < channelData.length; c++) {
+          for (let c = 0; c < channelCount; c++) {
             sum += channelData[c]![i] ?? 0;
           }
-          monoSamples[i] = sum / channelData.length;
+
+          const mono = sum / channelCount;
+          const peak = Math.abs(mono);
+          const outputIndex = Math.min(
+            numOutputSamples - 1,
+            sampleStartOutputIndex + Math.floor((i * samplesPerSecond) / sampleRate)
+          );
+
+          if (peak > peaks[outputIndex]!) {
+            peaks[outputIndex] = peak;
+            if (peak > maxPeak) {
+              maxPeak = peak;
+            }
+          }
         }
 
-        allSamples.push(monoSamples);
-        totalSamples += buffer.length;
+        processedEndTimeSec = Math.max(
+          processedEndTimeSec,
+          sampleTimestampSec + sampleDurationSec
+        );
+
+        // Flush full bins that can no longer change.
+        const completedOutputExclusive = Math.min(
+          numOutputSamples,
+          Math.floor(processedEndTimeSec * samplesPerSecond)
+        );
+        while (nextChunkStart + binSampleCount <= completedOutputExclusive) {
+          const end = nextChunkStart + binSampleCount;
+          emitChunk(nextChunkStart, end);
+          nextChunkStart = end;
+        }
 
         // Update progress (20-80% range for sample extraction)
-        const progress = 20 + Math.min(60, Math.round((totalSamples / (sampleRate * duration)) * 60));
+        const progress = 20 + Math.min(
+          60,
+          Math.round((processedEndTimeSec / Math.max(duration, 0.001)) * 60)
+        );
         self.postMessage({ type: 'progress', requestId, progress } as WaveformProgressResponse);
       } finally {
         // Always close the sample to prevent resource leaks
@@ -138,58 +246,21 @@ self.onmessage = async (event: MessageEvent<WaveformWorkerMessage>) => {
 
     self.postMessage({ type: 'progress', requestId, progress: 80 } as WaveformProgressResponse);
 
-    // Combine all samples into one array
-    const combinedSamples = new Float32Array(totalSamples);
-    let offset = 0;
-    for (const samples of allSamples) {
-      combinedSamples.set(samples, offset);
-      offset += samples.length;
-    }
-
-    // Downsample to target samples per second
-    const numOutputSamples = Math.ceil(duration * samplesPerSecond);
-    const samplesPerOutput = Math.floor(totalSamples / numOutputSamples);
-    const peaks = new Float32Array(numOutputSamples);
-
-    // Extract peak values
-    for (let i = 0; i < numOutputSamples; i++) {
-      const startIdx = i * samplesPerOutput;
-      const endIdx = Math.min(startIdx + samplesPerOutput, totalSamples);
-
-      let maxVal = 0;
-      for (let j = startIdx; j < endIdx; j++) {
-        const val = Math.abs(combinedSamples[j] ?? 0);
-        if (val > maxVal) {
-          maxVal = val;
-        }
-      }
-      peaks[i] = maxVal;
+    // Flush remaining tail.
+    if (nextChunkStart < numOutputSamples) {
+      emitChunk(nextChunkStart, numOutputSamples);
     }
 
     self.postMessage({ type: 'progress', requestId, progress: 90 } as WaveformProgressResponse);
+    self.postMessage({ type: 'progress', requestId, progress: 95 } as WaveformProgressResponse);
 
-    // Normalize to 0-1 range
-    let maxPeak = 0;
-    for (let i = 0; i < peaks.length; i++) {
-      if (peaks[i]! > maxPeak) {
-        maxPeak = peaks[i]!;
-      }
-    }
-    if (maxPeak > 0) {
-      for (let i = 0; i < peaks.length; i++) {
-        peaks[i] = peaks[i]! / maxPeak;
-      }
-    }
-
-    // Send complete response with transferable
+    // Send completion marker with peak stats.
     const response: WaveformCompleteResponse = {
       type: 'complete',
       requestId,
-      peaks,
-      duration,
-      channels,
+      maxPeak,
     };
-    self.postMessage(response, { transfer: [peaks.buffer] });
+    self.postMessage(response);
 
   } catch (err) {
     const error = err instanceof Error ? err.message : 'Unknown error';

@@ -3,9 +3,10 @@
  *
  * Manages waveform data caching with:
  * - In-memory LRU cache for fast access
- * - OPFS multi-resolution persistence (faster than IndexedDB)
+ * - IndexedDB binned persistence for progressive decode durability
+ * - OPFS multi-resolution persistence for zoom/range reads
  * - Off-main-thread waveform generation via worker
- * - Progressive streaming from OPFS on reload
+ * - Progressive streaming updates while decoding
  * - Auto-migration from legacy IndexedDB storage
  */
 
@@ -17,10 +18,15 @@ import {
   type MultiResolutionWaveform,
 } from './waveform-opfs-storage';
 import type { WaveformWorkerResponse } from './waveform-worker';
-// Legacy IndexedDB imports for migration
+import type { WaveformBin } from '@/types/storage';
 import {
-  getWaveform as getFromIndexedDB,
-  deleteWaveform as deleteFromIndexedDB,
+  getWaveform as getLegacyWaveformFromIndexedDB,
+  getWaveformRecord as getWaveformRecordFromIndexedDB,
+  getWaveformMeta as getWaveformMetaFromIndexedDB,
+  getWaveformBins as getWaveformBinsFromIndexedDB,
+  saveWaveformBin as saveWaveformBinToIndexedDB,
+  saveWaveformMeta as saveWaveformMetaToIndexedDB,
+  deleteWaveform as deleteWaveformFromIndexedDB,
 } from '@/lib/storage/indexeddb';
 
 const logger = createLogger('WaveformCache');
@@ -30,6 +36,8 @@ const MAX_CACHE_SIZE_BYTES = 20 * 1024 * 1024; // 20MB
 
 // Samples per second for waveform generation (highest resolution)
 const SAMPLES_PER_SECOND = WAVEFORM_LEVELS[0]; // 1000 samples/sec
+const WAVEFORM_BIN_DURATION_SEC = 5;
+const WAVEFORM_BIN_SAMPLES = SAMPLES_PER_SECOND * WAVEFORM_BIN_DURATION_SEC;
 
 export interface CachedWaveform {
   peaks: Float32Array;
@@ -43,7 +51,7 @@ export interface CachedWaveform {
 
 interface PendingRequest {
   promise: Promise<CachedWaveform>;
-  abortController: AbortController;
+  requestId: string;
 }
 
 type WaveformUpdateCallback = (waveform: CachedWaveform) => void;
@@ -127,6 +135,12 @@ class WaveformCacheService {
    * Add waveform to memory cache with LRU eviction
    */
   private addToMemoryCache(mediaId: string, data: CachedWaveform): void {
+    const existing = this.memoryCache.get(mediaId);
+    if (existing) {
+      this.currentCacheSize -= existing.sizeBytes;
+      this.memoryCache.delete(mediaId);
+    }
+
     // Evict old entries if necessary
     while (this.currentCacheSize + data.sizeBytes > MAX_CACHE_SIZE_BYTES && this.memoryCache.size > 0) {
       this.evictOldest();
@@ -160,11 +174,159 @@ class WaveformCacheService {
     }
   }
 
+  private makeCachedWaveform(
+    peaks: Float32Array,
+    duration: number,
+    channels: number,
+    isComplete: boolean
+  ): CachedWaveform {
+    return {
+      peaks,
+      duration,
+      sampleRate: SAMPLES_PER_SECOND,
+      channels,
+      sizeBytes: peaks.byteLength,
+      lastAccessed: Date.now(),
+      isComplete,
+    };
+  }
+
+  private async persistToOPFS(
+    mediaId: string,
+    peaks: Float32Array,
+    duration: number,
+    channels: number
+  ): Promise<void> {
+    try {
+      const levels = waveformOPFSStorage.generateMultiResolution(
+        peaks,
+        SAMPLES_PER_SECOND,
+        duration
+      );
+
+      const multiRes: MultiResolutionWaveform = {
+        duration,
+        channels,
+        levels,
+      };
+
+      await waveformOPFSStorage.save(mediaId, multiRes);
+    } catch (saveError) {
+      logger.warn('Failed to persist waveform to OPFS:', saveError);
+    }
+  }
+
+  private async persistBinnedWaveform(
+    mediaId: string,
+    peaks: Float32Array,
+    duration: number,
+    channels: number
+  ): Promise<void> {
+    await deleteWaveformFromIndexedDB(mediaId).catch(() => {});
+
+    const binCount = Math.ceil(peaks.length / WAVEFORM_BIN_SAMPLES);
+    const now = Date.now();
+    for (let binIndex = 0; binIndex < binCount; binIndex++) {
+      const start = binIndex * WAVEFORM_BIN_SAMPLES;
+      const end = Math.min(start + WAVEFORM_BIN_SAMPLES, peaks.length);
+      const chunk = peaks.slice(start, end);
+      const bin: WaveformBin = {
+        id: `${mediaId}:bin:${binIndex}`,
+        mediaId,
+        kind: 'bin',
+        binIndex,
+        peaks: chunk.buffer,
+        samples: chunk.length,
+        createdAt: now,
+      };
+      await saveWaveformBinToIndexedDB(bin);
+    }
+
+    await saveWaveformMetaToIndexedDB({
+      id: mediaId,
+      mediaId,
+      kind: 'meta',
+      sampleRate: SAMPLES_PER_SECOND,
+      totalSamples: peaks.length,
+      binCount,
+      binDurationSec: WAVEFORM_BIN_DURATION_SEC,
+      duration,
+      channels,
+      createdAt: now,
+    });
+  }
+
   /**
-   * Load waveform from OPFS (with IndexedDB migration fallback)
+   * Load waveform from storage:
+   * 1) IndexedDB streamed bins (meta + bins)
+   * 2) OPFS multi-resolution cache
+   * 3) Legacy IndexedDB single-record waveform
    */
   private async loadFromStorage(mediaId: string): Promise<CachedWaveform | null> {
-    // Try OPFS first
+    // Try binned IndexedDB first (new progressive format).
+    try {
+      const meta = await getWaveformMetaFromIndexedDB(mediaId);
+      if (meta) {
+        const bins = await getWaveformBinsFromIndexedDB(mediaId, meta.binCount);
+        if (bins.length === meta.binCount) {
+          const peaks = new Float32Array(meta.totalSamples);
+          let writeOffset = 0;
+          let valid = true;
+
+          for (let i = 0; i < bins.length; i++) {
+            const bin = bins[i];
+            if (!bin || bin.binIndex !== i || !bin.peaks) {
+              valid = false;
+              break;
+            }
+
+            const binPeaks = new Float32Array(bin.peaks);
+            const expectedSamples = Math.max(0, bin.samples ?? binPeaks.length);
+            const available = Math.min(expectedSamples, binPeaks.length, peaks.length - writeOffset);
+            if (available <= 0) {
+              valid = false;
+              break;
+            }
+
+            peaks.set(binPeaks.subarray(0, available), writeOffset);
+            writeOffset += available;
+          }
+
+          if (valid && writeOffset === meta.totalSamples) {
+            const cached: CachedWaveform = {
+              peaks,
+              duration: meta.duration,
+              sampleRate: meta.sampleRate,
+              channels: meta.channels,
+              sizeBytes: peaks.byteLength,
+              lastAccessed: Date.now(),
+              isComplete: true,
+            };
+
+            this.addToMemoryCache(mediaId, cached);
+            this.notifyUpdate(mediaId, cached);
+            return cached;
+          }
+        }
+
+        logger.warn(`Invalid waveform bins for ${mediaId}; clearing and regenerating`);
+        await deleteWaveformFromIndexedDB(mediaId).catch(() => {});
+        return null;
+      }
+
+      // If bins exist but meta completion marker is missing, treat as interrupted decode.
+      // Do not fall back to potentially stale legacy/OPFS data for this media.
+      const firstBin = await getWaveformRecordFromIndexedDB(`${mediaId}:bin:0`);
+      if (firstBin && 'kind' in firstBin && firstBin.kind === 'bin') {
+        logger.warn(`Partial waveform bins detected without meta for ${mediaId}; regenerating`);
+        await deleteWaveformFromIndexedDB(mediaId).catch(() => {});
+        return null;
+      }
+    } catch (error) {
+      logger.warn(`Failed to load binned waveform from IndexedDB: ${mediaId}`, error);
+    }
+
+    // Fallback: try OPFS.
     try {
       const level = await waveformOPFSStorage.getLevel(mediaId, 0);
       if (level) {
@@ -184,16 +346,14 @@ class WaveformCacheService {
       }
     } catch (err) {
       logger.warn('Failed to load waveform from OPFS, deleting corrupted data:', err);
-      // Delete corrupted OPFS data so it can be regenerated
       await waveformOPFSStorage.delete(mediaId).catch(() => {});
     }
 
-    // Fallback: Try legacy IndexedDB and migrate
+    // Fallback: Try legacy IndexedDB and migrate.
     try {
-      const stored = await getFromIndexedDB(mediaId);
+      const stored = await getLegacyWaveformFromIndexedDB(mediaId);
 
       if (stored && stored.peaks) {
-        // Convert ArrayBuffer back to Float32Array
         const peaks = new Float32Array(stored.peaks);
 
         const cached: CachedWaveform = {
@@ -206,17 +366,14 @@ class WaveformCacheService {
           isComplete: true,
         };
 
-        // Add to memory cache
         this.addToMemoryCache(mediaId, cached);
         this.notifyUpdate(mediaId, cached);
-
-        // Migrate to OPFS in background
         this.migrateToOPFS(mediaId, peaks, stored.duration, stored.channels).catch(() => {});
 
         return cached;
       }
     } catch (error) {
-      logger.warn(`Failed to load waveform from IndexedDB: ${mediaId}`, error);
+      logger.warn(`Failed to load legacy waveform from IndexedDB: ${mediaId}`, error);
     }
 
     return null;
@@ -248,7 +405,7 @@ class WaveformCacheService {
       await waveformOPFSStorage.save(mediaId, multiRes);
 
       // Delete from IndexedDB after successful migration
-      await deleteFromIndexedDB(mediaId);
+      await deleteWaveformFromIndexedDB(mediaId);
       logger.debug(`Migrated waveform ${mediaId} from IndexedDB to OPFS`);
     } catch (err) {
       logger.warn(`Failed to migrate waveform ${mediaId}:`, err);
@@ -265,73 +422,112 @@ class WaveformCacheService {
   ): Promise<CachedWaveform> {
     const worker = this.getWorker();
     const requestId = `waveform-${++this.workerRequestId}`;
+    await deleteWaveformFromIndexedDB(mediaId).catch(() => {});
 
     return new Promise((resolve, reject) => {
-      // Add timeout - if worker doesn't respond in 30s, reject
+      const pendingBinWrites: Promise<void>[] = [];
+      let duration = 0;
+      let channels = 1;
+      let peaks: Float32Array | null = null;
+
+      // Add timeout - long clips (e.g. 10+ minutes) need more processing time.
       const timeout = setTimeout(() => {
         worker.removeEventListener('message', handleMessage);
         worker.removeEventListener('error', handleError);
         reject(new Error('Worker timeout'));
-      }, 30000);
+      }, 90000);
 
       const handleMessage = async (event: MessageEvent<WaveformWorkerResponse>) => {
         if (event.data.requestId !== requestId) return;
+        try {
+          switch (event.data.type) {
+            case 'progress':
+              onProgress?.(event.data.progress);
+              break;
 
-        switch (event.data.type) {
-          case 'progress':
-            onProgress?.(event.data.progress);
-            break;
+            case 'init': {
+              duration = event.data.duration;
+              channels = event.data.channels;
+              peaks = new Float32Array(event.data.totalSamples);
 
-          case 'complete': {
-            clearTimeout(timeout);
-            worker.removeEventListener('message', handleMessage);
-            worker.removeEventListener('error', handleError);
-            const { peaks, duration, channels } = event.data;
-
-            const cached: CachedWaveform = {
-              peaks,
-              duration,
-              sampleRate: SAMPLES_PER_SECOND,
-              channels,
-              sizeBytes: peaks.byteLength,
-              lastAccessed: Date.now(),
-              isComplete: true,
-            };
-
-            // Add to memory cache
-            this.addToMemoryCache(mediaId, cached);
-            this.notifyUpdate(mediaId, cached);
-
-            // Generate multi-resolution levels and persist to OPFS
-            try {
-              const levels = waveformOPFSStorage.generateMultiResolution(
-                peaks,
-                SAMPLES_PER_SECOND,
-                duration
-              );
-
-              const multiRes: MultiResolutionWaveform = {
-                duration,
-                channels,
-                levels,
-              };
-
-              await waveformOPFSStorage.save(mediaId, multiRes);
-            } catch (saveError) {
-              logger.warn('Failed to persist waveform to OPFS:', saveError);
+              const cached = this.makeCachedWaveform(peaks, duration, channels, false);
+              this.addToMemoryCache(mediaId, cached);
+              this.notifyUpdate(mediaId, cached);
+              break;
             }
 
-            onProgress?.(100);
-            resolve(cached);
-            break;
-          }
+            case 'chunk': {
+              if (!peaks) break;
+              const { startIndex, peaks: chunkPeaks } = event.data;
+              peaks.set(chunkPeaks, startIndex);
 
-          case 'error':
-            clearTimeout(timeout);
-            worker.removeEventListener('message', handleMessage);
-            worker.removeEventListener('error', handleError);
-            reject(new Error(event.data.error));
-            break;
+              const binIndex = Math.floor(startIndex / WAVEFORM_BIN_SAMPLES);
+              const bin: WaveformBin = {
+                id: `${mediaId}:bin:${binIndex}`,
+                mediaId,
+                kind: 'bin',
+                binIndex,
+                peaks: chunkPeaks.buffer,
+                samples: chunkPeaks.length,
+                createdAt: Date.now(),
+              };
+              pendingBinWrites.push(
+                saveWaveformBinToIndexedDB(bin).catch((saveError) => {
+                  logger.warn(`Failed to persist waveform bin ${mediaId}:${binIndex}`, saveError);
+                })
+              );
+
+              const cached = this.makeCachedWaveform(peaks, duration, channels, false);
+              this.addToMemoryCache(mediaId, cached);
+              this.notifyUpdate(mediaId, cached);
+              break;
+            }
+
+            case 'complete': {
+              clearTimeout(timeout);
+              worker.removeEventListener('message', handleMessage);
+              worker.removeEventListener('error', handleError);
+              if (!peaks) {
+                reject(new Error('Worker completed without waveform init'));
+                break;
+              }
+
+              await Promise.all(pendingBinWrites);
+              await saveWaveformMetaToIndexedDB({
+                id: mediaId,
+                mediaId,
+                kind: 'meta',
+                sampleRate: SAMPLES_PER_SECOND,
+                totalSamples: peaks.length,
+                binCount: Math.ceil(peaks.length / WAVEFORM_BIN_SAMPLES),
+                binDurationSec: WAVEFORM_BIN_DURATION_SEC,
+                duration,
+                channels,
+                createdAt: Date.now(),
+              });
+
+              const cached = this.makeCachedWaveform(peaks, duration, channels, true);
+              this.addToMemoryCache(mediaId, cached);
+              this.notifyUpdate(mediaId, cached);
+              void this.persistToOPFS(mediaId, peaks, duration, channels);
+
+              onProgress?.(100);
+              resolve(cached);
+              break;
+            }
+
+            case 'error':
+              clearTimeout(timeout);
+              worker.removeEventListener('message', handleMessage);
+              worker.removeEventListener('error', handleError);
+              reject(new Error(event.data.error));
+              break;
+          }
+        } catch (handlerError) {
+          clearTimeout(timeout);
+          worker.removeEventListener('message', handleMessage);
+          worker.removeEventListener('error', handleError);
+          reject(handlerError instanceof Error ? handlerError : new Error(String(handlerError)));
         }
       };
 
@@ -352,6 +548,7 @@ class WaveformCacheService {
         requestId,
         blobUrl,
         samplesPerSecond: SAMPLES_PER_SECOND,
+        binDurationSec: WAVEFORM_BIN_DURATION_SEC,
       });
     });
   }
@@ -422,38 +619,16 @@ class WaveformCacheService {
     // Close audio context
     await audioContext.close();
 
-    const cached: CachedWaveform = {
-      peaks,
-      duration,
-      sampleRate: SAMPLES_PER_SECOND,
-      channels,
-      sizeBytes: peaks.byteLength,
-      lastAccessed: Date.now(),
-      isComplete: true,
-    };
+    const cached = this.makeCachedWaveform(peaks, duration, channels, true);
 
     // Add to memory cache
     this.addToMemoryCache(mediaId, cached);
     this.notifyUpdate(mediaId, cached);
 
-    // Persist to OPFS
-    try {
-      const levels = waveformOPFSStorage.generateMultiResolution(
-        peaks,
-        SAMPLES_PER_SECOND,
-        duration
-      );
-
-      const multiRes: MultiResolutionWaveform = {
-        duration,
-        channels,
-        levels,
-      };
-
-      await waveformOPFSStorage.save(mediaId, multiRes);
-    } catch (saveError) {
-      logger.warn('Failed to persist waveform to OPFS:', saveError);
-    }
+    await this.persistBinnedWaveform(mediaId, peaks, duration, channels).catch((saveError) => {
+      logger.warn('Failed to persist waveform bins to IndexedDB:', saveError);
+    });
+    void this.persistToOPFS(mediaId, peaks, duration, channels);
 
     onProgress?.(100);
     return cached;
@@ -469,7 +644,8 @@ class WaveformCacheService {
   ): Promise<CachedWaveform> {
     try {
       return await this.generateWaveformWithWorker(mediaId, blobUrl, onProgress);
-    } catch {
+    } catch (err) {
+      logger.warn(`Waveform worker failed for ${mediaId}, falling back to AudioContext`, err);
       // Worker may fail in some environments - fallback to AudioContext
       return await this.generateWaveformFallback(mediaId, blobUrl, onProgress);
     }
@@ -503,10 +679,9 @@ class WaveformCacheService {
     }
 
     // Generate new waveform
-    const abortController = new AbortController();
     const promise = this.generateWaveform(mediaId, blobUrl, onProgress);
 
-    this.pendingRequests.set(mediaId, { promise, abortController });
+    this.pendingRequests.set(mediaId, { promise, requestId: `waveform-${this.workerRequestId}` });
 
     try {
       const result = await promise;
@@ -547,7 +722,7 @@ class WaveformCacheService {
       // Send abort message to worker
       this.worker.postMessage({
         type: 'abort',
-        requestId: `waveform-${this.workerRequestId}`,
+        requestId: pending.requestId,
       });
     }
   }
@@ -565,8 +740,8 @@ class WaveformCacheService {
 
     // Clear from OPFS
     await waveformOPFSStorage.delete(mediaId);
-    // Also clear legacy IndexedDB if exists
-    await deleteFromIndexedDB(mediaId).catch(() => {});
+    // Also clear IndexedDB waveform bins/meta (and legacy single record).
+    await deleteWaveformFromIndexedDB(mediaId).catch(() => {});
   }
 
   /**

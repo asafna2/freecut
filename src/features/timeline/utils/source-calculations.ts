@@ -17,6 +17,12 @@ import type { TimelineItem } from '@/types/timeline';
 export const MIN_SPEED = 0.1;
 export const MAX_SPEED = 16;
 export const DEFAULT_SPEED = 1;
+const DEFAULT_TIMELINE_FPS = 30;
+
+function normalizeFps(fps: number | undefined, fallback: number): number {
+  if (fps === undefined || !Number.isFinite(fps) || fps <= 0) return fallback;
+  return fps;
+}
 
 /**
  * Extract source properties from a media item with defaults.
@@ -25,6 +31,7 @@ interface SourceProperties {
   sourceStart: number;
   sourceEnd: number | undefined;
   sourceDuration: number | undefined;
+  sourceFps: number | undefined;
   speed: number;
 }
 
@@ -34,6 +41,7 @@ export function getSourceProperties(item: TimelineItem): SourceProperties {
       sourceStart: 0,
       sourceEnd: undefined,
       sourceDuration: undefined,
+      sourceFps: undefined,
       speed: DEFAULT_SPEED,
     };
   }
@@ -42,6 +50,7 @@ export function getSourceProperties(item: TimelineItem): SourceProperties {
     sourceStart: item.sourceStart ?? 0,
     sourceEnd: item.sourceEnd,
     sourceDuration: item.sourceDuration,
+    sourceFps: item.sourceFps,
     speed: item.speed ?? DEFAULT_SPEED,
   };
 }
@@ -50,16 +59,32 @@ export function getSourceProperties(item: TimelineItem): SourceProperties {
  * Convert timeline frames to source frames.
  * Use Math.round to minimize floating-point errors.
  */
-export function timelineToSourceFrames(timelineFrames: number, speed: number): number {
-  return Math.round(timelineFrames * speed);
+export function timelineToSourceFrames(
+  timelineFrames: number,
+  speed: number,
+  timelineFps: number = DEFAULT_TIMELINE_FPS,
+  sourceFps: number = timelineFps
+): number {
+  const safeTimelineFps = normalizeFps(timelineFps, DEFAULT_TIMELINE_FPS);
+  const safeSourceFps = normalizeFps(sourceFps, safeTimelineFps);
+  const timelineSeconds = timelineFrames / safeTimelineFps;
+  return Math.round(timelineSeconds * safeSourceFps * speed);
 }
 
 /**
  * Convert source frames to timeline frames.
  * Use Math.floor to ensure we don't exceed source bounds.
  */
-export function sourceToTimelineFrames(sourceFrames: number, speed: number): number {
-  return Math.floor(sourceFrames / speed);
+export function sourceToTimelineFrames(
+  sourceFrames: number,
+  speed: number,
+  sourceFps: number = DEFAULT_TIMELINE_FPS,
+  timelineFps: number = sourceFps
+): number {
+  const safeSourceFps = normalizeFps(sourceFps, DEFAULT_TIMELINE_FPS);
+  const safeTimelineFps = normalizeFps(timelineFps, safeSourceFps);
+  const sourceSeconds = sourceFrames / safeSourceFps;
+  return Math.floor((sourceSeconds * safeTimelineFps) / speed);
 }
 
 /**
@@ -75,25 +100,39 @@ export function getAvailableSourceFrames(sourceDuration: number, sourceStart: nu
 export function getMaxTimelineDuration(
   sourceDuration: number,
   sourceStart: number,
-  speed: number
+  speed: number,
+  sourceFps: number = DEFAULT_TIMELINE_FPS,
+  timelineFps: number = sourceFps
 ): number {
   const available = getAvailableSourceFrames(sourceDuration, sourceStart);
-  return sourceToTimelineFrames(available, speed);
+  return sourceToTimelineFrames(available, speed, sourceFps, timelineFps);
 }
 
 /**
  * Calculate max extension towards source start (in timeline frames).
  */
-export function getMaxStartExtension(sourceStart: number, speed: number): number {
-  return sourceToTimelineFrames(sourceStart, speed);
+export function getMaxStartExtension(
+  sourceStart: number,
+  speed: number,
+  sourceFps: number = DEFAULT_TIMELINE_FPS,
+  timelineFps: number = sourceFps
+): number {
+  return sourceToTimelineFrames(sourceStart, speed, sourceFps, timelineFps);
 }
 
 /**
  * Calculate speed from source duration and desired timeline duration.
  */
-export function calculateSpeed(sourceDuration: number, timelineDuration: number): number {
+export function calculateSpeed(
+  sourceDuration: number,
+  timelineDuration: number,
+  sourceFps: number = DEFAULT_TIMELINE_FPS,
+  timelineFps: number = sourceFps
+): number {
   if (timelineDuration <= 0) return DEFAULT_SPEED;
-  return sourceDuration / timelineDuration;
+  const safeSourceFps = normalizeFps(sourceFps, DEFAULT_TIMELINE_FPS);
+  const safeTimelineFps = normalizeFps(timelineFps, safeSourceFps);
+  return (sourceDuration * safeTimelineFps) / (timelineDuration * safeSourceFps);
 }
 
 /**
@@ -128,10 +167,12 @@ export function isWithinSourceBounds(
   timelineDuration: number,
   speed: number,
   sourceDuration: number | undefined,
-  tolerance: number = 2
+  tolerance: number = 2,
+  timelineFps: number = DEFAULT_TIMELINE_FPS,
+  sourceFps: number = timelineFps
 ): boolean {
   if (sourceDuration === undefined) return true;
-  const sourceFramesNeeded = timelineToSourceFrames(timelineDuration, speed);
+  const sourceFramesNeeded = timelineToSourceFrames(timelineDuration, speed, timelineFps, sourceFps);
   const sourceEnd = sourceStart + sourceFramesNeeded;
   return sourceEnd <= sourceDuration + tolerance;
 }
@@ -143,11 +184,13 @@ export function getSafeTrimBefore(
   trimBefore: number,
   timelineDuration: number,
   speed: number,
-  sourceDuration: number | undefined
+  sourceDuration: number | undefined,
+  timelineFps: number = DEFAULT_TIMELINE_FPS,
+  sourceFps: number = timelineFps
 ): number {
   if (sourceDuration === undefined || sourceDuration <= 0) return trimBefore;
 
-  const sourceFramesNeeded = timelineToSourceFrames(timelineDuration, speed);
+  const sourceFramesNeeded = timelineToSourceFrames(timelineDuration, speed, timelineFps, sourceFps);
   const maxTrimBefore = Math.max(0, sourceDuration - sourceFramesNeeded);
 
   return Math.min(trimBefore, maxTrimBefore);
@@ -161,6 +204,7 @@ export function isMediaItem(item: TimelineItem): item is TimelineItem & {
   sourceDuration?: number;
   sourceStart?: number;
   sourceEnd?: number;
+  sourceFps?: number;
   speed?: number;
 } {
   return item.type === 'video' || item.type === 'audio';
@@ -179,10 +223,12 @@ export function calculateSplitSourceBoundaries(
   sourceStart: number,
   leftDuration: number,
   rightDuration: number,
-  speed: number
+  speed: number,
+  timelineFps: number = DEFAULT_TIMELINE_FPS,
+  sourceFps: number = timelineFps
 ): SplitSourceBoundaries {
-  const leftSourceFrames = timelineToSourceFrames(leftDuration, speed);
-  const totalSourceFrames = timelineToSourceFrames(leftDuration + rightDuration, speed);
+  const leftSourceFrames = timelineToSourceFrames(leftDuration, speed, timelineFps, sourceFps);
+  const totalSourceFrames = timelineToSourceFrames(leftDuration + rightDuration, speed, timelineFps, sourceFps);
 
   return {
     left: {

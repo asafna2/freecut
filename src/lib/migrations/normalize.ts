@@ -61,6 +61,7 @@ function normalizeItem(
     sourceStart?: number;
     sourceEnd?: number;
     sourceDuration?: number;
+    sourceFps?: number;
   };
 
   // Keep timeline and source coordinates aligned to whole frames.
@@ -71,6 +72,11 @@ function normalizeItem(
   if (maybeFrameFields.sourceStart !== undefined) maybeFrameFields.sourceStart = Math.max(0, Math.round(maybeFrameFields.sourceStart));
   if (maybeFrameFields.sourceEnd !== undefined) maybeFrameFields.sourceEnd = Math.max(0, Math.round(maybeFrameFields.sourceEnd));
   if (maybeFrameFields.sourceDuration !== undefined) maybeFrameFields.sourceDuration = Math.max(0, Math.round(maybeFrameFields.sourceDuration));
+  if (maybeFrameFields.sourceFps !== undefined) {
+    maybeFrameFields.sourceFps = Number.isFinite(maybeFrameFields.sourceFps) && maybeFrameFields.sourceFps > 0
+      ? Math.round(maybeFrameFields.sourceFps * 1000) / 1000
+      : undefined;
+  }
 
   // Ensure speed is valid (default 1.0, range 0.1-10.0)
   if (normalized.speed !== undefined) {

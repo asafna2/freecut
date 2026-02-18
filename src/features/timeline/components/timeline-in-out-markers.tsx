@@ -119,81 +119,68 @@ export const TimelineInOutMarkers = memo(function TimelineInOutMarkers() {
     };
   }, [isDraggingOut]);
 
+  const ioHandleColor = 'var(--color-timeline-io-handle)';
+  const ioLaneTop = 23;
+  const ioLaneHeight = 20;
+  const ioHandleWidth = 6;
+  const ioHandleInset = 0;
+
+  const renderMarker = (
+    markerRef: React.RefObject<HTMLDivElement | null>,
+    positionPx: number,
+    isDragging: boolean,
+    onMouseDown: (e: React.MouseEvent) => void,
+    side: 'in' | 'out'
+  ) => (
+    <div
+      ref={markerRef}
+      className="absolute top-0"
+      style={{
+        left: `${positionPx}px`,
+        width: '2px',
+        height: '100%',
+        pointerEvents: 'none',
+        zIndex: 22,
+      }}
+    >
+      {/* Side grip handle aligned to range edge */}
+      <div
+        className="absolute pointer-events-none"
+        style={{
+          top: `${ioLaneTop}px`,
+          left: side === 'in' ? `${ioHandleInset}px` : `${-ioHandleWidth}px`,
+          width: `${ioHandleWidth}px`,
+          height: `${ioLaneHeight}px`,
+          borderRadius: '2px',
+          background: `linear-gradient(to bottom, ${ioHandleColor}, color-mix(in oklch, ${ioHandleColor} 75%, black))`,
+          boxShadow: `0 0 6px color-mix(in oklch, ${ioHandleColor} 55%, transparent)`,
+        }}
+      />
+
+      {/* Invisible hit area for dragging */}
+      <div
+        className="absolute pointer-events-auto"
+        style={{
+          top: 0,
+          bottom: 0,
+          left: '-8px',
+          width: '18px',
+          cursor: isDragging ? 'grabbing' : 'grab',
+        }}
+        onMouseDown={onMouseDown}
+      />
+    </div>
+  );
+
   return (
     <>
       {/* In-point marker */}
-      {inPoint !== null && (
-        <div
-          ref={inMarkerRef}
-          className="absolute top-0"
-          style={{
-            left: `${frameToPixels(inPoint)}px`,
-            width: '2px',
-            height: '100%',
-            pointerEvents: 'none',
-            zIndex: 20,
-          }}
-        >
-          {/* Vertical line */}
-          <div
-            className="absolute inset-0 pointer-events-none"
-            style={{
-              backgroundColor: 'var(--color-timeline-in)',
-              boxShadow: '0 0 4px color-mix(in oklch, var(--color-timeline-in) 40%, transparent)',
-            }}
-          />
-
-          {/* Invisible hit area for dragging */}
-          <div
-            className="absolute pointer-events-auto"
-            style={{
-              top: 0,
-              bottom: 0,
-              left: '-5px',
-              width: '12px',
-              cursor: isDraggingIn ? 'grabbing' : 'grab',
-            }}
-            onMouseDown={handleInMouseDown}
-          />
-        </div>
-      )}
+      {inPoint !== null &&
+        renderMarker(inMarkerRef, frameToPixels(inPoint), isDraggingIn, handleInMouseDown, 'in')}
 
       {/* Out-point marker */}
-      {outPoint !== null && (
-        <div
-          ref={outMarkerRef}
-          className="absolute top-0"
-          style={{
-            left: `${frameToPixels(outPoint)}px`,
-            width: '2px',
-            height: '100%',
-            pointerEvents: 'none',
-            zIndex: 20,
-          }}
-        >
-          {/* Vertical line */}
-          <div
-            className="absolute inset-0 pointer-events-none"
-            style={{
-              backgroundColor: 'var(--color-timeline-out)',
-              boxShadow: '0 0 4px color-mix(in oklch, var(--color-timeline-out) 40%, transparent)',
-            }}
-          />
-
-          {/* Invisible hit area for dragging */}
-          <div
-            className="absolute pointer-events-auto"
-            style={{
-              top: 0,
-              bottom: 0,
-              left: '-5px',
-              width: '12px',
-              cursor: isDraggingOut ? 'grabbing' : 'grab',
-            }}
-            onMouseDown={handleOutMouseDown}
-          />
-        </div>
-      )}
+      {outPoint !== null &&
+        renderMarker(outMarkerRef, frameToPixels(outPoint), isDraggingOut, handleOutMouseDown, 'out')}
     </>
   );
 });

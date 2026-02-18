@@ -245,27 +245,13 @@ const GroupRenderer: React.FC<{
   const adjustedItem = useMemo(() => {
     if (!activeItem) return null;
 
-    // Adjust sourceStart to account for the shared Sequence.
-    // In a shared Sequence, localFrame is relative to group.minFrom, not item.from.
-    // OffthreadVideo uses: startFrom + localFrame * playbackRate for source position
-    // We need: sourceStart + (globalFrame - item.from) * speed
-    //        = sourceStart + (localFrame - itemOffset) * speed
-    //        = sourceStart - itemOffset * speed + localFrame * speed
-    // So: adjustedSourceStart = sourceStart - itemOffset * speed
+    // Keep source metadata absolute/stable.
+    // Shared Sequence frame-origin differences are handled downstream via
+    // _sequenceFrameOffset in video timing calculations.
     const itemOffset = activeItem.from - group.minFrom;
-    const speed = activeItem.speed || 1;
-    // For source position adjustments, multiply by speed since sourceStart is in source frames
-    // but itemOffset is in timeline frames
-    // IMPORTANT: Round to match how splitItem calculates sourceStart (uses Math.round)
-    // Without rounding, floating point errors cause fractional sourceStart values
-    const sourceFrameOffset = Math.round(itemOffset * speed);
-    const adjustedSourceStart = (activeItem.sourceStart ?? 0) - sourceFrameOffset;
 
     return {
       ...activeItem,
-      sourceStart: adjustedSourceStart,
-      trimStart: activeItem.trimStart != null ? activeItem.trimStart - sourceFrameOffset : undefined,
-      offset: activeItem.offset != null ? activeItem.offset - sourceFrameOffset : undefined,
       // Pass the frame offset so fades can be calculated correctly within shared Sequences
       // Without this, useCurrentFrame() returns the frame relative to the shared Sequence,
       // not relative to this specific item, causing fades to misbehave on split clips

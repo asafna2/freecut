@@ -93,7 +93,7 @@ export default defineConfig({
     format: 'es',
   },
   optimizeDeps: {
-    exclude: ['mediabunny'],
+    exclude: ['mediabunny', '@mediabunny/ac3', '@mediabunny/mp3-encoder'],
     // Pre-bundle lucide-react for faster dev startup (avoids analyzing 1500+ icons on each reload)
     include: ['lucide-react'],
   },

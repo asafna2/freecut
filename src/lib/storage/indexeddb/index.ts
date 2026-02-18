@@ -53,7 +53,16 @@ export {
 } from './project-media';
 
 // Waveform exports
-export { getWaveform, deleteWaveform } from './waveforms';
+export {
+  getWaveform,
+  getWaveformRecord,
+  getWaveformMeta,
+  getWaveformBins,
+  saveWaveformRecord,
+  saveWaveformMeta,
+  saveWaveformBin,
+  deleteWaveform,
+} from './waveforms';
 
 // GIF frames exports
 export {
@@ -62,3 +71,10 @@ export {
   deleteGifFrames,
   clearAllGifFrames,
 } from './gif-frames';
+
+// Decoded preview audio exports
+export {
+  getDecodedPreviewAudio,
+  saveDecodedPreviewAudio,
+  deleteDecodedPreviewAudio,
+} from './decoded-preview-audio';

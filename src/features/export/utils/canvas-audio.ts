@@ -395,6 +395,8 @@ async function decodeAudioFromSource(
   try {
     // Try mediabunny first for efficient range extraction
     const mb = await import('mediabunny');
+    const { registerAc3Decoder } = await import('@mediabunny/ac3');
+    registerAc3Decoder();
 
     // Fetch and create input
     const response = await fetch(src);

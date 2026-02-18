@@ -6,6 +6,7 @@ import { useClock } from '@/features/player/clock/clock-hooks';
 import type { VideoItem } from '@/types/timeline';
 import { useVideoSourcePool } from '@/features/player/video/VideoSourcePoolContext';
 import { createLogger } from '@/lib/logger';
+import { getVideoTargetTimeSeconds } from '../utils/video-timing';
 import {
   applyVideoElementAudioVolume,
   useVideoAudioVolume,
@@ -14,6 +15,7 @@ import {
 } from './video-audio-context';
 
 const videoLog = createLogger('NativePreviewVideo');
+videoLog.setLevel(2); // WARN — suppress noisy per-frame debug logs
 
 // Feature detection for requestVideoFrameCallback (avoids per-frame React sync)
 const supportsRVFC = typeof HTMLVideoElement !== 'undefined' &&
@@ -29,11 +31,13 @@ const NativePreviewVideo: React.FC<{
   itemId: string;
   src: string;
   safeTrimBefore: number;
+  sequenceFrameOffset?: number;
+  sourceFps: number;
   playbackRate: number;
   audioVolume: number;
   onError: (error: Error) => void;
   containerRef: React.RefObject<HTMLDivElement | null>;
-}> = ({ itemId, src, safeTrimBefore, playbackRate, audioVolume, onError, containerRef }) => {
+}> = ({ itemId, src, safeTrimBefore, sequenceFrameOffset = 0, sourceFps, playbackRate, audioVolume, onError, containerRef }) => {
   // Get local frame from Sequence context (not global frame from Clock)
   // The Sequence provides localFrame which is 0-based within this sequence
   const sequenceContext = useSequenceContext();
@@ -55,11 +59,15 @@ const NativePreviewVideo: React.FC<{
   const sequenceFromRef = useRef(0);
   // Stable refs for rVFC callback (avoids stale closures)
   const safeTrimBeforeRef = useRef(safeTrimBefore);
+  const sourceFpsRef = useRef(sourceFps);
   const playbackRateRef = useRef(playbackRate);
   const fpsRef = useRef(fps);
+  const sequenceFrameOffsetRef = useRef(sequenceFrameOffset);
   safeTrimBeforeRef.current = safeTrimBefore;
+  sourceFpsRef.current = sourceFps;
   playbackRateRef.current = playbackRate;
   fpsRef.current = fps;
+  sequenceFrameOffsetRef.current = sequenceFrameOffset;
 
   // Get playing state from our clock
   const isPlaying = useIsPlaying();
@@ -67,9 +75,15 @@ const NativePreviewVideo: React.FC<{
   // Calculate target time in the source video
   // safeTrimBefore is in SOURCE frames (where playback starts in the source)
   // frame is in TIMELINE frames (current position within the Sequence)
-  // For seeking, we need: sourceStart + localFrame * speed
-  // The playbackRate affects how many source frames we advance per timeline frame
-  const targetTime = (safeTrimBefore / fps) + (frame * playbackRate / fps);
+  // For seeking, convert source start to seconds using source FPS.
+  const targetTime = getVideoTargetTimeSeconds(
+    safeTrimBefore,
+    sourceFps,
+    frame,
+    playbackRate,
+    fps,
+    sequenceFrameOffset
+  );
 
   const shortId = itemId?.slice(0, 8) ?? 'no-id';
 
@@ -125,7 +139,14 @@ const NativePreviewVideo: React.FC<{
     // The pool may return the same element that was just released by cleanup.
     // If the element is already near the correct position, keep it playing
     // to avoid a decode restart stutter.
-    const initialTargetTime = (safeTrimBefore / fps) + (frame * playbackRate / fps);
+    const initialTargetTime = getVideoTargetTimeSeconds(
+      safeTrimBefore,
+      sourceFps,
+      frame,
+      playbackRate,
+      fps,
+      sequenceFrameOffset
+    );
     const clampedInitial = Math.min(initialTargetTime, (element.duration || Infinity) - 0.1);
     const currentlyPlaying = usePlaybackStore.getState().isPlaying;
     const isNearTarget = Math.abs(element.currentTime - clampedInitial) < 0.2;
@@ -266,7 +287,8 @@ const NativePreviewVideo: React.FC<{
 
     // Check if we're in premount phase (frame < 0 means clip hasn't started yet)
     // During premount, we should NOT play - just prepare the video at the start position
-    const isPremounted = frame < 0;
+    const relativeFrame = frame - sequenceFrameOffset;
+    const isPremounted = relativeFrame < 0;
 
     // Guard: Only seek if video has enough data loaded
     const canSeek = video.readyState >= 1;
@@ -274,7 +296,7 @@ const NativePreviewVideo: React.FC<{
     // During premount, seek to the start of the clip (frame 0 position), not negative time
     // This ensures the video is ready at the correct starting frame when playback reaches this clip
     const effectiveTargetTime = isPremounted
-      ? (safeTrimBefore / fps)
+      ? (safeTrimBefore / sourceFps)
       : targetTime;
 
     // Clamp target time to video duration to prevent seeking past the end
@@ -398,7 +420,7 @@ const NativePreviewVideo: React.FC<{
         }, 50);
       }
     }
-  }, [frame, fps, isPlaying, playbackRate, safeTrimBefore, targetTime]);
+  }, [frame, fps, isPlaying, playbackRate, safeTrimBefore, sourceFps, targetTime, sequenceFrameOffset]);
 
   // requestVideoFrameCallback-based drift correction.
   // Runs outside React's render cycle — the browser calls us exactly when a
@@ -416,17 +438,26 @@ const NativePreviewVideo: React.FC<{
       // Read current clock frame imperatively (no React re-render needed)
       const globalFrame = clock.currentFrame;
       const localFrame = globalFrame - sequenceFromRef.current;
+      const relativeFrame = localFrame - sequenceFrameOffsetRef.current;
 
       // During premount, just keep listening
-      if (localFrame < 0) {
+      if (relativeFrame < 0) {
         handle = v.requestVideoFrameCallback(onVideoFrame);
         return;
       }
 
       const rate = playbackRateRef.current;
-      const f = fpsRef.current;
+      const timelineFps = fpsRef.current;
+      const clipSourceFps = sourceFpsRef.current;
       const trim = safeTrimBeforeRef.current;
-      const target = (trim / f) + (localFrame * rate / f);
+      const target = getVideoTargetTimeSeconds(
+        trim,
+        clipSourceFps,
+        localFrame,
+        rate,
+        timelineFps,
+        sequenceFrameOffsetRef.current
+      );
       const dur = v.duration || Infinity;
       const clamped = Math.min(Math.max(0, target), dur - 0.05);
 
@@ -470,8 +501,8 @@ const NativePreviewVideo: React.FC<{
   const containerId = `video-container-${itemId}`;
 
   // When premounted, frame will be negative. Hide the video until it's visible.
-  // frame < 0 means we're premounted but not yet at the clip's start
-  const isVisible = frame >= 0;
+  // In shared Sequences, local frame is offset by _sequenceFrameOffset.
+  const isVisible = frame - sequenceFrameOffset >= 0;
 
   return (
     <div
@@ -498,11 +529,12 @@ const NativePreviewVideo: React.FC<{
  * Uses native HTML5 video for both preview and export (via Canvas + WebCodecs).
  */
 export const VideoContent: React.FC<{
-  item: VideoItem;
+  item: VideoItem & { _sequenceFrameOffset?: number };
   muted: boolean;
   safeTrimBefore: number;
   playbackRate: number;
-}> = ({ item, muted, safeTrimBefore, playbackRate }) => {
+  sourceFps: number;
+}> = ({ item, muted, safeTrimBefore, playbackRate, sourceFps }) => {
   const audioVolume = useVideoAudioVolume(item, muted);
   const [hasError, setHasError] = useState(false);
 
@@ -540,6 +572,8 @@ export const VideoContent: React.FC<{
       itemId={item.id}
       src={item.src!}
       safeTrimBefore={safeTrimBefore}
+      sequenceFrameOffset={item._sequenceFrameOffset ?? 0}
+      sourceFps={sourceFps}
       playbackRate={playbackRate}
       audioVolume={audioVolume}
       onError={handleError}

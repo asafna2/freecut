@@ -11,14 +11,17 @@ import { TextContent } from './text-content';
 import { ShapeContent } from './shape-content';
 import { VideoContent } from './video-content';
 import { CompositionContent } from './composition-content';
+import { useVideoConfig } from '../hooks/use-player-compat';
 import {
   timelineToSourceFrames,
+  sourceToTimelineFrames,
   isValidSeekPosition,
   isWithinSourceBounds,
   getSafeTrimBefore,
   DEFAULT_SPEED,
 } from '@/features/timeline/utils/source-calculations';
 import { isGifUrl } from '@/utils/media-utils';
+import { useMediaLibraryStore } from '@/features/media-library/stores/media-library-store';
 
 /** Mask information passed from composition to items */
 export interface MaskInfo {
@@ -58,9 +61,12 @@ export const Item = React.memo<ItemProps>(({ item, muted = false, masks = [], re
 
   // Debug overlay toggle (always false in production via store)
   const showDebugOverlay = useDebugStore((s) => s.showVideoDebugOverlay);
+  const { fps: timelineFps } = useVideoConfig();
+  const mediaSourceFps = useMediaLibraryStore((s) =>
+    item.mediaId ? s.mediaItems.find((m) => m.id === item.mediaId)?.fps : undefined
+  );
 
   if (item.type === 'video') {
-
     // Guard against missing src (media resolution failed)
     if (!item.src) {
       return (
@@ -72,11 +78,12 @@ export const Item = React.memo<ItemProps>(({ item, muted = false, masks = [], re
     // Use sourceStart for trimBefore (absolute position in source)
     // Fall back to trimStart or offset for backward compatibility
     const trimBefore = item.sourceStart ?? item.trimStart ?? item.offset ?? 0;
+    const sourceFps = item.sourceFps ?? mediaSourceFps ?? timelineFps;
     // Get playback rate from speed property (default 1x)
     const playbackRate = item.speed ?? DEFAULT_SPEED;
 
     // Calculate source frames needed for playback using shared utility
-    const sourceFramesNeeded = timelineToSourceFrames(item.durationInFrames, playbackRate);
+    const sourceFramesNeeded = timelineToSourceFrames(item.durationInFrames, playbackRate, timelineFps, sourceFps);
     const sourceEndPosition = trimBefore + sourceFramesNeeded;
     const sourceDuration = item.sourceDuration || 0;
 
@@ -92,7 +99,15 @@ export const Item = React.memo<ItemProps>(({ item, muted = false, masks = [], re
 
     // Validate using shared utilities - skip if no valid duration info
     const isInvalidSeek = hasValidSourceDuration && !isValidSeekPosition(trimBefore, sourceDuration || undefined);
-    const exceedsSource = hasValidSourceDuration && !isWithinSourceBounds(trimBefore, item.durationInFrames, playbackRate, sourceDuration || undefined);
+    const exceedsSource = hasValidSourceDuration && !isWithinSourceBounds(
+      trimBefore,
+      item.durationInFrames,
+      playbackRate,
+      sourceDuration || undefined,
+      2,
+      timelineFps,
+      sourceFps
+    );
 
     // Safety check: if sourceStart is unreasonably high (>1 hour) and no sourceDuration is set,
     // this indicates corrupted metadata from split/trim operations
@@ -117,15 +132,24 @@ export const Item = React.memo<ItemProps>(({ item, muted = false, masks = [], re
     }
 
     // Clamp trimBefore to valid range using shared utility
-    const safeTrimBefore = getSafeTrimBefore(trimBefore, item.durationInFrames, playbackRate, sourceDuration || undefined);
+    const safeTrimBefore = getSafeTrimBefore(
+      trimBefore,
+      item.durationInFrames,
+      playbackRate,
+      sourceDuration || undefined,
+      timelineFps,
+      sourceFps
+    );
 
-    // If clip would exceed source even after clamping, show error
-    // This happens when durationInFrames * playbackRate > sourceDuration
-    // Skip this check if we don't have valid source duration info (can't validate)
-    // Also use effectiveSourceSegment as fallback for rate-stretched clips
+    // Graceful fallback for overlong clips: log and continue with clamped seek behavior.
+    // We keep rendering instead of hard-failing the item.
     const effectiveDuration = sourceDuration > 0 ? sourceDuration : effectiveSourceSegment;
     if (exceedsSource && safeTrimBefore === 0 && effectiveDuration > 0 && sourceFramesNeeded > effectiveDuration) {
-      console.error('[Composition Item] Clip duration exceeds source duration:', {
+      const suggestedDurationInFrames = Math.max(
+        1,
+        sourceToTimelineFrames(effectiveDuration, playbackRate, sourceFps, timelineFps)
+      );
+      console.warn('[Composition Item] Clip duration exceeds source duration (graceful clamp):', {
         itemId: item.id,
         sourceFramesNeeded,
         sourceDuration,
@@ -133,12 +157,10 @@ export const Item = React.memo<ItemProps>(({ item, muted = false, masks = [], re
         effectiveDuration,
         durationInFrames: item.durationInFrames,
         playbackRate,
+        sourceFps,
+        timelineFps,
+        suggestedDurationInFrames,
       });
-      return (
-        <AbsoluteFill style={{ backgroundColor: '#2a1a1a', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <p style={{ color: '#ff6b6b', fontSize: 14 }}>Clip exceeds source duration</p>
-        </AbsoluteFill>
-      );
     }
 
     const videoContent = (
@@ -148,6 +170,7 @@ export const Item = React.memo<ItemProps>(({ item, muted = false, masks = [], re
           muted={muted}
           safeTrimBefore={safeTrimBefore}
           playbackRate={playbackRate}
+          sourceFps={sourceFps}
         />
         {showDebugOverlay && (
           <DebugOverlay
@@ -162,6 +185,7 @@ export const Item = React.memo<ItemProps>(({ item, muted = false, masks = [], re
             sourceEndPosition={sourceEndPosition}
             isInvalidSeek={isInvalidSeek}
             exceedsSource={exceedsSource}
+            sourceFps={sourceFps}
           />
         )}
       </>
@@ -184,6 +208,7 @@ export const Item = React.memo<ItemProps>(({ item, muted = false, masks = [], re
 
     // Use sourceStart for trimBefore (absolute position in source)
     const trimBefore = item.sourceStart ?? item.trimStart ?? item.offset ?? 0;
+    const sourceFps = item.sourceFps ?? mediaSourceFps ?? timelineFps;
     // Get playback rate from speed property
     const playbackRate = item.speed ?? DEFAULT_SPEED;
 
@@ -196,6 +221,7 @@ export const Item = React.memo<ItemProps>(({ item, muted = false, masks = [], re
         trimBefore={trimBefore}
         volume={item.volume ?? 0}
         playbackRate={playbackRate}
+        sourceFps={sourceFps}
         muted={muted}
         durationInFrames={item.durationInFrames}
         audioFadeIn={item.audioFadeIn}

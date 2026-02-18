@@ -193,6 +193,7 @@ const timelineItemSchema = z.object({
   sourceStart: z.number().optional(),
   sourceEnd: z.number().optional(),
   sourceDuration: z.number().optional(),
+  sourceFps: z.number().positive().optional(),
   // Trim fields
   trimStart: z.number().optional(),
   trimEnd: z.number().optional(),

@@ -24,6 +24,7 @@ import { initTransitionChainSubscription } from '@/features/timeline/stores/tran
 import { useTimelineStore } from '@/features/timeline/stores/timeline-store';
 import { usePlaybackStore } from '@/features/preview/stores/playback-store';
 import { cleanupBlobUrls } from '@/features/preview/utils/media-resolver';
+import { clearPreviewAudioCache } from '@/lib/composition-runtime/utils/audio-decode-cache';
 import { useMediaLibraryStore } from '@/features/media-library/stores/media-library-store';
 import { useProjectStore } from '@/features/projects/stores/project-store';
 
@@ -121,6 +122,7 @@ export const Editor = memo(function Editor({ projectId, project }: EditorProps) 
       useProjectStore.getState().setCurrentProject(null);
       usePlaybackStore.getState().pause();
       cleanupBlobUrls();
+      clearPreviewAudioCache();
     };
   }, [projectId]); // Re-initialize when projectId changes
 

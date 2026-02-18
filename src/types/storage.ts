@@ -104,6 +104,59 @@ export interface WaveformData {
   createdAt: number;
 }
 
+// Streaming waveform cache records (meta + bins in IndexedDB).
+export interface WaveformMeta {
+  id: string; // Same as mediaId
+  mediaId: string;
+  kind: 'meta';
+  sampleRate: number; // Samples/sec in stored bins
+  totalSamples: number; // Total peak sample count
+  binCount: number; // Number of bins
+  binDurationSec: number; // Seconds per bin (typically 30)
+  duration: number; // Audio duration in seconds
+  channels: number; // Channel count from source media
+  createdAt: number;
+}
+
+export interface WaveformBin {
+  id: string; // `${mediaId}:bin:${binIndex}`
+  mediaId: string;
+  kind: 'bin';
+  binIndex: number;
+  peaks: ArrayBuffer; // Float32 peaks for this bin
+  samples: number; // Actual peak count in this bin
+  createdAt?: number;
+}
+
+export type WaveformRecord = WaveformData | WaveformMeta | WaveformBin;
+
+// Decoded preview audio for AC-3/E-AC-3 codecs (persisted across refresh)
+// Stored as 30-second bins (Int16 @ 22050 Hz stereo ≈ 2.5 MB/bin)
+
+export interface DecodedPreviewAudioMeta {
+  id: string; // Same as mediaId
+  mediaId: string;
+  kind: 'meta';
+  sampleRate: number; // Stored sample rate (22050 Hz)
+  totalFrames: number; // Total frames at stored sample rate
+  binCount: number; // Number of bins
+  binDurationSec: number; // Seconds per bin (30)
+  createdAt: number;
+}
+
+export interface DecodedPreviewAudioBin {
+  id: string; // `${mediaId}:bin:${binIndex}`
+  mediaId: string;
+  kind: 'bin';
+  binIndex: number;
+  left: ArrayBuffer; // Int16 PCM
+  right: ArrayBuffer; // Int16 PCM
+  frames: number; // Actual frame count (last bin may be shorter)
+  createdAt?: number;
+}
+
+export type DecodedPreviewAudio = DecodedPreviewAudioMeta | DecodedPreviewAudioBin;
+
 // GIF frame data for pre-extracted animation frames
 export interface GifFrameData {
   id: string; // Same as mediaId

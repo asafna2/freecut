@@ -16,6 +16,7 @@ type BaseTimelineItem = {
   sourceStart?: number; // Original start frame in source media (default 0)
   sourceEnd?: number; // Original end frame in source media (default sourceDuration)
   sourceDuration?: number; // Total duration of source media in frames (for boundary checks)
+  sourceFps?: number; // Source media frame rate used for source* frame conversions
   speed?: number; // Playback speed multiplier (default 1.0, range 0.1-10.0)
   // Transform properties (optional - defaults computed at render time)
   transform?: TransformProperties;

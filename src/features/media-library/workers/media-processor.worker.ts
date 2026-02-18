@@ -92,10 +92,9 @@ export interface ImageMetadata {
   height: number;
 }
 
-// Audio codecs that cannot be decoded by Web Audio API
+// Audio codecs that cannot be decoded in browser
+// Note: AC-3 and E-AC-3 are supported via @mediabunny/ac3 WASM decoder
 const UNSUPPORTED_AUDIO_CODECS = [
-  'ec-3',   // Dolby Digital Plus (E-AC-3)
-  'ac-3',   // Dolby Digital (AC-3)
   'dts',    // DTS
   'dtsc',   // DTS Coherent Acoustics
   'dtse',   // DTS Express
@@ -113,11 +112,13 @@ function isAudioCodecSupported(codec: string | undefined): boolean {
   );
 }
 
-// Lazy load mediabunny
+// Lazy load mediabunny + register AC-3 decoder
 let mediabunnyModule: MediabunnyModule | null = null;
 async function getMediabunny(): Promise<MediabunnyModule> {
   if (!mediabunnyModule) {
     mediabunnyModule = await import('mediabunny') as unknown as MediabunnyModule;
+    const { registerAc3Decoder } = await import('@mediabunny/ac3');
+    registerAc3Decoder();
   }
   return mediabunnyModule;
 }

@@ -831,6 +831,7 @@ export const TimelineItem = memo(function TimelineItem({ item, timelineDuration 
     prevItem.sourceStart === nextItem.sourceStart &&
     prevItem.sourceEnd === nextItem.sourceEnd &&
     prevItem.sourceDuration === nextItem.sourceDuration &&
+    prevItem.sourceFps === nextItem.sourceFps &&
     prevItem.trimStart === nextItem.trimStart &&
     prevItem.speed === nextItem.speed &&
     prevIsMask === nextIsMask &&

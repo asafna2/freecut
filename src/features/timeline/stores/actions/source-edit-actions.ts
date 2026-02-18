@@ -141,6 +141,7 @@ function createTimelineItem(ctx: SourceEditContext): TimelineItem {
     sourceStart: ctx.effectiveIn,
     sourceEnd: ctx.effectiveOut,
     sourceDuration: actualSourceDurationFrames,
+    sourceFps,
     trimStart: 0,
     trimEnd: 0,
   };

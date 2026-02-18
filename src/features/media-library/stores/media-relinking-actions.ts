@@ -7,6 +7,7 @@ import type {
 import { mediaLibraryService } from '../services/media-library-service';
 import { removeItems, updateItem } from '@/features/timeline/stores/timeline-actions';
 import { useTimelineSettingsStore } from '@/features/timeline/stores/timeline-settings-store';
+import { blobUrlManager } from '@/lib/blob-url-manager';
 import { createLogger } from '@/lib/logger';
 
 const logger = createLogger('MediaRelinkingActions');
@@ -71,6 +72,9 @@ export function createRelinkingActions(
           newHandle
         );
 
+        // Invalidate stale blob URL so preview re-fetches from the new handle
+        blobUrlManager.invalidate(mediaId);
+
         // Update local state
         set((state) => ({
           mediaItems: state.mediaItems.map((item) =>
@@ -107,6 +111,9 @@ export function createRelinkingActions(
             mediaId,
             handle
           );
+
+          // Invalidate stale blob URL so preview re-fetches from the new handle
+          blobUrlManager.invalidate(mediaId);
 
           // Update local state
           set((state) => ({
@@ -188,7 +195,9 @@ export function createRelinkingActions(
 
         // Update source duration if available
         if (newMedia.duration > 0) {
-          updates.sourceDuration = Math.round(newMedia.duration * fps);
+          const sourceFps = newMedia.fps > 0 ? newMedia.fps : fps;
+          updates.sourceFps = sourceFps;
+          updates.sourceDuration = Math.round(newMedia.duration * sourceFps);
         }
 
         // Update the timeline item

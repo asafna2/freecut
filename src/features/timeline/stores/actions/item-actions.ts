@@ -11,6 +11,7 @@ import { useTimelineSettingsStore } from '../timeline-settings-store';
 import { useSelectionStore } from '@/features/editor/stores/selection-store';
 import { execute, applyTransitionRepairs, logger } from './shared';
 import { blobUrlManager } from '@/lib/blob-url-manager';
+import { timelineToSourceFrames } from '../../utils/source-calculations';
 
 /**
  * Close all gaps on a track by shifting items left to remove empty space.
@@ -355,10 +356,11 @@ export async function insertFreezeFrame(
   const fps = useTimelineSettingsStore.getState().fps;
   const speed = item.speed ?? 1;
   const sourceStart = item.sourceStart ?? 0;
+  const sourceFps = item.sourceFps ?? fps;
 
   // Calculate source frame at playhead in source-native FPS
   const timelineOffset = playheadFrame - itemStart;
-  const sourceFrame = sourceStart + Math.round(timelineOffset * speed);
+  const sourceFrame = sourceStart + timelineToSourceFrames(timelineOffset, speed, fps, sourceFps);
 
   // Get media metadata for resolution and fps info
   const { useMediaLibraryStore } = await import('@/features/media-library/stores/media-library-store');

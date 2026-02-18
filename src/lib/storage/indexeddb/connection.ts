@@ -131,6 +131,36 @@ export async function getDB(): Promise<VideoEditorDBInstance> {
             }
           }
         }
+
+        // v8: Decoded preview audio store for AC-3/E-AC-3 persistence
+        if (oldVersion < 8) {
+          if (!db.objectStoreNames.contains('decodedPreviewAudio')) {
+            const decodedAudioStore = db.createObjectStore('decodedPreviewAudio', {
+              keyPath: 'id',
+            });
+            decodedAudioStore.createIndex('mediaId', 'mediaId', { unique: false });
+            decodedAudioStore.createIndex('createdAt', 'createdAt', {
+              unique: false,
+            });
+          }
+        }
+
+        // v9: Reset decoded preview audio cache for binned storage rollout.
+        // Older records can be incomplete/corrupt and should be re-decoded.
+        if (oldVersion < 9) {
+          if (db.objectStoreNames.contains('decodedPreviewAudio')) {
+            const decodedAudioStore = transaction.objectStore('decodedPreviewAudio');
+            decodedAudioStore.clear();
+          } else {
+            const decodedAudioStore = db.createObjectStore('decodedPreviewAudio', {
+              keyPath: 'id',
+            });
+            decodedAudioStore.createIndex('mediaId', 'mediaId', { unique: false });
+            decodedAudioStore.createIndex('createdAt', 'createdAt', {
+              unique: false,
+            });
+          }
+        }
       },
       blocked() {
         logger.warn(

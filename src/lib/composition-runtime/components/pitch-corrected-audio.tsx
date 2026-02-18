@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useCallback } from 'react';
 import { useVideoConfig, useIsPlaying } from '../hooks/use-player-compat';
 import { interpolate, useSequenceContext } from '@/features/player/composition';
+import { getAudioTargetTimeSeconds } from '../utils/video-timing';
 import { useGizmoStore } from '@/features/preview/stores/gizmo-store';
 import { usePlaybackStore } from '@/features/preview/stores/playback-store';
 import { useTimelineStore } from '@/features/timeline/stores/timeline-store';
@@ -31,6 +32,7 @@ interface PitchCorrectedAudioProps {
   volume?: number;
   playbackRate?: number;
   trimBefore?: number;
+  sourceFps?: number;
   muted?: boolean;
   /** Duration of this audio clip in frames */
   durationInFrames: number;
@@ -59,6 +61,7 @@ export const PitchCorrectedAudio: React.FC<PitchCorrectedAudioProps> = React.mem
   volume = 0,
   playbackRate = 1,
   trimBefore = 0,
+  sourceFps,
   muted = false,
   durationInFrames,
   audioFadeIn = 0,
@@ -280,11 +283,12 @@ export const PitchCorrectedAudio: React.FC<PitchCorrectedAudioProps> = React.mem
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
+    const effectiveSourceFps = sourceFps ?? fps;
 
     // Calculate target time in the source audio
-    const compositionTimeSeconds = frame / fps;
-    const sourceTimeSeconds = (trimBefore / fps) + (compositionTimeSeconds * playbackRate);
-    const clipStartTimeSeconds = Math.max(0, trimBefore / fps);
+    // IMPORTANT: trimBefore is in source FPS frames — must use effectiveSourceFps, not fps
+    const sourceTimeSeconds = getAudioTargetTimeSeconds(trimBefore, effectiveSourceFps, frame, playbackRate, fps);
+    const clipStartTimeSeconds = Math.max(0, trimBefore / effectiveSourceFps);
 
     // During Sequence premount, frame is negative. Keep audio paused and pre-seek to
     // clip start so playback starts immediately when frame reaches 0.
@@ -405,7 +409,7 @@ export const PitchCorrectedAudio: React.FC<PitchCorrectedAudioProps> = React.mem
         }, 50);
       }
     }
-  }, [frame, fps, playing, playbackRate, trimBefore]);
+  }, [frame, fps, sourceFps, playing, playbackRate, trimBefore]);
 
   // This component renders nothing visually
   return null;

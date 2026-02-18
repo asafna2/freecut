@@ -126,7 +126,7 @@ export function useTimelineTrim(item: TimelineItem, timelineDuration: number, tr
       // This ensures visual feedback matches what the store will actually commit
       // Use fresh item from store to ensure we have latest values after previous trims
       const currentItem = getItemFromStore();
-      const { clampedAmount } = clampTrimAmount(currentItem, handle!, deltaFrames);
+      const { clampedAmount } = clampTrimAmount(currentItem, handle!, deltaFrames, fps);
       deltaFrames = clampedAmount;
 
       // Update local state for visual feedback
