@@ -431,8 +431,8 @@ async function persistBin(
     mediaId,
     kind: 'bin',
     binIndex: binIdx,
-    left: leftInt16.buffer,
-    right: rightInt16.buffer,
+    left: leftInt16.buffer as ArrayBuffer,
+    right: rightInt16.buffer as ArrayBuffer,
     frames: downsampled.length,
     createdAt: Date.now(),
   });

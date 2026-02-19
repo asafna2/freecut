@@ -467,7 +467,7 @@ class WaveformCacheService {
                 mediaId,
                 kind: 'bin',
                 binIndex,
-                peaks: chunkPeaks.buffer,
+                peaks: chunkPeaks.buffer as ArrayBuffer,
                 samples: chunkPeaks.length,
                 createdAt: Date.now(),
               };
