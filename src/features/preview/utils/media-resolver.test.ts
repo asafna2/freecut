@@ -3,7 +3,7 @@ import { resolveMediaUrl, resolveMediaUrls, cleanupBlobUrls } from './media-reso
 import { blobUrlManager } from '@/lib/blob-url-manager';
 import { mediaLibraryService, FileAccessError } from '@/features/media-library/services/media-library-service';
 import { useMediaLibraryStore } from '@/features/media-library/stores/media-library-store';
-import type { TimelineTrack } from '@/types/timeline';
+import type { TimelineTrack, VideoItem } from '@/types/timeline';
 
 // Mock dependencies
 vi.mock('@/features/media-library/services/media-library-service', () => ({
@@ -178,6 +178,12 @@ describe('resolveMediaUrls', () => {
     const tracks: TimelineTrack[] = [
       {
         id: 'track-1',
+        name: 'Track 1',
+        height: 40,
+        locked: false,
+        visible: true,
+        muted: false,
+        solo: false,
         order: 0,
         items: [
           {
@@ -187,6 +193,7 @@ describe('resolveMediaUrls', () => {
             from: 0,
             durationInFrames: 30,
             mediaId: 'media-1',
+            src: '',
             label: 'clip',
           },
           {
@@ -195,6 +202,8 @@ describe('resolveMediaUrls', () => {
             trackId: 'track-1',
             from: 0,
             durationInFrames: 30,
+            text: 'test',
+            color: '#ffffff',
             label: 'text',
           },
         ],
@@ -204,9 +213,9 @@ describe('resolveMediaUrls', () => {
     const resolved = await resolveMediaUrls(tracks, { useProxy: false });
 
     // Video item should have src resolved
-    expect(resolved[0]!.items[0]!.src).toMatch(/^blob:test-/);
+    expect((resolved[0]!.items[0]! as VideoItem).src).toMatch(/^blob:test-/);
     // Text item should be unchanged (no mediaId)
-    expect(resolved[0]!.items[1]!.src).toBeUndefined();
+    expect((resolved[0]!.items[1]! as any).src).toBeUndefined();
   });
 
   it('does not mutate original tracks', async () => {
@@ -221,6 +230,12 @@ describe('resolveMediaUrls', () => {
     const tracks: TimelineTrack[] = [
       {
         id: 'track-1',
+        name: 'Track 1',
+        height: 40,
+        locked: false,
+        visible: true,
+        muted: false,
+        solo: false,
         order: 0,
         items: [
           {
@@ -230,6 +245,7 @@ describe('resolveMediaUrls', () => {
             from: 0,
             durationInFrames: 30,
             mediaId: 'media-1',
+            src: '',
             label: 'clip',
           },
         ],
@@ -239,7 +255,7 @@ describe('resolveMediaUrls', () => {
     await resolveMediaUrls(tracks, { useProxy: false });
 
     // Original should not be mutated
-    expect(tracks[0]!.items[0]!.src).toBeUndefined();
+    expect((tracks[0]!.items[0]! as VideoItem).src).toBe('');
   });
 });
 

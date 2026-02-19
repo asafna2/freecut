@@ -203,7 +203,7 @@ export function generateTemplateName(
   for (const name of existingNames) {
     const match = name.match(pattern);
     if (match) {
-      const suffix = parseInt(match[1], 10);
+      const suffix = parseInt(match[1]!, 10);
       maxSuffix = Math.max(maxSuffix, suffix);
     }
   }

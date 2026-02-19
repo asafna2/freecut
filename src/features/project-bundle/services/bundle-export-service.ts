@@ -294,7 +294,7 @@ export async function exportProjectBundleStreaming(
       if (err) { zipError = err; return; }
       if (chunk) {
         totalSize += chunk.length;
-        writePromises.push(writable.write(chunk));
+        writePromises.push(writable.write(chunk as Uint8Array<ArrayBuffer>));
       }
     });
 
