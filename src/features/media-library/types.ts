@@ -72,6 +72,7 @@ export interface MediaLibraryState {
   // Proxy video generation
   proxyStatus: Map<string, 'generating' | 'ready' | 'error'>;
   proxyProgress: Map<string, number>;
+
 }
 
 export interface MediaLibraryActions {

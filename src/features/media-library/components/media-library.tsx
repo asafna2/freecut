@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useMemo, memo, useCallback } from 'react';
-import { Search, Filter, SortAsc, Video, FileAudio, Image as ImageIcon, Trash2, Grid3x3, List, AlertTriangle, Info, X, FolderOpen, Link2Off, ChevronRight, Film, ArrowLeft, Zap, Loader2, Trash } from 'lucide-react';
+import { Search, Filter, SortAsc, Video, FileAudio, Image as ImageIcon, Trash2, Grid3x3, List, AlertTriangle, Info, X, FolderOpen, Link2Off, ChevronRight, Film, ArrowLeft, Zap, Loader2 } from 'lucide-react';
 import { createLogger } from '@/lib/logger';
 
 const logger = createLogger('MediaLibrary');
@@ -213,15 +213,6 @@ export const MediaLibrary = memo(function MediaLibrary({ onMediaSelect }: MediaL
     }
   }, [importHandles]);
 
-  // Proxy-eligible items: videos above 1080p that don't have a proxy yet
-  const proxyEligibleItems = useMemo(() => {
-    return mediaItems.filter(
-      (m) => proxyService.needsProxy(m.width, m.height, m.mimeType)
-        && proxyStatus.get(m.id) !== 'ready'
-        && proxyStatus.get(m.id) !== 'generating'
-    );
-  }, [mediaItems, proxyStatus]);
-
   // Count of items currently generating proxies
   const generatingCount = useMemo(() => {
     let count = 0;
@@ -245,27 +236,6 @@ export const MediaLibrary = memo(function MediaLibrary({ onMediaSelect }: MediaL
     return count > 0 ? total / count : 0;
   }, [proxyStatus, proxyProgress, generatingCount]);
 
-  // Count proxies that are ready
-  const readyProxyCount = useMemo(() => {
-    let count = 0;
-    for (const status of proxyStatus.values()) {
-      if (status === 'ready') count++;
-    }
-    return count;
-  }, [proxyStatus]);
-
-  const handleGenerateAllProxies = async () => {
-    const urls = await Promise.all(
-      proxyEligibleItems.map((item) => mediaLibraryService.getMediaBlobUrl(item.id))
-    );
-    proxyEligibleItems.forEach((item, i) => {
-      const blobUrl = urls[i];
-      if (blobUrl) {
-        proxyService.generateProxy(item.id, blobUrl, item.width, item.height);
-      }
-    });
-  };
-
   const handleGenerateSelectedProxies = async () => {
     const selectedItems = selectedMediaIds
       .map((id) => mediaItems.find((m) => m.id === id))
@@ -284,16 +254,6 @@ export const MediaLibrary = memo(function MediaLibrary({ onMediaSelect }: MediaL
         proxyService.generateProxy(item.id, blobUrl, item.width, item.height);
       }
     });
-  };
-
-  const handleDeleteAllProxies = async () => {
-    const readyIds = Array.from(proxyStatus.entries())
-      .filter(([, status]) => status === 'ready')
-      .map(([id]) => id);
-    for (const id of readyIds) {
-      await proxyService.deleteProxy(id);
-      useMediaLibraryStore.getState().clearProxyStatus(id);
-    }
   };
 
   // Count selected items that are eligible for proxy generation
@@ -375,43 +335,6 @@ export const MediaLibrary = memo(function MediaLibrary({ onMediaSelect }: MediaL
             </button>
           )}
 
-          {/* Proxy actions dropdown */}
-          {(proxyEligibleItems.length > 0 || readyProxyCount > 0) && (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button
-                  className="flex items-center gap-1.5 h-7 px-2.5 rounded-md
-                    bg-secondary border border-border text-muted-foreground
-                    hover:border-primary/50 hover:text-primary
-                    transition-colors duration-150"
-                  title="Proxy management"
-                >
-                  <Zap className="w-3.5 h-3.5" />
-                  <span>Proxies</span>
-                  {readyProxyCount > 0 && (
-                    <span className="text-[10px] tabular-nums text-green-500">{readyProxyCount}</span>
-                  )}
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start">
-                {proxyEligibleItems.length > 0 && (
-                  <DropdownMenuItem onClick={handleGenerateAllProxies}>
-                    <Zap className="w-3 h-3 mr-2" />
-                    Generate All Proxies ({proxyEligibleItems.length})
-                  </DropdownMenuItem>
-                )}
-                {readyProxyCount > 0 && (
-                  <>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem onClick={handleDeleteAllProxies} className="text-destructive focus:text-destructive">
-                      <Trash className="w-3 h-3 mr-2" />
-                      Delete All Proxies ({readyProxyCount})
-                    </DropdownMenuItem>
-                  </>
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
 
           {/* Selection indicator & actions */}
           {selectedMediaIds.length > 0 && (

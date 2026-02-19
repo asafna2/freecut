@@ -49,6 +49,7 @@ export const useMediaLibraryStore = create<
       proxyStatus: new Map(),
       proxyProgress: new Map(),
 
+
       // v3: Set current project context
       setCurrentProject: (projectId: string | null) => {
         // Clear items and set loading state immediately to prevent flash

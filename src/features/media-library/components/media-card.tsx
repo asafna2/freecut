@@ -39,7 +39,7 @@ export function MediaCard({ media, selected = false, isBroken = false, onSelect,
   const canGenerateProxy = proxyService.needsProxy(media.width, media.height, media.mimeType);
   const hasProxy = proxyStatus === 'ready';
 
-  // Load thumbnail on mount (URLs are cached by the service, no need to revoke)
+  // Load thumbnail on mount and when thumbnailId changes (e.g. after regeneration)
   useEffect(() => {
     let mounted = true;
 
@@ -55,7 +55,7 @@ export function MediaCard({ media, selected = false, isBroken = false, onSelect,
     return () => {
       mounted = false;
     };
-  }, [media.id]);
+  }, [media.id, media.thumbnailId]);
 
   const handleDelete = (e: React.MouseEvent) => {
     e.preventDefault();
