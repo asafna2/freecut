@@ -219,11 +219,20 @@ export const TimelineHeader = memo(function TimelineHeader({
           <Button
             variant="ghost"
             size="icon"
-            className={`h-7 w-7 ${
-              activeTool === 'razor' ? 'bg-primary text-primary-foreground hover:bg-primary/90' : ''
-            }`}
-            onClick={() => setActiveTool(activeTool === 'razor' ? 'select' : 'razor')}
-            data-tooltip="Razor Tool (C)"
+            className="h-7 w-7"
+            onClick={() => {
+              const { currentFrame } = usePlaybackStore.getState();
+              const { items, splitItem } = useTimelineStore.getState();
+              const { selectedItemIds } = useSelectionStore.getState();
+
+              for (const id of selectedItemIds) {
+                const item = items.find((i) => i.id === id);
+                if (item && item.type !== 'composition' && currentFrame > item.from && currentFrame < item.from + item.durationInFrames) {
+                  splitItem(item.id, currentFrame);
+                }
+              }
+            }}
+            data-tooltip="Split Selected at Playhead (Shift+C)"
           >
             <Scissors className="w-3.5 h-3.5" />
           </Button>
