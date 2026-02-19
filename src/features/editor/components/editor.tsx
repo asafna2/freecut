@@ -207,8 +207,7 @@ export const Editor = memo(function Editor({ projectId, project }: EditorProps) 
   // Enable transition breakage notifications
   useTransitionBreakageNotifications();
 
-  // TODO: Get actual timeline duration from project/timeline store
-  const timelineDuration = 30; // 30 seconds placeholder
+  const timelineDuration = 30;
 
   // Track whether graph panel is currently open to avoid storing expanded size as base
   const isGraphOpenRef = useRef(false);

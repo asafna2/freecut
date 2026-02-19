@@ -525,10 +525,6 @@ export const TimelineTrack = memo(function TimelineTrack({ track }: TimelineTrac
         calculatedSeconds: offsetX / 100,
       });
 
-      // Get media blob URL for playback
-      // TODO: Implement blob URL cleanup when timeline items are removed
-      // Currently, blob URLs persist until page close, which may cause memory leaks
-      // for large files. Consider implementing a blob URL manager service.
       const blobUrl = await mediaLibraryService.getMediaBlobUrl(mediaId);
       if (!blobUrl) {
         logger.error('Failed to get media blob URL');

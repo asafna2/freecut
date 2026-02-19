@@ -37,7 +37,7 @@ function computeItemTypeInfo(items: TimelineItem[]) {
   const hasGifItems = items.some(isGifItem);
 
   return {
-    hasVisualItems: types.has('video') || types.has('image') || types.has('text') || types.has('shape') || types.has('adjustment'),
+    hasVisualItems: types.has('video') || types.has('image') || types.has('text') || types.has('shape') || types.has('adjustment') || types.has('composition'),
     hasVideoItems: types.has('video'),
     hasGifItems,
     hasAudioItems: types.has('video') || types.has('audio'),
