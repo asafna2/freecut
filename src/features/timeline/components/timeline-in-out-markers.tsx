@@ -128,7 +128,6 @@ export const TimelineInOutMarkers = memo(function TimelineInOutMarkers() {
   const renderMarker = (
     markerRef: React.RefObject<HTMLDivElement | null>,
     positionPx: number,
-    isDragging: boolean,
     onMouseDown: (e: React.MouseEvent) => void,
     side: 'in' | 'out'
   ) => (
@@ -176,11 +175,11 @@ export const TimelineInOutMarkers = memo(function TimelineInOutMarkers() {
     <>
       {/* In-point marker */}
       {inPoint !== null &&
-        renderMarker(inMarkerRef, frameToPixels(inPoint), isDraggingIn, handleInMouseDown, 'in')}
+        renderMarker(inMarkerRef, frameToPixels(inPoint), handleInMouseDown, 'in')}
 
       {/* Out-point marker */}
       {outPoint !== null &&
-        renderMarker(outMarkerRef, frameToPixels(outPoint), isDraggingOut, handleOutMouseDown, 'out')}
+        renderMarker(outMarkerRef, frameToPixels(outPoint), handleOutMouseDown, 'out')}
     </>
   );
 });
