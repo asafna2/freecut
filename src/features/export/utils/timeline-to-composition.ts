@@ -116,6 +116,13 @@ export function convertTimelineToComposition(
           mediaItem.offset = mediaItem.trimStart;
         }
 
+        // Update sourceStart for composition items (sub-comp frame offset)
+        // Composition items use sourceStart to tell renderCompositionItem
+        // where in the sub-comp to start playing (in timeline frames, same fps).
+        if (item.type === 'composition' && additionalTrimStart > 0) {
+          adjustedItem.sourceStart = (item.sourceStart || 0) + additionalTrimStart;
+        }
+
         return adjustedItem;
       });
 

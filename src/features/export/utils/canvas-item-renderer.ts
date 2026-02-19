@@ -36,7 +36,6 @@ import {
 import { renderShape } from './canvas-shapes';
 import { gifFrameCache, type CachedGifFrames } from '../../timeline/services/gif-frame-cache';
 import type { CanvasPool, TextMeasurementCache } from './canvas-pool';
-import { useCompositionsStore } from '../../timeline/stores/compositions-store';
 import type { VideoFrameExtractor } from './canvas-video-extractor';
 
 const log = createLogger('CanvasItemRenderer');
@@ -112,6 +111,25 @@ export interface ItemRenderContext {
   // Keyframes & adjustment layers
   keyframesMap: Map<string, ItemKeyframes>;
   adjustmentLayers: AdjustmentLayerWithTrackOrder[];
+
+  // Pre-computed sub-composition render data (built once during preload)
+  subCompRenderData: Map<string, SubCompRenderData>;
+}
+
+/**
+ * Pre-computed render data for a sub-composition.
+ * Built once during preload to avoid per-frame allocations and O(n) lookups.
+ */
+export interface SubCompRenderData {
+  fps: number;
+  durationInFrames: number;
+  /** Tracks sorted bottom-to-top (highest order first), with items pre-assigned */
+  sortedTracks: Array<{
+    visible: boolean;
+    items: TimelineItem[];
+  }>;
+  /** O(1) keyframe lookup by item ID */
+  keyframesMap: Map<string, ItemKeyframes>;
 }
 
 // ---------------------------------------------------------------------------
@@ -654,6 +672,9 @@ function drawTextWithLetterSpacing(
 /**
  * Render a CompositionItem by rendering all its sub-composition items to an
  * offscreen canvas and then drawing the result at the item's transform position.
+ *
+ * Uses pre-computed SubCompRenderData from rctx for O(1) lookups instead of
+ * per-frame sorting, filtering, and linear searches.
  */
 async function renderCompositionItem(
   ctx: OffscreenCanvasRenderingContext2D,
@@ -662,12 +683,31 @@ async function renderCompositionItem(
   frame: number,
   rctx: ItemRenderContext,
 ): Promise<void> {
-  const subComp = useCompositionsStore.getState().getComposition(item.compositionId);
-  if (!subComp) return;
+  const subData = rctx.subCompRenderData.get(item.compositionId);
+  if (!subData) {
+    if (frame === 0) {
+      log.warn('renderCompositionItem: no subCompRenderData found', {
+        compositionId: item.compositionId.substring(0, 8),
+        mapSize: rctx.subCompRenderData.size,
+        mapKeys: Array.from(rctx.subCompRenderData.keys()).map(k => k.substring(0, 8)),
+      });
+    }
+    return;
+  }
 
-  // Calculate the local frame within the sub-composition
-  const localFrame = frame - item.from;
-  if (localFrame < 0 || localFrame >= subComp.durationInFrames) return;
+  // Calculate the local frame within the sub-composition.
+  // sourceStart accounts for trim (left-edge drag) and IO marker offsets —
+  // it tells us how many frames into the sub-comp to start playing.
+  const sourceOffset = item.sourceStart ?? item.trimStart ?? 0;
+  const localFrame = frame - item.from + sourceOffset;
+  if (localFrame < 0 || localFrame >= subData.durationInFrames) {
+    if (frame < 5) {
+      log.warn('renderCompositionItem: localFrame out of range', {
+        frame, itemFrom: item.from, sourceOffset, localFrame, durationInFrames: subData.durationInFrames,
+      });
+    }
+    return;
+  }
 
   // Create an offscreen canvas at the sub-comp dimensions
   const { canvas: subCanvas, ctx: subCtx } = rctx.canvasPool.acquire();
@@ -676,44 +716,54 @@ async function renderCompositionItem(
     // Clear the sub canvas
     subCtx.clearRect(0, 0, subCanvas.width, subCanvas.height);
 
-    // Build sub-comp canvas settings using the sub-comp's own dimensions
-    // (note: pooled canvases are at the main canvas size — we render at that
-    // size and rely on the parent transform to scale)
+    // Canvas settings using the pooled canvas size
+    // (pooled canvases are at the main canvas size — parent transform handles scaling)
     const subCanvasSettings: CanvasSettings = {
       width: subCanvas.width,
       height: subCanvas.height,
-      fps: subComp.fps,
+      fps: subData.fps,
     };
 
-    // Build a keyframes lookup for sub-comp items
-    const subKeyframes = subComp.keyframes ?? [];
-
-    // Sort sub-comp tracks bottom-to-top (highest order renders first → lowest z)
-    const sortedTracks = [...subComp.tracks].sort(
-      (a, b) => (b.order ?? 0) - (a.order ?? 0)
-    );
-
-    // Render each visible item at the local frame
-    for (const track of sortedTracks) {
+    // Render each visible item at the local frame using pre-computed data
+    let renderedSubItems = 0;
+    for (const track of subData.sortedTracks) {
       if (!track.visible) continue;
 
-      const trackItems = subComp.items.filter((i) => i.trackId === track.id);
-
-      for (const subItem of trackItems) {
+      for (const subItem of track.items) {
         // Check if item is visible at this local frame
         if (localFrame < subItem.from || localFrame >= subItem.from + subItem.durationInFrames) {
           continue;
         }
 
-        // Skip audio and adjustment items
-        if (subItem.type === 'audio' || subItem.type === 'adjustment') continue;
+        if (frame < 3) {
+          log.info('Rendering sub-comp item', {
+            itemId: subItem.id.substring(0, 8),
+            type: subItem.type,
+            localFrame,
+            subItemFrom: subItem.from,
+            subItemDuration: subItem.durationInFrames,
+            hasExtractor: rctx.videoExtractors.has(subItem.id),
+            hasImage: rctx.imageElements.has(subItem.id),
+            hasGif: rctx.gifFramesMap.has(subItem.id),
+          });
+        }
 
-        // Get transform for the sub-item using sub-comp's keyframes
-        const subItemKeyframes = subKeyframes.find((kf) => kf.itemId === subItem.id);
+        // Get transform for the sub-item using pre-built keyframes map (O(1))
+        const subItemKeyframes = subData.keyframesMap.get(subItem.id);
         const subItemTransform = getAnimatedTransform(subItem, subItemKeyframes, localFrame, subCanvasSettings);
 
         await renderItem(subCtx, subItem, subItemTransform, localFrame, rctx);
+        renderedSubItems++;
       }
+    }
+
+    if (frame < 3) {
+      log.info('Sub-comp render complete', {
+        compositionId: item.compositionId.substring(0, 8),
+        localFrame,
+        renderedSubItems,
+        trackCount: subData.sortedTracks.length,
+      });
     }
 
     // Draw the sub-composition result onto the main canvas at the CompositionItem's position

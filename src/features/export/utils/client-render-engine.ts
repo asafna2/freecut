@@ -21,8 +21,12 @@ import type {
   ImageItem,
   ShapeItem,
   AdjustmentItem,
+  CompositionItem,
 } from '@/types/timeline';
+import type { ItemKeyframes } from '@/types/keyframe';
 import { createLogger } from '@/lib/logger';
+import { blobUrlManager } from '@/lib/blob-url-manager';
+import { resolveMediaUrl } from '@/features/preview/utils/media-resolver';
 
 // Import subsystems
 import { getAnimatedTransform, buildKeyframesMap } from './canvas-keyframes';
@@ -49,6 +53,7 @@ import { gifFrameCache } from '../../timeline/services/gif-frame-cache';
 import { isGifUrl } from '@/utils/media-utils';
 import { CanvasPool, TextMeasurementCache } from './canvas-pool';
 import { VideoFrameExtractor } from './canvas-video-extractor';
+import { useCompositionsStore } from '../../timeline/stores/compositions-store';
 
 // Item renderer
 import {
@@ -57,6 +62,7 @@ import {
   type CanvasSettings,
   type WorkerLoadedImage,
   type ItemRenderContext,
+  type SubCompRenderData,
 } from './canvas-item-renderer';
 
 // Re-export orchestration functions so existing import sites keep working
@@ -257,6 +263,9 @@ export async function createCompositionRenderer(
   const mediabunnyFailureCountByItem = new Map<string, number>();
   const mediabunnyDisabledItems = new Set<string>();
 
+  // Pre-computed sub-composition render data (populated during preload)
+  const subCompRenderData = new Map<string, SubCompRenderData>();
+
   // Build the shared ItemRenderContext used by canvas-item-renderer functions
   const itemRenderContext: ItemRenderContext = {
     fps,
@@ -272,10 +281,21 @@ export async function createCompositionRenderer(
     gifFramesMap,
     keyframesMap,
     adjustmentLayers,
+    subCompRenderData,
   };
 
   return {
     async preload() {
+      // Composition items require the compositions store which only exists on main thread.
+      // Workers get a fresh, empty Zustand store, so sub-comp data can never be resolved.
+      // Bail early to trigger the main-thread fallback path.
+      const hasCompositionItems = tracks.some(
+        t => (t.items ?? []).some(i => i.type === 'composition')
+      );
+      if (!hasDom && hasCompositionItems) {
+        throw new Error('WORKER_REQUIRES_MAIN_THREAD:composition');
+      }
+
       log.debug('Preloading media', {
         videoCount: videoExtractors.size,
         imageCount: imageElements.size,
@@ -370,6 +390,214 @@ export async function createCompositionRenderer(
 
         await Promise.all(gifLoadPromises);
         log.debug('All GIF frames loaded', { loadedCount: gifFramesMap.size });
+      }
+
+      // === PRELOAD SUB-COMPOSITION MEDIA & BUILD RENDER DATA ===
+      // CompositionItem references sub-compositions with their own media items.
+      // We preload media AND build pre-computed render data to avoid per-frame
+      // sorting, filtering, and linear searches in renderCompositionItem.
+      const subCompMediaItems: Array<{ subItem: TimelineItem; src: string }> = [];
+      const pendingResolutions: Array<{ subItem: TimelineItem; mediaId: string }> = [];
+
+      for (const track of tracks) {
+        for (const item of track.items ?? []) {
+          if (item.type !== 'composition') continue;
+          const compItem = item as CompositionItem;
+          log.info('Found composition item in export tracks', {
+            itemId: compItem.id.substring(0, 8),
+            compositionId: compItem.compositionId.substring(0, 8),
+            from: compItem.from,
+            duration: compItem.durationInFrames,
+          });
+          const subComp = useCompositionsStore.getState().getComposition(compItem.compositionId);
+          if (!subComp) {
+            log.warn('Sub-composition not found in store!', {
+              compositionId: compItem.compositionId,
+              storeCompositionCount: useCompositionsStore.getState().compositions.length,
+              storeCompositionIds: useCompositionsStore.getState().compositions.map(c => c.id.substring(0, 8)),
+            });
+            continue;
+          }
+          log.info('Sub-composition loaded', {
+            compositionId: subComp.id.substring(0, 8),
+            name: subComp.name,
+            items: subComp.items.length,
+            tracks: subComp.tracks.length,
+            fps: subComp.fps,
+            durationInFrames: subComp.durationInFrames,
+          });
+
+          // Build pre-computed render data for this sub-composition (once)
+          if (!subCompRenderData.has(compItem.compositionId)) {
+            // Sort tracks once (bottom-to-top: highest order first)
+            const sorted = [...subComp.tracks].sort(
+              (a, b) => (b.order ?? 0) - (a.order ?? 0)
+            );
+
+            // Pre-assign items to tracks and filter out audio/adjustment
+            const sortedWithItems = sorted.map(t => ({
+              visible: t.visible !== false,
+              items: subComp.items.filter(
+                i => i.trackId === t.id && i.type !== 'audio' && i.type !== 'adjustment'
+              ),
+            }));
+
+            // Build keyframes map for O(1) lookup
+            const subKfMap = new Map<string, ItemKeyframes>();
+            for (const kf of subComp.keyframes ?? []) {
+              subKfMap.set(kf.itemId, kf);
+            }
+
+            subCompRenderData.set(compItem.compositionId, {
+              fps: subComp.fps,
+              durationInFrames: subComp.durationInFrames,
+              sortedTracks: sortedWithItems,
+              keyframesMap: subKfMap,
+            });
+          }
+
+          // Collect media items for preloading.
+          // Sub-comp items were moved out of the main timeline, so resolveMediaUrls
+          // (which runs on main comp tracks) never acquires their blob URLs.
+          // We must resolve via blobUrlManager (shared mediaId) or resolveMediaUrl (OPFS).
+          for (const subItem of subComp.items) {
+            if (subItem.type !== 'video' && subItem.type !== 'image') continue;
+            if (subItem.mediaId) {
+              // Prefer fresh blob URL from manager (may already be acquired for shared media)
+              const src = blobUrlManager.get(subItem.mediaId);
+              if (src) {
+                subCompMediaItems.push({ subItem, src });
+              } else {
+                pendingResolutions.push({ subItem, mediaId: subItem.mediaId });
+              }
+            } else {
+              // No mediaId — use stored src as last resort
+              const src = (subItem as VideoItem | ImageItem).src ?? '';
+              if (src) subCompMediaItems.push({ subItem, src });
+            }
+          }
+        }
+      }
+
+      // Resolve pending sub-comp URLs from OPFS in parallel
+      if (pendingResolutions.length > 0) {
+        log.debug('Resolving sub-comp media URLs from OPFS', { count: pendingResolutions.length });
+        const resolved = await Promise.all(
+          pendingResolutions.map(async ({ subItem, mediaId }) => {
+            const src = await resolveMediaUrl(mediaId);
+            return { subItem, src };
+          })
+        );
+        for (const { subItem, src } of resolved) {
+          if (src) subCompMediaItems.push({ subItem, src });
+        }
+      }
+
+      if (subCompMediaItems.length > 0) {
+        log.debug('Preloading sub-composition media', { count: subCompMediaItems.length });
+
+        // Preload sub-comp video extractors
+        const subExtractorPromises: Promise<void>[] = [];
+        for (const { subItem, src } of subCompMediaItems) {
+          if (subItem.type === 'video' && !videoExtractors.has(subItem.id)) {
+            const extractor = new VideoFrameExtractor(src, subItem.id);
+            videoExtractors.set(subItem.id, extractor);
+            subExtractorPromises.push(
+              extractor.init().then(success => {
+                if (success) {
+                  useMediabunny.add(subItem.id);
+                  log.debug('Sub-comp video using mediabunny', { itemId: subItem.id.substring(0, 8) });
+                }
+              })
+            );
+            if (hasDom) {
+              const video = document.createElement('video');
+              video.src = src;
+              video.muted = true;
+              video.preload = 'auto';
+              video.crossOrigin = 'anonymous';
+              videoElements.set(subItem.id, video);
+            }
+          }
+        }
+        await Promise.all(subExtractorPromises);
+
+        // Preload sub-comp images
+        const subImagePromises: Promise<void>[] = [];
+        const subGifItems: ImageItem[] = [];
+
+        for (const { subItem, src } of subCompMediaItems) {
+          if (subItem.type === 'image' && !imageElements.has(subItem.id)) {
+            const imageItem = subItem as ImageItem;
+            // Check for animated GIF
+            if (isAnimatedGif({ ...imageItem, src } as ImageItem)) {
+              subGifItems.push({ ...imageItem, src } as ImageItem);
+            }
+
+            if (hasDom && typeof Image !== 'undefined') {
+              const img = new Image();
+              img.crossOrigin = 'anonymous';
+              subImagePromises.push(new Promise<void>((resolve) => {
+                img.onload = () => {
+                  imageElements.set(subItem.id, {
+                    source: img,
+                    width: img.naturalWidth,
+                    height: img.naturalHeight,
+                  });
+                  resolve();
+                };
+                img.onerror = () => {
+                  log.error('Failed to load sub-comp image', { itemId: subItem.id });
+                  resolve();
+                };
+              }));
+              img.src = src;
+            } else {
+              subImagePromises.push((async () => {
+                if (typeof createImageBitmap !== 'function') {
+                  throw new Error('WORKER_REQUIRES_MAIN_THREAD:imagebitmap');
+                }
+                const response = await fetch(src);
+                if (!response.ok) {
+                  log.error('Failed to fetch sub-comp image', { itemId: subItem.id });
+                  return;
+                }
+                const blob = await response.blob();
+                const bitmap = await createImageBitmap(blob);
+                imageElements.set(subItem.id, {
+                  source: bitmap,
+                  width: bitmap.width,
+                  height: bitmap.height,
+                });
+              })());
+            }
+          }
+        }
+        await Promise.all(subImagePromises);
+
+        // Load sub-comp GIF frames
+        if (hasDom && subGifItems.length > 0) {
+          const subGifPromises = subGifItems.map(async (gifItem) => {
+            try {
+              const mediaId = gifItem.mediaId ?? gifItem.id;
+              const cachedFrames = await gifFrameCache.getGifFrames(mediaId, gifItem.src);
+              gifFramesMap.set(gifItem.id, cachedFrames);
+              log.debug('Sub-comp GIF frames loaded', {
+                itemId: gifItem.id.substring(0, 8),
+                frameCount: cachedFrames.frames.length,
+              });
+            } catch (err) {
+              log.error('Failed to load sub-comp GIF frames', { itemId: gifItem.id, error: err });
+            }
+          });
+          await Promise.all(subGifPromises);
+        }
+
+        log.debug('Sub-composition media loaded', {
+          videos: subCompMediaItems.filter(s => s.subItem.type === 'video').length,
+          images: subCompMediaItems.filter(s => s.subItem.type === 'image').length,
+          gifs: subGifItems.length,
+        });
       }
 
       log.debug('All media loaded');
