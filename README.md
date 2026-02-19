@@ -177,7 +177,7 @@ src/
 │   ├── projects/        # Project management
 │   └── settings/        # App settings
 ├── lib/
-│   ├── composition-runtime/  # Remotion-style Sequence/Item primitives
+│   ├── composition-runtime/  # Sequence/Item primitives
 │   ├── transitions/          # Transition renderers (CSS + canvas)
 │   ├── storage/              # IndexedDB persistence
 │   ├── shapes/               # SVG shape generators
