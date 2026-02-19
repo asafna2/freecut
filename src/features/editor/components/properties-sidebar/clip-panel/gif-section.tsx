@@ -29,10 +29,10 @@ function isAnimatedImageItem(item: TimelineItem): item is ImageItem {
 }
 
 /**
- * GIF section - playback speed for animated GIFs.
- * Only shown when selection includes GIF clips.
+ * Animation section - playback speed for animated GIFs and animated WebP.
+ * Only shown when selection includes animated image clips.
  *
- * Unlike videos, GIF speed changes don't affect duration (GIFs loop):
+ * Unlike videos, animated image speed changes don't affect duration (they loop):
  * - Faster speed = animation plays faster within same duration
  * - Slower speed = animation plays slower within same duration
  */

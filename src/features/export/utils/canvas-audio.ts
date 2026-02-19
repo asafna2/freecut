@@ -372,6 +372,10 @@ function extractAudioSegments(composition: CompositionInputProps, fps: number): 
       for (const subItem of subComp.items) {
         if (subItem.type !== 'video' && subItem.type !== 'audio') continue;
 
+        // Check sub-track muted state
+        const subTrack = subComp.tracks.find((t) => t.id === subItem.trackId);
+        const subTrackMuted = subTrack?.muted ?? false;
+
         // Prefer fresh blob URL from manager (stored src may be stale/revoked)
         const src = (subItem.mediaId ? blobUrlManager.get(subItem.mediaId) : null)
           ?? (subItem as VideoItem | AudioItem).src ?? '';
@@ -410,10 +414,10 @@ function extractAudioSegments(composition: CompositionInputProps, fps: number): 
           fadeOutFrames: (subItem.audioFadeOut ?? 0) * fps,
           useEqualPowerFades: false,
           speed,
-          muted: trackMuted,
+          muted: trackMuted || subTrackMuted,
           type: subItem.type as 'video' | 'audio',
           volumeKeyframes: subVolumeKfs.length > 0 ? subVolumeKfs : undefined,
-          itemFrom: effectiveStart,
+          itemFrom: startFrame,
         });
       }
     }

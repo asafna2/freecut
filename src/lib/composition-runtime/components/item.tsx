@@ -247,12 +247,12 @@ export const Item = React.memo<ItemProps>(({ item, muted = false, masks = [], re
     const isAnimatedGif = isGifUrl(item.src) || label.endsWith('.gif');
     const isAnimatedWebp = isWebpUrl(item.src) || label.endsWith('.webp');
 
-    if (isAnimatedGif || isAnimatedWebp) {
+    if ((isAnimatedGif || isAnimatedWebp) && item.mediaId) {
       const playbackRate = item.speed ?? DEFAULT_SPEED;
 
       const animatedContent = (
         <GifPlayer
-          mediaId={item.mediaId!}
+          mediaId={item.mediaId}
           src={item.src}
           fit="cover"
           playbackRate={playbackRate}

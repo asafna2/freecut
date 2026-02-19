@@ -80,6 +80,7 @@ class BlobUrlManager {
     if (!entry) return;
     URL.revokeObjectURL(entry.url);
     this.entries.delete(mediaId);
+    this.notify();
   }
 
   /**
@@ -94,6 +95,7 @@ class BlobUrlManager {
     if (entry.refCount <= 0) {
       URL.revokeObjectURL(entry.url);
       this.entries.delete(mediaId);
+      this.notify();
       logger.debug(`Revoked blob URL for media ${mediaId}`);
     }
   }
@@ -107,6 +109,7 @@ class BlobUrlManager {
       logger.debug(`Revoked blob URL for media ${mediaId}`);
     }
     this.entries.clear();
+    this.notify();
   }
 
   /**

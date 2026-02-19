@@ -249,6 +249,8 @@ export async function exportProjectBundleStreaming(
 ): Promise<ExportResult> {
   const writable = await fileHandle.createWritable();
   let totalSize = 0;
+  const writePromises: Promise<void>[] = [];
+  let zipError: Error | null = null;
 
   try {
     onProgress?.({ percent: 0, stage: 'collecting' });
@@ -277,8 +279,6 @@ export async function exportProjectBundleStreaming(
 
     // Step 4: Build manifest and prepare ZIP — stream chunks to disk
     // Collect write promises since fflate's Zip callback is synchronous and won't await
-    const writePromises: Promise<void>[] = [];
-    let zipError: Error | null = null;
     const zip = new Zip((err, chunk) => {
       if (err) { zipError = err; return; }
       if (chunk) {
@@ -448,6 +448,10 @@ export async function exportProjectBundleStreaming(
       mediaCount: manifest.media.length,
     };
   } catch (err) {
+    // Settle any pending writes to avoid unhandled rejections
+    if (writePromises.length > 0) {
+      await Promise.allSettled(writePromises);
+    }
     // Clean up partial file on error
     try {
       await writable.abort();

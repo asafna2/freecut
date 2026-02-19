@@ -968,6 +968,7 @@ export async function createCompositionRenderer(
       }
       imageElements.clear();
       gifFramesMap.clear(); // Clear GIF frame references (actual frames are managed by gifFrameCache)
+      subCompRenderData.clear(); // Release sub-composition render data references
 
       // === PERFORMANCE: Clean up optimization resources ===
       canvasPool.dispose();

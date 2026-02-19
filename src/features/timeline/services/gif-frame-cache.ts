@@ -505,6 +505,9 @@ class GifFrameCacheService {
     const extractionState = { aborted: false };
     this.activeExtractions.set(mediaId, extractionState);
 
+    const frames: ImageBitmap[] = [];
+    let decoder: ImageDecoder | null = null;
+
     try {
       onProgress?.(5);
 
@@ -513,7 +516,7 @@ class GifFrameCacheService {
         throw new Error('Failed to fetch WebP');
       }
 
-      const decoder = new ImageDecoder({
+      decoder = new ImageDecoder({
         data: response.body,
         type: 'image/webp',
       });
@@ -522,6 +525,7 @@ class GifFrameCacheService {
 
       if (extractionState.aborted) {
         decoder.close();
+        decoder = null;
         throw new Error('Aborted');
       }
 
@@ -530,11 +534,11 @@ class GifFrameCacheService {
       const track = decoder.tracks.selectedTrack;
       if (!track || !track.animated || track.frameCount <= 1) {
         decoder.close();
+        decoder = null;
         throw new Error('WebP is not animated');
       }
 
       const frameCount = track.frameCount;
-      const frames: ImageBitmap[] = [];
       const blobs: Blob[] = [];
       const durations: number[] = [];
       let sizeBytes = 0;
@@ -545,7 +549,9 @@ class GifFrameCacheService {
           for (const bitmap of frames) {
             bitmap.close();
           }
+          frames.length = 0;
           decoder.close();
+          decoder = null;
           throw new Error('Aborted');
         }
 
@@ -591,6 +597,7 @@ class GifFrameCacheService {
       }
 
       decoder.close();
+      decoder = null;
 
       onProgress?.(95);
 
@@ -614,6 +621,15 @@ class GifFrameCacheService {
       onProgress?.(100);
 
       return cached;
+    } catch (err) {
+      // Clean up any ImageBitmaps created before the error
+      for (const bitmap of frames) {
+        bitmap.close();
+      }
+      if (decoder) {
+        decoder.close();
+      }
+      throw err;
     } finally {
       this.activeExtractions.delete(mediaId);
     }

@@ -85,9 +85,9 @@ export const GifPlayer: React.FC<GifPlayerProps> = ({
         }}
       >
         {error ? (
-          <span style={{ color: '#ff6b6b', fontSize: 14 }}>GIF load failed</span>
+          <span style={{ color: '#ff6b6b', fontSize: 14 }}>{format === 'webp' ? 'WebP' : 'GIF'} load failed</span>
         ) : (
-          <span style={{ color: '#666', fontSize: 14 }}>Loading GIF...</span>
+          <span style={{ color: '#666', fontSize: 14 }}>Loading {format === 'webp' ? 'WebP' : 'GIF'}...</span>
         )}
       </AbsoluteFill>
     );

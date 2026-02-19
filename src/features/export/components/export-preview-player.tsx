@@ -85,11 +85,11 @@ export function ExportPreviewPlayer({ src, isVideo }: ExportPreviewPlayerProps) 
   const handleFullscreen = useCallback(() => {
     if (!isVideo) return;
     if (document.fullscreenElement) {
-      void document.exitFullscreen();
+      document.exitFullscreen().catch(console.error);
     } else {
       const el = containerRef.current;
       if (el?.requestFullscreen) {
-        void el.requestFullscreen();
+        el.requestFullscreen().catch(console.error);
       }
     }
   }, [isVideo]);
@@ -130,10 +130,10 @@ export function ExportPreviewPlayer({ src, isVideo }: ExportPreviewPlayerProps) 
   return (
     <div
       ref={containerRef}
-      className={`overflow-hidden bg-secondary/30 ${
+      className={`overflow-hidden ${
         isFullscreen
           ? 'flex flex-col h-full w-full bg-black'
-          : 'rounded-lg border border-border'
+          : 'rounded-lg border border-border bg-secondary/30'
       }`}
     >
       {/* Media element */}

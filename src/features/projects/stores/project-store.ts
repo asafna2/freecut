@@ -243,7 +243,8 @@ export const useProjectStore = create<ProjectState & ProjectActions>()(
           set({ projects: optimisticProjects });
 
           // Clear current project if it's the one being deleted
-          if (get().currentProject?.id === id) {
+          const previousCurrentProject = get().currentProject;
+          if (previousCurrentProject?.id === id) {
             set({ currentProject: null });
           }
 
@@ -297,7 +298,7 @@ export const useProjectStore = create<ProjectState & ProjectActions>()(
               throw new Error(errorMessage);
             }
             // Rollback on error (safe — no local files were touched)
-            set({ projects: previousProjects });
+            set({ projects: previousProjects, currentProject: previousCurrentProject });
 
             const errorMessage =
               error instanceof Error ? error.message : 'Failed to delete project';

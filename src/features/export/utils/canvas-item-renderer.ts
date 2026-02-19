@@ -716,11 +716,14 @@ async function renderCompositionItem(
     // Clear the sub canvas
     subCtx.clearRect(0, 0, subCanvas.width, subCanvas.height);
 
-    // Canvas settings using the pooled canvas size
-    // (pooled canvases are at the main canvas size — parent transform handles scaling)
+    // Use the sub-composition's authored dimensions for canvas settings
+    // so transforms and positioning inside the sub-composition are correct.
+    // The pooled canvas may be at main canvas size, so we resize it to match.
+    subCanvas.width = item.compositionWidth;
+    subCanvas.height = item.compositionHeight;
     const subCanvasSettings: CanvasSettings = {
-      width: subCanvas.width,
-      height: subCanvas.height,
+      width: item.compositionWidth,
+      height: item.compositionHeight,
       fps: subData.fps,
     };
 
