@@ -293,18 +293,18 @@ export const Timeline = memo(function Timeline({ duration, onGraphPanelOpenChang
         }
       }
 
-      // 'I' key - Set in-point at current playhead position
+      // 'I' key - Set in-point at gray playhead (preview) or main playhead
       if (key === 'i' && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
         e.preventDefault();
-        const currentFrame = usePlaybackStore.getState().currentFrame;
-        useTimelineStore.getState().setInPoint(currentFrame);
+        const { previewFrame, currentFrame } = usePlaybackStore.getState();
+        useTimelineStore.getState().setInPoint(previewFrame ?? currentFrame);
       }
 
-      // 'O' key - Set out-point at current playhead position
+      // 'O' key - Set out-point at gray playhead (preview) or main playhead
       if (key === 'o' && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
         e.preventDefault();
-        const currentFrame = usePlaybackStore.getState().currentFrame;
-        useTimelineStore.getState().setOutPoint(currentFrame);
+        const { previewFrame, currentFrame } = usePlaybackStore.getState();
+        useTimelineStore.getState().setOutPoint(previewFrame ?? currentFrame);
       }
     };
 

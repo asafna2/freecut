@@ -141,22 +141,23 @@ export function useEditingShortcuts(callbacks: TimelineShortcutCallbacks) {
     [selectedItemIds, items, joinItems]
   );
 
-  // Editing: Alt+C - Split all items at playhead
+  // Editing: Alt+C - Split all items at gray playhead (or main playhead)
   useHotkeys(
     HOTKEYS.SPLIT_AT_PLAYHEAD,
     (event) => {
       event.preventDefault();
-      const currentFrame = usePlaybackStore.getState().currentFrame;
+      const { previewFrame, currentFrame } = usePlaybackStore.getState();
+      const splitFrame = previewFrame ?? currentFrame;
 
       const itemsToSplit = items.filter((item) => {
         if (item.type === 'composition') return false;
         const itemStart = item.from;
         const itemEnd = item.from + item.durationInFrames;
-        return currentFrame > itemStart && currentFrame < itemEnd;
+        return splitFrame > itemStart && splitFrame < itemEnd;
       });
 
       for (const item of itemsToSplit) {
-        splitItem(item.id, currentFrame);
+        splitItem(item.id, splitFrame);
       }
 
       if (itemsToSplit.length === 1) {

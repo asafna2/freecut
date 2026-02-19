@@ -457,8 +457,6 @@ export const TimelineContent = memo(function TimelineContent({ duration, scrollR
       }
       return;
     }
-    // Skip in razor mode (has its own cursor)
-    if (activeToolRef.current === 'razor') return;
     // Skip during any drag (playhead drag, item drag, marquee)
     if (marqueeWasActiveRef.current || dragWasActiveRef.current || scrubWasActiveRef.current) return;
 
@@ -472,13 +470,18 @@ export const TimelineContent = memo(function TimelineContent({ duration, scrollR
       Math.min(Math.round(pixelsToFrameRef.current(x)), maxTimelineFrameRef.current)
     );
 
+    // Detect hovered item
+    const target = e.target as HTMLElement;
+    const itemEl = target.closest('[data-item-id]') as HTMLElement | null;
+    const itemId = itemEl?.getAttribute('data-item-id') ?? undefined;
+
     // RAF-throttle the store update
     if (previewRafRef.current !== null) {
       cancelAnimationFrame(previewRafRef.current);
     }
     previewRafRef.current = requestAnimationFrame(() => {
       previewRafRef.current = null;
-      setPreviewFrameRef.current(frame);
+      setPreviewFrameRef.current(frame, itemId);
     });
   }, []);
 

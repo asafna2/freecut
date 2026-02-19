@@ -49,6 +49,12 @@ export function TimelinePlayhead({ inRuler = false, maxFrame }: TimelinePlayhead
   // RAF throttling refs for smooth scrubbing without excessive state updates
   const pendingFrameRef = useRef<number | null>(null);
   const rafIdRef = useRef<number | null>(null);
+  const setPreviewFrameRef = useRef(usePlaybackStore.getState().setPreviewFrame);
+  useEffect(() => {
+    return usePlaybackStore.subscribe((state) => {
+      setPreviewFrameRef.current = state.setPreviewFrame;
+    });
+  }, []);
 
   // Update refs when functions change
   useEffect(() => {
@@ -143,6 +149,7 @@ export function TimelinePlayhead({ inRuler = false, maxFrame }: TimelinePlayhead
           rafIdRef.current = null;
           if (pendingFrameRef.current !== null) {
             setCurrentFrameRef.current(pendingFrameRef.current);
+            setPreviewFrameRef.current(pendingFrameRef.current);
           }
         });
       }
@@ -150,6 +157,7 @@ export function TimelinePlayhead({ inRuler = false, maxFrame }: TimelinePlayhead
 
     const handleMouseUp = () => {
       setIsDragging(false);
+      setPreviewFrameRef.current(null);
     };
 
     document.addEventListener('mousemove', handleMouseMove);

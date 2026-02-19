@@ -39,6 +39,7 @@ export const HOTKEYS = {
   // Tools
   SELECTION_TOOL: 'v',
   RAZOR_TOOL: 'c',
+  SPLIT_SELECTED: 'shift+c',
   RATE_STRETCH_TOOL: 'r',
 
   // Project
@@ -111,7 +112,8 @@ export const HOTKEY_DESCRIPTIONS: Record<HotkeyKey, string> = {
 
   // Tools
   SELECTION_TOOL: 'Selection tool',
-  RAZOR_TOOL: 'Razor/Cut tool',
+  RAZOR_TOOL: 'Split at cursor',
+  SPLIT_SELECTED: 'Split selected clip at playhead',
   RATE_STRETCH_TOOL: 'Rate stretch tool',
 
   // Project

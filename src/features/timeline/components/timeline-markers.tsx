@@ -294,6 +294,7 @@ export const TimelineMarkers = memo(function TimelineMarkers({ duration, width }
   // Refs for drag handlers
   const pixelsToFrameRef = useRef(pixelsToFrame);
   const setCurrentFrameRef = useRef(setCurrentFrame);
+  const setPreviewFrameRef = useRef(usePlaybackStore.getState().setPreviewFrame);
   const markDirtyRef = useRef(markDirty);
   const pauseRef = useRef(pause);
   const fpsRef = useRef(fps);
@@ -309,6 +310,7 @@ export const TimelineMarkers = memo(function TimelineMarkers({ duration, width }
   useEffect(() => {
     pixelsToFrameRef.current = pixelsToFrame;
     setCurrentFrameRef.current = setCurrentFrame;
+    setPreviewFrameRef.current = usePlaybackStore.getState().setPreviewFrame;
     markDirtyRef.current = markDirty;
     pauseRef.current = pause;
     fpsRef.current = fps;
@@ -638,8 +640,9 @@ export const TimelineMarkers = memo(function TimelineMarkers({ duration, width }
     const maxFrame = Math.floor(durationRef.current * fpsRef.current);
     const frame = Math.min(maxFrame, Math.max(0, Math.round(pixelsToFrameRef.current(x))));
 
-    // Update playhead
+    // Update playhead and gray playhead
     setCurrentFrameRef.current(frame);
+    setPreviewFrameRef.current(frame);
 
     // --- STEP 3: Continue loop while scrubbing ---
     scrubRAFIdRef.current = requestAnimationFrame(runUnifiedScrubLoop);
@@ -707,6 +710,7 @@ export const TimelineMarkers = memo(function TimelineMarkers({ duration, width }
     const maxFrame = Math.floor(durationRef.current * fpsRef.current);
     const frame = Math.min(maxFrame, Math.max(0, Math.round(pixelsToFrameRef.current(x))));
     setCurrentFrameRef.current(frame);
+    setPreviewFrameRef.current(frame);
 
     setIsDragging(true);
 
@@ -735,6 +739,7 @@ export const TimelineMarkers = memo(function TimelineMarkers({ duration, width }
         scrubRAFIdRef.current = null;
       }
       setIsDragging(false);
+      setPreviewFrameRef.current(null);
     };
 
     document.addEventListener('mousemove', handleMouseMove);
