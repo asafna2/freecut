@@ -18,20 +18,7 @@ import {
   NumberInput,
   ColorPicker,
 } from '../components';
-
-// Available Google Fonts (subset for initial implementation)
-const FONT_OPTIONS = [
-  { value: 'Inter', label: 'Inter' },
-  { value: 'Roboto', label: 'Roboto' },
-  { value: 'Open Sans', label: 'Open Sans' },
-  { value: 'Lato', label: 'Lato' },
-  { value: 'Montserrat', label: 'Montserrat' },
-  { value: 'Oswald', label: 'Oswald' },
-  { value: 'Poppins', label: 'Poppins' },
-  { value: 'Playfair Display', label: 'Playfair Display' },
-  { value: 'Bebas Neue', label: 'Bebas Neue' },
-  { value: 'Anton', label: 'Anton' },
-] as const;
+import { FontPicker } from './font-picker';
 
 const FONT_WEIGHT_OPTIONS = [
   { value: 'normal', label: 'Regular' },
@@ -219,6 +206,8 @@ export function TextSection({ items }: TextSectionProps) {
     return null;
   }
 
+  const fontPreviewText = sharedValues.text ?? textItems[0]?.text ?? '';
+
   return (
     <PropertySection title="Text" icon={Type} defaultOpen={true}>
       {/* Text Content */}
@@ -233,22 +222,13 @@ export function TextSection({ items }: TextSectionProps) {
       </PropertyRow>
 
       {/* Font Family */}
-      <PropertyRow label="Font">
-        <Select
+      <PropertyRow label="Font" className="items-start">
+        <FontPicker
           value={sharedValues.fontFamily}
+          placeholder={sharedValues.fontFamily === undefined ? 'Mixed' : 'Select font'}
+          previewText={fontPreviewText}
           onValueChange={handleFontFamilyChange}
-        >
-          <SelectTrigger className="h-7 text-xs flex-1 min-w-0">
-            <SelectValue placeholder={sharedValues.fontFamily === undefined ? 'Mixed' : 'Select font'} />
-          </SelectTrigger>
-          <SelectContent>
-            {FONT_OPTIONS.map((font) => (
-              <SelectItem key={font.value} value={font.value} className="text-xs">
-                {font.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        />
       </PropertyRow>
 
       {/* Font Size */}
