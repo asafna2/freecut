@@ -13,60 +13,6 @@ import { execute, applyTransitionRepairs, logger } from './shared';
 import { blobUrlManager } from '@/lib/blob-url-manager';
 import { timelineToSourceFrames } from '../../utils/source-calculations';
 
-/**
- * Close all gaps on a track by shifting items left to remove empty space.
- * Used by magnetic mode to auto-compact items after operations.
- */
-function closeAllGapsOnTrack(trackId: string): void {
-  const items = useItemsStore.getState().items;
-  const trackItems = items
-    .filter((i) => i.trackId === trackId)
-    .sort((a, b) => a.from - b.from);
-
-  if (trackItems.length === 0) return;
-
-  // Build shift map: walk items left-to-right, accumulating gap sizes
-  const updates: Array<{ id: string; from: number }> = [];
-  let expectedStart = 0;
-
-  for (const item of trackItems) {
-    if (item.from > expectedStart) {
-      // There's a gap — shift this item left
-      updates.push({ id: item.id, from: expectedStart });
-      expectedStart = expectedStart + item.durationInFrames;
-    } else {
-      // No gap (or overlap) — keep position, advance cursor
-      expectedStart = item.from + item.durationInFrames;
-    }
-  }
-
-  if (updates.length > 0) {
-    useItemsStore.getState()._moveItems(updates);
-  }
-}
-
-/**
- * Apply magnetic gap-closing on specified tracks if magnetic mode is enabled.
- * Repairs transitions on affected tracks afterwards.
- */
-function applyMagneticRipple(trackIds: string[]): void {
-  if (!useTimelineSettingsStore.getState().magneticMode) return;
-
-  const uniqueTrackIds = [...new Set(trackIds)];
-  for (const trackId of uniqueTrackIds) {
-    closeAllGapsOnTrack(trackId);
-  }
-
-  // Repair transitions on all affected tracks
-  const items = useItemsStore.getState().items;
-  const affectedItemIds = items
-    .filter((i) => uniqueTrackIds.includes(i.trackId))
-    .map((i) => i.id);
-  if (affectedItemIds.length > 0) {
-    applyTransitionRepairs(affectedItemIds);
-  }
-}
-
 export function addItem(item: TimelineItem): void {
   execute('ADD_ITEM', () => {
     useItemsStore.getState()._addItem(item);
@@ -90,12 +36,6 @@ export function updateItem(id: string, updates: Partial<TimelineItem>): void {
 
 export function removeItems(ids: string[]): void {
   execute('REMOVE_ITEMS', () => {
-    // Capture affected track IDs before removal (for magnetic mode)
-    const items = useItemsStore.getState().items;
-    const affectedTrackIds = [...new Set(
-      items.filter((i) => ids.includes(i.id)).map((i) => i.trackId)
-    )];
-
     // Remove items
     useItemsStore.getState()._removeItems(ids);
 
@@ -104,9 +44,6 @@ export function removeItems(ids: string[]): void {
 
     // Cascade: Remove keyframes for deleted items
     useKeyframesStore.getState()._removeKeyframesForItems(ids);
-
-    // Magnetic mode: close gaps on affected tracks
-    applyMagneticRipple(affectedTrackIds);
 
     useTimelineSettingsStore.getState().markDirty();
   }, { ids });
@@ -137,22 +74,43 @@ export function closeGapAtPosition(trackId: string, frame: number): void {
   }, { trackId, frame });
 }
 
+export function closeAllGapsOnTrack(trackId: string): void {
+  execute('CLOSE_ALL_GAPS', () => {
+    const items = useItemsStore.getState().items;
+    const trackItems = items
+      .filter((i) => i.trackId === trackId)
+      .sort((a, b) => a.from - b.from);
+
+    if (trackItems.length === 0) return;
+
+    // Walk items left-to-right, shift each to close any gap before it
+    let cursor = 0;
+    const updates: Array<{ id: string; from: number }> = [];
+    for (const item of trackItems) {
+      const newFrom = item.from > cursor ? cursor : item.from;
+      if (newFrom !== item.from) {
+        updates.push({ id: item.id, from: newFrom });
+      }
+      cursor = newFrom + item.durationInFrames;
+    }
+
+    if (updates.length > 0) {
+      useItemsStore.getState()._moveItems(updates);
+
+      // Repair transitions on affected items
+      const trackItemIds = trackItems.map((i) => i.id);
+      applyTransitionRepairs(trackItemIds);
+      useTimelineSettingsStore.getState().markDirty();
+    }
+  }, { trackId });
+}
+
 export function moveItem(id: string, newFrom: number, newTrackId?: string): void {
   execute('MOVE_ITEM', () => {
-    // Capture source track before move (for magnetic gap-close on source track)
-    const item = useItemsStore.getState().items.find((i) => i.id === id);
-    const sourceTrackId = item?.trackId;
-
     useItemsStore.getState()._moveItem(id, newFrom, newTrackId);
 
     // Repair transitions
     applyTransitionRepairs([id]);
-
-    // Magnetic mode: close gaps on source track (and destination if cross-track)
-    const affectedTracks: string[] = [];
-    if (sourceTrackId) affectedTracks.push(sourceTrackId);
-    if (newTrackId && newTrackId !== sourceTrackId) affectedTracks.push(newTrackId);
-    applyMagneticRipple(affectedTracks);
 
     useTimelineSettingsStore.getState().markDirty();
   }, { id, newFrom, newTrackId });
@@ -160,14 +118,6 @@ export function moveItem(id: string, newFrom: number, newTrackId?: string): void
 
 export function moveItems(updates: Array<{ id: string; from: number; trackId?: string }>): void {
   execute('MOVE_ITEMS', () => {
-    // Capture source tracks before move (for magnetic gap-close)
-    const itemsBefore = useItemsStore.getState().items;
-    const sourceTrackIds = new Set<string>();
-    for (const u of updates) {
-      const item = itemsBefore.find((i) => i.id === u.id);
-      if (item) sourceTrackIds.add(item.trackId);
-    }
-
     useItemsStore.getState()._moveItems(updates);
 
     const movedItemIds = new Set(updates.map((u) => u.id));
@@ -195,14 +145,6 @@ export function moveItems(updates: Array<{ id: string; from: number; trackId?: s
     useTransitionsStore.getState().setTransitions(updatedTransitions);
     applyTransitionRepairs(updates.map((u) => u.id));
 
-    // Magnetic mode: close gaps on source and destination tracks
-    const destTrackIds = new Set<string>();
-    for (const u of updates) {
-      if (u.trackId) destTrackIds.add(u.trackId);
-    }
-    const affectedTracks = [...sourceTrackIds, ...destTrackIds];
-    applyMagneticRipple(affectedTracks);
-
     useTimelineSettingsStore.getState().markDirty();
   }, { count: updates.length });
 }
@@ -220,19 +162,10 @@ export function duplicateItems(
 
 export function trimItemStart(id: string, trimAmount: number): void {
   execute('TRIM_ITEM_START', () => {
-    const item = useItemsStore.getState().items.find((i) => i.id === id);
-    const trackId = item?.trackId;
-
     useItemsStore.getState()._trimItemStart(id, trimAmount);
 
     // Repair transitions (auto-adjusts duration if clip got shorter)
     applyTransitionRepairs([id]);
-
-    // Magnetic mode: when trimming start inward (positive trimAmount),
-    // a gap opens before the item — close it on the track
-    if (trackId && trimAmount > 0) {
-      applyMagneticRipple([trackId]);
-    }
 
     useTimelineSettingsStore.getState().markDirty();
   }, { id, trimAmount });
@@ -240,19 +173,10 @@ export function trimItemStart(id: string, trimAmount: number): void {
 
 export function trimItemEnd(id: string, trimAmount: number): void {
   execute('TRIM_ITEM_END', () => {
-    const item = useItemsStore.getState().items.find((i) => i.id === id);
-    const trackId = item?.trackId;
-
     useItemsStore.getState()._trimItemEnd(id, trimAmount);
 
     // Repair transitions (auto-adjusts duration if clip got shorter)
     applyTransitionRepairs([id]);
-
-    // Magnetic mode: when trimming end inward (negative trimAmount),
-    // a gap opens after the item — close it on the track
-    if (trackId && trimAmount < 0) {
-      applyMagneticRipple([trackId]);
-    }
 
     useTimelineSettingsStore.getState().markDirty();
   }, { id, trimAmount });
